@@ -1,6 +1,5 @@
 --DECLARE @kBestellung AS INT = 78538;
-DECLARE @kBestellung AS INT = 78539;
---D-AU202373377
+DECLARE @kBestellung AS INT = 88934;
 
 /**
   Kriterien, die nicht in dieser SQL geprüft werden:
@@ -9,15 +8,21 @@ DECLARE @kBestellung AS INT = 78539;
  */
 
 /** Die folgende Query ermittelt alle Offenen Positionen inklusive dem vorraussichtlichem Lieferdatum.
+  Es werden nur offene Positionen berücksichtigt, die aus den o.g. Warengruppen stammen.
   Es wird True ausgegeben, wenn
   -für alle offenen Artikelpositionen ein Lieferdatum gesetzt ist,
   -alle maximal 2 Tage auseinander liegen,
   -diese nicht mehr als eine Woche in der Zukunft liegen
   -und mindestens 1 artikel verfügbar ist.
 
+  Akzeptierte Warengruppen:
+  -27 -> Ersatzteil Gartengeräte
+  -35 -> Ersatzteil Husqvarna Gartengerät
+
   Kleine Info am Rande:
   tbestellpos: Tabelle der Positionen im Auftrag
 */
+
 
 select IIF(SUM(IIF(dVoraussichtlichVerfügbarAm IS NULL, 1, 0)) = 0
                AND DATEDIFF(day, MIN(dVoraussichtlichVerfügbarAm), MAX(dVoraussichtlichVerfügbarAm)) < 3
@@ -52,6 +57,7 @@ from (SELECT --ROW_NUMBER() OVER (ORDER BY tbestellpos.cArtNr)                  
                   WHERE tLieferantenBestellung.nStatus IN (20, 30) -- Lieferantenbestellung mit Zuläufen berücksichtigen
                     AND tLieferantenBestellungPos.kArtikel > 0) ZulaufAnDatum
                  ON ZulaufAnDatum.kArtikel = vBestellPosLieferInfo.kArtikel
+            INNER JOIN tArtikel ON tArtikel.kArtikel = vBestellPosLieferInfo.kArtikel AND tArtikel.kWarengruppe IN (27, 35)
             WHERE vBestellPosLieferInfo.fAnzahlFehlbestandEigen <=
                   ISNULL(ZulaufAnDatum.fZulaufAnDatum, vBestellPosLieferInfo.fAnzahlFehlbestandEigen)
               AND vBestellPosLieferInfo.fAnzahlFehlbestandEigen > 0.0

@@ -17,13 +17,12 @@ DECLARE @tBerechnenFuerTage AS TABLE
 INSERT INTO @tBerechnenFuerTage
 VALUES
     --(37, 360, 360), -- AM Messer
-    (33, 30, 30, 2), --33 -> Arbeitskleidung / PSA
-    (29, 30, 30, 2), --29 -> Schienen / Ketten
-    (26, 30, 30, 2), --26 -> Gartengeräte
-    (38, 30, 30, 2), --38 -> Gartengerät - Einstellpflichtig
-    (27, 30, 14, 4), --27 -> Ersatzteil Gartengeräte
-    (35, 30, 14, 4), --35 -> Ersatzteil Husqvarna Gartengerät
-    (17, 20, 14, 0), --17 -> Ersatzteil Rasenroboter
+    (33, 20, 14, 2), --33 -> Arbeitskleidung / PSA
+    (29, 20, 14, 2), --29 -> Schienen / Ketten
+    (26, 20, 14, 2), --26 -> Gartengeräte
+    (27, 20, 14, 4), --26 -> Ersatzteil Gartengeräte
+    (35, 20, 14, 4), --26 -> Ersatzteil Husqvarna Gartengerät
+    (17, 30, 20, 3), --26 -> Ersatzteil Rasenroboter
     (0, 30, 14, 2) --Default
 
 --Hier kann eingestellt werden, welche Kunden für die Gewinnermittlung ignoriert werden.
@@ -162,36 +161,7 @@ group by kArtikel, nBasierendAufTage, nBerechnenFuerTage, nMinimumAuftragspositi
 
 
 --Bestellvorschläge
-select *,
-       ROUND(fEkNettoDurchschnitt * nBestellmengeGerundet, 2) as fEkNettoErwartet,
-       ROUND(fVkNettoDurchschnitt * nBestellmengeGerundet, 2) as fVkNettoErwartet,
-       ROUND(fGewinnNetto * nBestellmengeGerundet, 2)         as fGewinnNettoErwartet
-from (select kArtikel,
-             cArtNr,
-             cArtikelName,
-             fVerfuegbar,
-             fZulauf,
-             nAuftragsAnzahl60,
-             BESTELLMENGE4 as nBestellmengeUngerundet,
-             CASE
-                 WHEN fEKNetto < 100 AND nAuftragsAnzahl60 > 50 AND BESTELLMENGE4 > 50
-                     THEN CEILING(BESTELLMENGE4 / 10) * 10
-                 WHEN fEKNetto < 2 AND nAuftragsAnzahl60 > 10 AND BESTELLMENGE4 > 10
-                     THEN CEILING(BESTELLMENGE4 / 10) * 10
-                 WHEN fEKNetto < 3 AND nAuftragsAnzahl60 > 10 AND BESTELLMENGE4 > 10 THEN CEILING(BESTELLMENGE4 / 5) * 5
-                 WHEN fEKNetto < 100 AND nAuftragsAnzahl60 > 15 AND BESTELLMENGE4 > 15
-                     THEN CEILING(BESTELLMENGE4 / 5) * 5
-                 WHEN fEKNetto > 100 AND nAuftragsAnzahl60 > 30 AND BESTELLMENGE4 > 30
-                     THEN CEILING(BESTELLMENGE4 / 5) * 5
-                 ELSE BESTELLMENGE4
-                 END       AS nBestellmengeGerundet,
-             cWarengruppeName,
-             kWarengruppe,
-             ROUND(fEkNettoDurchschnitt, 2) as fEkNettoDurchschnitt,
-             ROUND(fVkNettoDurchschnitt, 2) as fVkNettoDurchschnitt,
-             ROUND(fGewinnNetto, 2) as fGewinnNetto,
-             nBerechnenFuerTage
-      from (SELECT tA.kArtikel
+SELECT tA.kArtikel
                  , tA.cArtNr
                  , tAB.cName                                           as cArtikelName
                  , tLb.fVerfuegbar
@@ -202,6 +172,9 @@ from (select kArtikel,
                                  (CEILING(IIF(tAPA60.nAuftragspositionenAnzahl < tBS.nMinimumAuftragspositionen, 0,
                                               tBS.fBerechneteBestellmenge) - tLb.fVerfuegbar - tLb.fAufEinkaufsliste - tLb.fZulauf
                                      ))) as value(x))                  AS BESTELLMENGE4
+                    , tAPA60.nAuftragspositionenAnzahl
+                    , tBS.nMinimumAuftragspositionen
+                    , IIF(tAPA60.nAuftragspositionenAnzahl < tBS.nMinimumAuftragspositionen, 'JA', 'NEIN') as TF
                  , tWg.cName                                           as cWarengruppeName
                  , tWg.kWarengruppe                                    as kWarengruppe
                  , tA.fEKNetto
@@ -222,8 +195,6 @@ from (select kArtikel,
             WHERE tA.kZustand = 1 /*Zustand = Standard*/
               AND tA.kStueckliste = 0
               AND tA.nIstVater = 0
+                AND tA.kArtikel = 7897
                --AND tWg.kWarengruppe = 33
                --AND tA.kArtikel = 1466
-           ) tB) t
-WHERE nBestellmengeGerundet > 0
-ORDER BY cWarengruppeName, cArtikelName
