@@ -1,0 +1,1 @@
+DELETE FROM tLizenzlog  WHERE dDatum < DATEADD(day, -30, GETDATE())

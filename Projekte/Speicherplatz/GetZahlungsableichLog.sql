@@ -1,0 +1,1 @@
+SELECT COUNT(*) FROM tZahlungsabgleichLogeintrag WHERE dZeitpunkt  < DATEADD(day, -3, GETDATE())

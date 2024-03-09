@@ -1,3 +1,4 @@
+--Databases
 SELECT DB_NAME()                                                           AS DbName,
        name                                                                AS FileName,
        size / 128.0                                                        AS CurrentSizeMB,
@@ -15,6 +16,8 @@ Create TABLE #TableSize
     Unused     VARCHAR(20)
 )
 exec sp_MSForEachTable 'Insert Into #TableSize Exec sp_spaceused [?]'
+
+--Tables
 Select TableName,
        CAST(Rows AS bigint)                               As Rows,
        CONVERT(bigint, left(Reserved, len(reserved) - 3)) As Size_In_KB

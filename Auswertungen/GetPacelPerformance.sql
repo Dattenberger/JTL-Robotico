@@ -1,4 +1,4 @@
-DECLARE @dateString nvarchar(10) = '08.03.2024';
+DECLARE @dateString nvarchar(10) = '30.04.2024';
 DECLARE @pauseThreshold INT = 15; --A time gap of this amount in between Lieferscheinen will make the gap counted as a pause.
 
 DECLARE @startDate DATETIME = CONVERT(DATETIME, @dateString, 103);
@@ -41,7 +41,7 @@ WITH LieferscheinZeiten AS (SELECT tL.kBenutzer,
                    INNER JOIN dbo.tLieferscheinPos tLP ON tL.kLieferschein = tLP.kLieferschein
                    INNER JOIN dbo.tBestellpos tBP ON tLP.kBestellPos = tBP.kBestellPos
                    INNER JOIN dbo.tArtikel tA ON tBP.tArtikel_kArtikel = tA.kArtikel
-                   INNER JOIN dbo.tWarengruppe tWG ON tA.kWarengruppe = tWG.kWarengruppe
+                   LEFT JOIN dbo.tWarengruppe tWG ON tA.kWarengruppe = tWG.kWarengruppe
           GROUP BY tB.cName, tB.kBenutzer)
 SELECT *,
        Minuten - PauseMinuten                                    AS ZeitspanneVersandMinuten,
