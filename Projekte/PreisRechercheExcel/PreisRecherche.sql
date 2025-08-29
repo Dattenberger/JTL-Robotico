@@ -264,6 +264,10 @@ SELECT
     COALESCE(a.kVersandklasse, 0) AS [Versandklassen ID],
     COALESCE(vk.cName, '') AS [Versandklassenname],
     
+    -- Gewichtsinformationen
+    ROUND(COALESCE(a.fGewicht, 0), 3) AS [Versandgewicht (kg)],
+    ROUND(COALESCE(a.fArtGewicht, 0), 3) AS [Artikelgewicht (kg)],
+    
     -- Stücklistenkomponenten (Was enthält dieser Artikel?)
     ad.Komponenten AS [Stücklistenkomponenten],
     
