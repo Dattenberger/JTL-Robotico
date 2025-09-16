@@ -325,7 +325,9 @@ SELECT
     COALESCE(sl.Lieferanten, '') AS [Lieferanten],
     
     -- Vergangene Preise (formatiert: Bruttopreis (Datum))
-    COALESCE(ph.VergangenePreise, '') AS [Vergangene Preise]
+    COALESCE(ph.VergangenePreise, '') AS [Vergangene Preise],
+
+    GETDATE() AS [Exportdatum]
 
 FROM dbo.tArtikel a
     -- CTEs einbinden
