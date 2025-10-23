@@ -155,137 +155,218 @@ StücklistenLieferanten AS (
     WHERE a.nDelete = 0 AND a.cAktiv = 'Y' AND a.nIstVater = 0
 ),
 
--- CTE 5: Preishistorie aus Attribut parsen
-PreisHistorie AS (
+-- CTE 5: Rohdaten beider Historien einlesen und Datum parsen
+RohDatenHistorie AS (
     SELECT
         a.kArtikel,
-        -- Formatierte Version
+        'Preis' AS HistorieTyp,
+        -- Datum parsen mit TRY_CONVERT für Fehlertoleranz
+        TRY_CONVERT(DATETIME,
+            LTRIM(RTRIM(
+                (SELECT TOP 1 LTRIM(RTRIM(s_datum.value))
+                 FROM STRING_SPLIT(LTRIM(RTRIM(s.value)), ';') s_datum
+                 WHERE LTRIM(RTRIM(s_datum.value)) != ''
+                 ORDER BY (SELECT NULL)
+                )
+            )), 104) AS DatumZeit,  -- Format 104 = dd.MM.yyyy
+        LTRIM(RTRIM(s.value)) AS VollstaendigeZeile,
+        ROW_NUMBER() OVER (PARTITION BY a.kArtikel ORDER BY (SELECT NULL)) AS ZeilenNummer
+    FROM dbo.tArtikel a
+    INNER JOIN dbo.tArtikelAttribut aa_preis ON a.kArtikel = aa_preis.kArtikel
+    INNER JOIN dbo.tAttribut attr_preis ON aa_preis.kAttribut = attr_preis.kAttribut
+    INNER JOIN dbo.tArtikelAttributSprache aas_preis ON aa_preis.kArtikelAttribut = aas_preis.kArtikelAttribut
+    INNER JOIN dbo.tAttributSprache attrs_preis ON attr_preis.kAttribut = attrs_preis.kAttribut
+        AND aas_preis.kSprache = attrs_preis.kSprache
+    CROSS APPLY STRING_SPLIT(REPLACE(aas_preis.cWertVarchar, CHAR(13)+CHAR(10), CHAR(10)), CHAR(10)) s
+    WHERE a.nDelete = 0
+      AND a.cAktiv = 'Y'
+      AND a.nIstVater = 0
+      AND attrs_preis.cName = 'Vergangene Preise'
+      AND aas_preis.kSprache = 0
+      AND LTRIM(RTRIM(s.value)) != ''
+
+    UNION ALL
+
+    SELECT
+        a.kArtikel,
+        'Label' AS HistorieTyp,
+        -- Datum parsen mit TRY_CONVERT für Fehlertoleranz
+        TRY_CONVERT(DATETIME,
+            LTRIM(RTRIM(
+                (SELECT TOP 1 LTRIM(RTRIM(s_datum.value))
+                 FROM STRING_SPLIT(LTRIM(RTRIM(s.value)), ';') s_datum
+                 WHERE LTRIM(RTRIM(s_datum.value)) != ''
+                 ORDER BY (SELECT NULL)
+                )
+            )), 104) AS DatumZeit,  -- Format 104 = dd.MM.yyyy
+        LTRIM(RTRIM(s.value)) AS VollstaendigeZeile,
+        ROW_NUMBER() OVER (PARTITION BY a.kArtikel ORDER BY (SELECT NULL)) AS ZeilenNummer
+    FROM dbo.tArtikel a
+    INNER JOIN dbo.tArtikelAttribut aa_label ON a.kArtikel = aa_label.kArtikel
+    INNER JOIN dbo.tAttribut attr_label ON aa_label.kAttribut = attr_label.kAttribut
+    INNER JOIN dbo.tArtikelAttributSprache aas_label ON aa_label.kArtikelAttribut = aas_label.kArtikelAttribut
+    INNER JOIN dbo.tAttributSprache attrs_label ON attr_label.kAttribut = attrs_label.kAttribut
+        AND aas_label.kSprache = attrs_label.kSprache
+    CROSS APPLY STRING_SPLIT(REPLACE(aas_label.cWertVarchar, CHAR(13)+CHAR(10), CHAR(10)), CHAR(10)) s
+    WHERE a.nDelete = 0
+      AND a.cAktiv = 'Y'
+      AND a.nIstVater = 0
+      AND attrs_label.cName = 'Vergangene Label'
+      AND aas_label.kSprache = 0
+      AND LTRIM(RTRIM(s.value)) != ''
+),
+
+-- CTE 6: Preishistorie parsen
+PreisHistorieParsed AS (
+    SELECT
+        rdh.kArtikel,
+        rdh.DatumZeit,
+        rdh.VollstaendigeZeile,
+        rdh.ZeilenNummer,
+        -- Spalten aus CSV parsen
+        MAX(CASE WHEN spalte_nr = 2 THEN LTRIM(RTRIM(value)) END) AS Netto,
+        MAX(CASE WHEN spalte_nr = 3 THEN LTRIM(RTRIM(value)) END) AS Brutto,
+        -- Vorherigen Brutto für Deduplizierung
+        LAG(MAX(CASE WHEN spalte_nr = 3 THEN LTRIM(RTRIM(value)) END))
+            OVER (PARTITION BY rdh.kArtikel ORDER BY rdh.ZeilenNummer) AS VorherigerBrutto
+    FROM RohDatenHistorie rdh
+    CROSS APPLY (
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS spalte_nr,
+            LTRIM(RTRIM(s2.value)) AS value
+        FROM STRING_SPLIT(rdh.VollstaendigeZeile, ';') s2
+    ) spalten_split
+    WHERE rdh.HistorieTyp = 'Preis'
+      AND rdh.DatumZeit IS NOT NULL
+    GROUP BY rdh.kArtikel, rdh.DatumZeit, rdh.VollstaendigeZeile, rdh.ZeilenNummer
+),
+
+-- CTE 7: Labelhistorie parsen
+LabelHistorieParsed AS (
+    SELECT
+        rdh.kArtikel,
+        rdh.DatumZeit,
+        rdh.VollstaendigeZeile,
+        rdh.ZeilenNummer,
+        -- Spalten aus CSV parsen
+        MAX(CASE WHEN spalte_nr = 2 THEN LTRIM(RTRIM(value)) END) AS Label,
+        -- Vorherige Label für Deduplizierung
+        LAG(MAX(CASE WHEN spalte_nr = 2 THEN LTRIM(RTRIM(value)) END))
+            OVER (PARTITION BY rdh.kArtikel ORDER BY rdh.ZeilenNummer) AS VorherigeLabel
+    FROM RohDatenHistorie rdh
+    CROSS APPLY (
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS spalte_nr,
+            LTRIM(RTRIM(s2.value)) AS value
+        FROM STRING_SPLIT(rdh.VollstaendigeZeile, ';') s2
+    ) spalten_split
+    WHERE rdh.HistorieTyp = 'Label'
+      AND rdh.DatumZeit IS NOT NULL
+    GROUP BY rdh.kArtikel, rdh.DatumZeit, rdh.VollstaendigeZeile, rdh.ZeilenNummer
+),
+
+-- CTE 8: PreisHistorieFormatiert (für alte Spalte "Vergangene Preise")
+PreisHistorieFormatiert AS (
+    SELECT
+        php.kArtikel,
         COALESCE(
             STUFF(
-                (SELECT '; ' + bruttopreis_formatiert.FormatierterPreis
-                 FROM (
-                     SELECT
-                         -- Bruttopreis (Position 3) + Datum (Position 1, nur Datumsteil)
-                         LTRIM(RTRIM(spalten.Bruttopreis)) + ' (' +
-                         LTRIM(RTRIM(datum_split.DatumTeil)) + ')' AS FormatierterPreis,
-                         zeilen.ZeilenNummer,
-                         spalten.Bruttopreis,
-                         -- Vorherigen Bruttopreis für Deduplizierung
-                         LAG(spalten.Bruttopreis) OVER (ORDER BY zeilen.ZeilenNummer) AS VorherigerBruttopreis
-                     FROM (
-                         -- Level 1: Zeilen splitten
-                         SELECT
-                             ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS ZeilenNummer,
-                             LTRIM(RTRIM(s.value)) AS ZeileText
-                         FROM dbo.tArtikelAttribut aa_hist
-                         INNER JOIN dbo.tAttribut attr_hist ON aa_hist.kAttribut = attr_hist.kAttribut
-                         INNER JOIN dbo.tArtikelAttributSprache aas_hist ON aa_hist.kArtikelAttribut = aas_hist.kArtikelAttribut
-                         INNER JOIN dbo.tAttributSprache attrs_hist ON attr_hist.kAttribut = attrs_hist.kAttribut AND aas_hist.kSprache = attrs_hist.kSprache
-                         CROSS APPLY STRING_SPLIT(REPLACE(aas_hist.cWertVarchar, CHAR(13)+CHAR(10), CHAR(10)), CHAR(10)) s
-                         WHERE aa_hist.kArtikel = a.kArtikel
-                           AND attrs_hist.cName = 'Vergangene Preise'
-                           AND aas_hist.kSprache = 0
-                           AND LTRIM(RTRIM(s.value)) != ''
-                     ) zeilen
-                     CROSS APPLY (
-                         -- Level 2: Spalten splitten (Position 1=Datum+Zeit, Position 3=Bruttopreis)
-                         SELECT
-                             MAX(CASE WHEN spalte_nr = 1 THEN LTRIM(RTRIM(value)) END) AS DatumZeit,
-                             MAX(CASE WHEN spalte_nr = 3 THEN LTRIM(RTRIM(value)) END) AS Bruttopreis
-                         FROM (
-                             SELECT
-                                 ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS spalte_nr,
-                                 LTRIM(RTRIM(s2.value)) AS value
-                             FROM STRING_SPLIT(zeilen.ZeileText, ';') s2
-                         ) spalten_split
-                     ) spalten
-                     CROSS APPLY (
-                         -- Level 3: Datum splitten (nur Datumsteil vor dem Leerzeichen)
-                         SELECT TOP 1
-                             LTRIM(RTRIM(s3.value)) AS DatumTeil
-                         FROM STRING_SPLIT(spalten.DatumZeit, ' ') s3
-                     ) datum_split
-                     WHERE spalten.Bruttopreis IS NOT NULL
-                       AND spalten.DatumZeit IS NOT NULL
-                 ) bruttopreis_formatiert
-                 WHERE bruttopreis_formatiert.VorherigerBruttopreis IS NULL -- Erster Eintrag (kein Vorgänger)
-                    OR bruttopreis_formatiert.Bruttopreis != bruttopreis_formatiert.VorherigerBruttopreis -- Preis hat sich geändert
-                 ORDER BY bruttopreis_formatiert.ZeilenNummer DESC -- Umgekehrte Reihenfolge: Neueste zuerst
+                (SELECT '; ' + LTRIM(RTRIM(php_inner.Brutto)) + ' (' +
+                        CONVERT(VARCHAR(10), php_inner.DatumZeit, 104) + ')'
+                 FROM PreisHistorieParsed php_inner
+                 WHERE php_inner.kArtikel = php.kArtikel
+                   AND (php_inner.VorherigerBrutto IS NULL
+                        OR php_inner.Brutto != php_inner.VorherigerBrutto)
+                 ORDER BY php_inner.ZeilenNummer DESC
                  FOR XML PATH('')
                 ), 1, 2, ''
             ),
             ''
         ) AS VergangenePreise
-    FROM dbo.tArtikel a
-    WHERE a.nDelete = 0 AND a.cAktiv = 'Y' AND a.nIstVater = 0
+    FROM PreisHistorieParsed php
+    GROUP BY php.kArtikel
 ),
 
--- CTE 6: Labelhistorie aus Attribut parsen
-LabelHistorie AS (
+-- CTE 9: LabelHistorieFormatiert (für alte Spalte "Vergangene Label")
+LabelHistorieFormatiert AS (
     SELECT
-        a.kArtikel,
-        -- Formatierte Version
+        lhp.kArtikel,
         COALESCE(
             STUFF(
-                (SELECT '; ' + labels_formatiert.FormatierteLabel
-                 FROM (
-                     SELECT
-                         -- Label (Position 2) + Datum (Position 1, nur Datumsteil)
-                         LTRIM(RTRIM(spalten.Label)) + ' (' +
-                         LTRIM(RTRIM(datum_split.DatumTeil)) + ')' AS FormatierteLabel,
-                         zeilen.ZeilenNummer,
-                         spalten.Label,
-                         -- Vorherige Label für Deduplizierung
-                         LAG(spalten.Label) OVER (ORDER BY zeilen.ZeilenNummer) AS VorherigeLabel
-                     FROM (
-                         -- Level 1: Zeilen splitten
-                         SELECT
-                             ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS ZeilenNummer,
-                             LTRIM(RTRIM(s.value)) AS ZeileText
-                         FROM dbo.tArtikelAttribut aa_Label
-                         INNER JOIN dbo.tAttribut attr_Label ON aa_Label.kAttribut = attr_Label.kAttribut
-                         INNER JOIN dbo.tArtikelAttributSprache aas_Label ON aa_Label.kArtikelAttribut = aas_Label.kArtikelAttribut
-                         INNER JOIN dbo.tAttributSprache attrs_Label ON attr_Label.kAttribut = attrs_Label.kAttribut AND aas_Label.kSprache = attrs_Label.kSprache
-                         CROSS APPLY STRING_SPLIT(REPLACE(aas_Label.cWertVarchar, CHAR(13)+CHAR(10), CHAR(10)), CHAR(10)) s
-                         WHERE aa_Label.kArtikel = a.kArtikel
-                           AND attrs_Label.cName = 'Vergangene Label'
-                           AND aas_Label.kSprache = 0
-                           AND LTRIM(RTRIM(s.value)) != ''
-                     ) zeilen
-                     CROSS APPLY (
-                         -- Level 2: Spalten splitten (Position 1=Datum+Zeit, Position 2=Label)
-                         SELECT
-                             MAX(CASE WHEN spalte_nr = 1 THEN LTRIM(RTRIM(value)) END) AS DatumZeit,
-                             MAX(CASE WHEN spalte_nr = 2 THEN LTRIM(RTRIM(value)) END) AS Label
-                         FROM (
-                             SELECT
-                                 ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS spalte_nr,
-                                 LTRIM(RTRIM(s2.value)) AS value
-                             FROM STRING_SPLIT(zeilen.ZeileText, ';') s2
-                         ) spalten_split
-                     ) spalten
-                     CROSS APPLY (
-                         -- Level 3: Datum splitten (nur Datumsteil vor dem Leerzeichen)
-                         SELECT TOP 1
-                             LTRIM(RTRIM(s3.value)) AS DatumTeil
-                         FROM STRING_SPLIT(spalten.DatumZeit, ' ') s3
-                     ) datum_split
-                     WHERE spalten.Label IS NOT NULL
-                       AND spalten.DatumZeit IS NOT NULL
-                 ) labels_formatiert
-                 WHERE labels_formatiert.VorherigeLabel IS NULL -- Erster Eintrag (kein Vorgänger)
-                    OR labels_formatiert.Label != labels_formatiert.VorherigeLabel -- Label haben sich geändert
-                 ORDER BY labels_formatiert.ZeilenNummer DESC -- Umgekehrte Reihenfolge: Neueste zuerst
+                (SELECT '; ' + LTRIM(RTRIM(lhp_inner.Label)) + ' (' +
+                        CONVERT(VARCHAR(10), lhp_inner.DatumZeit, 104) + ')'
+                 FROM LabelHistorieParsed lhp_inner
+                 WHERE lhp_inner.kArtikel = lhp.kArtikel
+                   AND (lhp_inner.VorherigeLabel IS NULL
+                        OR lhp_inner.Label != lhp_inner.VorherigeLabel)
+                 ORDER BY lhp_inner.ZeilenNummer DESC
                  FOR XML PATH('')
                 ), 1, 2, ''
             ),
             ''
         ) AS VergangeneLabel
-    FROM dbo.tArtikel a
-    WHERE a.nDelete = 0 AND a.cAktiv = 'Y' AND a.nIstVater = 0
+    FROM LabelHistorieParsed lhp
+    GROUP BY lhp.kArtikel
 ),
 
--- CTE 7: Gruppengrößen berechnen
+-- CTE 10: KombinierteHistorie (neue Spalte mit allen Änderungen chronologisch)
+KombinierteHistorie AS (
+    SELECT
+        komb.kArtikel,
+        COALESCE(
+            STUFF(
+                (SELECT CHAR(10) +
+                    CASE
+                        WHEN komb_inner.HistorieTyp = 'Label' THEN
+                            -- Label-Format: nur die vollständige Zeile
+                            komb_inner.VollstaendigeZeile
+                        ELSE
+                            -- Preis-Format: vollständige Zeile
+                            komb_inner.VollstaendigeZeile
+                    END
+                 FROM (
+                     -- Preis-Einträge
+                     SELECT
+                         php2.kArtikel,
+                         'Preis' AS HistorieTyp,
+                         php2.DatumZeit,
+                         php2.VollstaendigeZeile,
+                         php2.ZeilenNummer
+                     FROM PreisHistorieParsed php2
+                     WHERE php2.VorherigerBrutto IS NULL
+                        OR php2.Brutto != php2.VorherigerBrutto
+
+                     UNION ALL
+
+                     -- Label-Einträge
+                     SELECT
+                         lhp2.kArtikel,
+                         'Label' AS HistorieTyp,
+                         lhp2.DatumZeit,
+                         lhp2.VollstaendigeZeile,
+                         lhp2.ZeilenNummer
+                     FROM LabelHistorieParsed lhp2
+                     WHERE lhp2.VorherigeLabel IS NULL
+                        OR lhp2.Label != lhp2.VorherigeLabel
+                 ) komb_inner
+                 WHERE komb_inner.kArtikel = komb.kArtikel
+                 ORDER BY
+                     komb_inner.DatumZeit DESC,
+                     CASE WHEN komb_inner.HistorieTyp = 'Label' THEN 0 ELSE 1 END,  -- Label vor Preis
+                     komb_inner.ZeilenNummer DESC
+                 FOR XML PATH(''), TYPE
+                ).value('.', 'NVARCHAR(MAX)'), 1, 1, ''  -- Erstes CHAR(10) entfernen
+            ),
+            ''
+        ) AS Historie
+    FROM (
+        SELECT DISTINCT kArtikel FROM PreisHistorieParsed
+        UNION
+        SELECT DISTINCT kArtikel FROM LabelHistorieParsed
+    ) komb
+),
+
+-- CTE 11: Gruppengrößen berechnen
 GruppenGroessen AS (
     SELECT
         sg.GruppenID,
@@ -322,22 +403,22 @@ SELECT
     COALESCE(lb.fAufEinkaufsliste, 0) AS [In Bestellung],
 
     -- Warengruppe
-    a.kWarengruppe AS [Warengruppen ID],
-    COALESCE(wg.cName, '') AS [Warengruppenname],
+    a.kWarengruppe                AS [Warengruppen ID],
+    COALESCE(wg.cName, '')        AS [Warengruppenname],
 
     -- Versandklasse
     COALESCE(a.kVersandklasse, 0) AS [Versandklassen ID],
-    COALESCE(vk.cName, '') AS [Versandklassenname],
+    COALESCE(vk.cName, '')        AS [Versandklassenname],
 
     -- Gewichtsinformationen
-    ROUND(COALESCE(a.fGewicht, 0), 3) AS [Versandgewicht (kg)],
-    ROUND(COALESCE(a.fArtGewicht, 0), 3) AS [Artikelgewicht (kg)],
+    ROUND(a.fGewicht, 3)          AS [Versandgewicht (kg)],
+    ROUND(a.fArtGewicht, 3)       AS [Artikelgewicht (kg)],
 
     -- Stücklistenkomponenten (Was enthält dieser Artikel?)
-    ad.Komponenten AS [Stücklistenkomponenten],
+    ad.Komponenten                AS [Stücklistenkomponenten],
 
     -- Verwendet in Stücklisten (In welchen Stücklisten wird dieser Artikel verwendet?)
-    ad.VerwendetIn AS [Verwendet in Stücklisten],
+    ad.VerwendetIn                AS [Verwendet in Stücklisten],
 
     -- Stücklistentyp-Klassifizierung
     CASE
@@ -375,7 +456,7 @@ SELECT
                 ELSE 'Standard-Komponente'
             END
         ELSE 'Einzelartikel'
-    END AS [Stücklistentyp],
+    END                           AS [Stücklistentyp],
 
     -- Aktiv in Onlineshop
     CASE
@@ -390,10 +471,13 @@ SELECT
     COALESCE(sl.Lieferanten, '') AS [Lieferanten],
 
     -- Vergangene Preise (formatiert: Bruttopreis (Datum))
-    COALESCE(ph.VergangenePreise, '') AS [Vergangene Preise],
+    COALESCE(phf.VergangenePreise, '') AS [Vergangene Preise],
 
     -- Vergangene Label (formatiert: Label (Datum))
-    COALESCE(lh.VergangeneLabel, '') AS [Vergangene Label],
+    COALESCE(lhf.VergangeneLabel, '') AS [Vergangene Label],
+
+    -- Kombinierte Historie (alle Änderungen chronologisch sortiert)
+    COALESCE(kh.Historie, '') AS [Historie],
 
     GETDATE() AS [Exportdatum]
 
@@ -403,8 +487,9 @@ FROM dbo.tArtikel a
     LEFT JOIN AggregatedData ad ON a.kArtikel = ad.kArtikel
     LEFT JOIN GruppenGroessen gg ON sg.GruppenID = gg.GruppenID
     LEFT JOIN StücklistenLieferanten sl ON a.kArtikel = sl.kArtikel
-    LEFT JOIN PreisHistorie ph ON a.kArtikel = ph.kArtikel
-    LEFT JOIN LabelHistorie lh ON a.kArtikel = lh.kArtikel
+    LEFT JOIN PreisHistorieFormatiert phf ON a.kArtikel = phf.kArtikel
+    LEFT JOIN LabelHistorieFormatiert lhf ON a.kArtikel = lhf.kArtikel
+    LEFT JOIN KombinierteHistorie kh ON a.kArtikel = kh.kArtikel
     
     -- Artikelbeschreibung (deutsch)
     LEFT JOIN dbo.tArtikelBeschreibung ab ON a.kArtikel = ab.kArtikel 
@@ -419,12 +504,11 @@ FROM dbo.tArtikel a
     -- Versandklasse
     LEFT JOIN dbo.tVersandklasse vk ON a.kVersandklasse = vk.kVersandklasse
 
-WHERE 
+WHERE
     a.nDelete = 0  -- Nicht gelöschte Artikel
     AND a.cAktiv = 'Y'  -- Aktive Artikel
     AND a.nIstVater = 0  -- Keine Vaterartikel (Variationen)
     -- Stücklistenartikel sind jetzt INKLUDIERT für kombinierte Sicht
-AND cArtNr = '9008395'
 
 ORDER BY 
     sg.GruppenID,  -- Primär nach Stücklisten-Gruppen-ID sortieren
