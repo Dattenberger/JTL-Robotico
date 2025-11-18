@@ -3,7 +3,7 @@
 -- Clears passwords and adds "_deactivated" to usernames/server names
 -- =================================================================
 
-USE [eazybusiness]
+USE [eazybusiness_tm2]
 GO
 
 BEGIN TRANSACTION
