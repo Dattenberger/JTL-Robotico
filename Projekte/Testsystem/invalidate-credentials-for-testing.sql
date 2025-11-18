@@ -239,7 +239,64 @@ BEGIN TRY
     END
     ELSE
         PRINT 'Shipping.tVersandplattformUserData table not found - skipped'
-    
+
+    -- =================================================================
+    -- Deactivate Banking/Payment credentials
+    -- =================================================================
+    PRINT 'Deactivating Banking and Payment credentials...'
+
+    -- Clear customer and supplier account data (tkontodaten)
+    UPDATE dbo.tkontodaten
+    SET
+        cBankName = '',
+        cBLZ = '',
+        cKontoNr = '',
+        cKartenNr = '',
+        cGueltigkeit = '',
+        cCVV = '',
+        cKartenTyp = '',
+        cInhaber = '',
+        cIBAN = '',
+        cBIC = ''
+    WHERE (cBankName IS NOT NULL AND LEN(TRIM(cBankName)) > 0)
+       OR (cBLZ IS NOT NULL AND LEN(TRIM(cBLZ)) > 0)
+       OR (cKontoNr IS NOT NULL AND LEN(TRIM(cKontoNr)) > 0)
+       OR (cKartenNr IS NOT NULL AND LEN(TRIM(cKartenNr)) > 0)
+       OR (cGueltigkeit IS NOT NULL AND LEN(TRIM(cGueltigkeit)) > 0)
+       OR (cCVV IS NOT NULL AND LEN(TRIM(cCVV)) > 0)
+       OR (cKartenTyp IS NOT NULL AND LEN(TRIM(cKartenTyp)) > 0)
+       OR (cInhaber IS NOT NULL AND LEN(TRIM(cInhaber)) > 0)
+       OR (cIBAN IS NOT NULL AND LEN(TRIM(cIBAN)) > 0)
+       OR (cBIC IS NOT NULL AND LEN(TRIM(cBIC)) > 0);
+
+    PRINT 'Account data (tkontodaten) cleared: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' records'
+
+    -- Clear online order payment information (tinetzahlungsinfo)
+    UPDATE dbo.tinetzahlungsinfo
+    SET
+        cBankName = '',
+        cBLZ = '',
+        cKontoNr = '',
+        cKartenNr = '',
+        cGueltigkeit = '',
+        cCVV = '',
+        cKartenTyp = '',
+        cInhaber = '',
+        cIBAN = '',
+        cBIC = ''
+    WHERE (cBankName IS NOT NULL AND LEN(TRIM(cBankName)) > 0)
+       OR (cBLZ IS NOT NULL AND LEN(TRIM(cBLZ)) > 0)
+       OR (cKontoNr IS NOT NULL AND LEN(TRIM(cKontoNr)) > 0)
+       OR (cKartenNr IS NOT NULL AND LEN(TRIM(cKartenNr)) > 0)
+       OR (cGueltigkeit IS NOT NULL AND LEN(TRIM(cGueltigkeit)) > 0)
+       OR (cCVV IS NOT NULL AND LEN(TRIM(cCVV)) > 0)
+       OR (cKartenTyp IS NOT NULL AND LEN(TRIM(cKartenTyp)) > 0)
+       OR (cInhaber IS NOT NULL AND LEN(TRIM(cInhaber)) > 0)
+       OR (cIBAN IS NOT NULL AND LEN(TRIM(cIBAN)) > 0)
+       OR (cBIC IS NOT NULL AND LEN(TRIM(cBIC)) > 0);
+
+    PRINT 'Online payment info (tinetzahlungsinfo) cleared: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' records'
+
     -- =================================================================
     -- Completion
     -- =================================================================
@@ -308,7 +365,29 @@ UNION ALL
 
 SELECT 'Shop Server' AS Type, cServerWeb AS Value,
        CASE WHEN cPasswortWeb = '' THEN 'Password cleared' ELSE 'Password present' END AS Status
-FROM dbo.tShop 
-WHERE cServerWeb IS NOT NULL;
+FROM dbo.tShop
+WHERE cServerWeb IS NOT NULL
+
+UNION ALL
+
+SELECT 'Banking (tkontodaten)' AS Type,
+       'Records with data: ' + CAST(COUNT(*) AS VARCHAR(10)) AS Value,
+       CASE WHEN SUM(CASE WHEN cIBAN = '' AND cBIC = '' AND cKontoNr = '' AND cKartenNr = '' AND cCVV = '' THEN 1 ELSE 0 END) = COUNT(*)
+            THEN 'All cleared'
+            ELSE 'Data present'
+       END AS Status
+FROM dbo.tkontodaten
+WHERE kKontoDaten IS NOT NULL
+
+UNION ALL
+
+SELECT 'Banking (tinetzahlungsinfo)' AS Type,
+       'Records with data: ' + CAST(COUNT(*) AS VARCHAR(10)) AS Value,
+       CASE WHEN SUM(CASE WHEN cIBAN = '' AND cBIC = '' AND cKontoNr = '' AND cKartenNr = '' AND cCVV = '' THEN 1 ELSE 0 END) = COUNT(*)
+            THEN 'All cleared'
+            ELSE 'Data present'
+       END AS Status
+FROM dbo.tinetzahlungsinfo
+WHERE kInetZahlungsInfo IS NOT NULL;
 
 PRINT 'Deactivation for test system completed!'
