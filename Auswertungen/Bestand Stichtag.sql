@@ -7,7 +7,7 @@ QUELLE: https://support.t4dt.com/hc/de/articles/4407053625234-Stichtagsbestand-m
 -- Mit diesem Skript lässt sich der Bestand zu einem Gewissen Datum rückrechne. Vorsicht: Es werden immer alle Lagerbestände aus allen Lagern berücksichtigt.
 
 DECLARE @kWarenlager INT = 17; -- 6 = Laden Unterschleißheim, 17 = Unterschleißheim WMS
-DECLARE @stichtag DATETIME2= N'2025-07-09'; -- 2023-06-04 2022-12-30
+DECLARE @stichtag DATETIME2= N'2025-10-31'; -- 2023-06-04 2022-12-30
 
 SELECT tA.[cArtNr]                                                                                                        AS [Artikelnummer],
        tA.[cHAN]                                                                                                          AS [HAN],
@@ -70,7 +70,8 @@ GROUP BY tA.[cArtNr],
 
 --Bestände nach Artikel
 SELECT *, [Stichtagsbestand] * [Durschn. Ek] as [Wert]
-FROM #beständeNachArtikel;
+FROM #beständeNachArtikel
+ORDER BY Wert DESC;
 
 --Warengruppen
 SELECT #beständeNachArtikel.Warengruppe,
