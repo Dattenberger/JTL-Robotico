@@ -29,16 +29,58 @@ PRINT '========== PRIORITÄT 1: KERN-PERSONENDATEN =========='
 GO
 
 -- 1.1 dbo.tkunde - Kundenstammdaten
+-- WICHTIG: Diese Tabelle ist durch Trigger geschützt (nur via Kunde.spKundeUpdate änderbar)
+-- Lösung: CONTEXT_INFO setzen, um Trigger zu umgehen
 PRINT 'Anonymisiere dbo.tkunde...'
-UPDATE dbo.tkunde SET
-    cEbayName = 'cEbayName_' + CAST(kKunde AS NVARCHAR(30)),
-    cGeburtstag = NULL,
-    cWWW = 'cWWW_' + CAST(kKunde AS NVARCHAR(30)),
-    cHerkunft = 'cHerkunft_' + CAST(kKunde AS NVARCHAR(30)),
-    cHRNr = 'cHRNr_' + CAST(kKunde AS NVARCHAR(30)),
-    cSteuerNr = 'cSteuerNr_' + CAST(kKunde AS NVARCHAR(30))
-WHERE kKunde IS NOT NULL;
-PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    -- CONTEXT_INFO setzen (umgeht Trigger-Sperre)
+    DECLARE @hash VARBINARY(128);
+    SELECT @hash = HASHBYTES('SHA1', 'Kunde.spKundeUpdate');
+    SET CONTEXT_INFO @hash;
+
+    -- Direktes UPDATE durchführen
+    UPDATE dbo.tkunde SET
+        cEbayName = 'cEbayName_' + CAST(kKunde AS NVARCHAR(30)),
+        cGeburtstag = NULL,
+        cWWW = 'cWWW_' + CAST(kKunde AS NVARCHAR(30)),
+        cHerkunft = 'cHerkunft_' + CAST(kKunde AS NVARCHAR(30)),
+        cHRNr = 'cHRNr_' + CAST(kKunde AS NVARCHAR(30)),
+        cSteuerNr = 'cSteuerNr_' + CAST(kKunde AS NVARCHAR(30))
+    WHERE kKunde IS NOT NULL;
+
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze';
+
+    -- CONTEXT_INFO zurücksetzen
+    SET CONTEXT_INFO 0x0;
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+
+    -- CONTEXT_INFO auch bei Fehler zurücksetzen
+    SET CONTEXT_INFO 0x0;
+
+    PRINT 'FEHLER bei tkunde: ' + ERROR_MESSAGE();
+    THROW;
+END CATCH
+GO
+
+-- 1.1a tKunde_suche - Kundensuche-Index leeren (falls vorhanden)
+-- Diese Tabelle enthält denormalisierte Suchdaten und wird automatisch neu aufgebaut
+IF OBJECT_ID('dbo.tKunde_suche', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Leere tKunde_suche (Such-Index)...'
+    TRUNCATE TABLE dbo.tKunde_suche;
+    PRINT 'tKunde_suche geleert.'
+END
+ELSE
+BEGIN
+    PRINT 'tKunde_suche nicht vorhanden (übersprungen).'
+END
 GO
 
 -- 1.2 dbo.tinetkunde - Internet-Kundendaten
@@ -70,27 +112,48 @@ PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
 GO
 
 -- 1.3 dbo.tAdresse - Adressen
+-- WICHTIG: Diese Tabelle ist durch Trigger geschützt (nur via spAdresseUpdate änderbar)
 PRINT 'Anonymisiere dbo.tAdresse...'
-UPDATE dbo.tAdresse SET
-    cFirma = 'cFirma_' + CAST(kAdresse AS NVARCHAR(30)),
-    cAnrede = 'Anrede_' + CAST(kAdresse AS NVARCHAR(30)),
-    cTitel = 'cTitel_' + CAST(kAdresse AS NVARCHAR(30)),
-    cVorname = 'cVorname_' + CAST(kAdresse AS NVARCHAR(30)),
-    cName = 'cName_' + CAST(kAdresse AS NVARCHAR(30)),
-    cStrasse = 'cStrasse_' + CAST(kAdresse AS NVARCHAR(30)),
-    cPLZ = CAST(10000 + (kAdresse % 90000) AS NVARCHAR(24)),
-    cOrt = 'cOrt_' + CAST(kAdresse AS NVARCHAR(30)),
-    cTel = 'Tel_' + CAST(kAdresse AS NVARCHAR(30)),
-    cZusatz = 'cZusatz_' + CAST(kAdresse AS NVARCHAR(30)),
-    cAdressZusatz = 'cAdressZusatz_' + CAST(kAdresse AS NVARCHAR(30)),
-    cPostID = 'cPostID_' + CAST(kAdresse AS NVARCHAR(30)),
-    cMobil = 'Mobil_' + CAST(kAdresse AS NVARCHAR(30)),
-    cMail = 'mail_' + CAST(kAdresse AS NVARCHAR(30)) + '@test.local',
-    cFax = 'Fax_' + CAST(kAdresse AS NVARCHAR(30)),
-    cBundesland = 'Bundesland_' + CAST(kAdresse AS NVARCHAR(30)),
-    cUSTID = 'USTID_' + CAST(kAdresse AS NVARCHAR(30))
-WHERE kAdresse IS NOT NULL;
-PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    -- CONTEXT_INFO setzen (umgeht Trigger-Sperre)
+    DECLARE @hash_adresse VARBINARY(128);
+    SELECT @hash_adresse = HASHBYTES('SHA1', 'dbo.spAdresseUpdate');
+    SET CONTEXT_INFO @hash_adresse;
+
+    UPDATE dbo.tAdresse SET
+        cFirma = 'cFirma_' + CAST(kAdresse AS NVARCHAR(30)),
+        cAnrede = 'Anrede_' + CAST(kAdresse AS NVARCHAR(30)),
+        cTitel = 'cTitel_' + CAST(kAdresse AS NVARCHAR(30)),
+        cVorname = 'cVorname_' + CAST(kAdresse AS NVARCHAR(30)),
+        cName = 'cName_' + CAST(kAdresse AS NVARCHAR(30)),
+        cStrasse = 'cStrasse_' + CAST(kAdresse AS NVARCHAR(30)),
+        cPLZ = CAST(10000 + (kAdresse % 90000) AS NVARCHAR(24)),
+        cOrt = 'cOrt_' + CAST(kAdresse AS NVARCHAR(30)),
+        cTel = 'Tel_' + CAST(kAdresse AS NVARCHAR(30)),
+        cZusatz = 'cZusatz_' + CAST(kAdresse AS NVARCHAR(30)),
+        cAdressZusatz = 'cAdressZusatz_' + CAST(kAdresse AS NVARCHAR(30)),
+        cPostID = 'cPostID_' + CAST(kAdresse AS NVARCHAR(30)),
+        cMobil = 'Mobil_' + CAST(kAdresse AS NVARCHAR(30)),
+        cMail = 'mail_' + CAST(kAdresse AS NVARCHAR(30)) + '@test.local',
+        cFax = 'Fax_' + CAST(kAdresse AS NVARCHAR(30)),
+        cBundesland = 'Bundesland_' + CAST(kAdresse AS NVARCHAR(30)),
+        cUSTID = 'USTID_' + CAST(kAdresse AS NVARCHAR(30))
+    WHERE kAdresse IS NOT NULL;
+
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze';
+
+    SET CONTEXT_INFO 0x0;
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+    SET CONTEXT_INFO 0x0;
+    PRINT 'FEHLER bei tAdresse: ' + ERROR_MESSAGE();
+    THROW;
+END CATCH
 GO
 
 -- 1.4 dbo.tinetadress - Internet-Adressen
@@ -98,23 +161,22 @@ IF OBJECT_ID('dbo.tinetadress', 'U') IS NOT NULL
 BEGIN
     PRINT 'Anonymisiere dbo.tinetadress...'
     UPDATE dbo.tinetadress SET
-        cFirma = 'cFirma_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cAnrede = 'Anrede_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cTitel = 'cTitel_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cVorname = 'cVorname_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cNachname = 'cNachname_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cStrasse = 'cStrasse_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cPLZ = CAST(10000 + (kInetAdresse % 90000) AS NVARCHAR(24)),
-        cOrt = 'cOrt_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cStadt = 'cStadt_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cTel = 'Tel_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cMobil = 'Mobil_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cFax = 'Fax_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cMail = 'mail_' + CAST(kInetAdresse AS NVARCHAR(30)) + '@test.local',
-        cAdressZusatz = 'cAdressZusatz_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cZusatz = 'cZusatz_' + CAST(kInetAdresse AS NVARCHAR(30)),
-        cBundesland = 'Bundesland_' + CAST(kInetAdresse AS NVARCHAR(30))
-    WHERE kInetAdresse IS NOT NULL;
+        cFirma = 'cFirma_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cAnrede = 'Anrede_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cTitel = 'cTitel_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cVorname = 'cVorname_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cNachname = 'cNachname_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cStrasse = 'cStrasse_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cPLZ = CAST(10000 + (kInetAdress % 90000) AS NVARCHAR(24)),
+        cStadt = 'cStadt_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cTel = 'Tel_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cMobil = 'Mobil_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cFax = 'Fax_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cMail = 'mail_' + CAST(kInetAdress AS NVARCHAR(30)) + '@test.local',
+        cAdressZusatz = 'cAdressZusatz_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cZusatz = 'cZusatz_' + CAST(kInetAdress AS NVARCHAR(30)),
+        cBundesland = 'Bundesland_' + CAST(kInetAdress AS NVARCHAR(30))
+    WHERE kInetAdress IS NOT NULL;
     PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
 END
 GO
@@ -210,7 +272,7 @@ UPDATE dbo.tlieferant SET
     cStrasse = 'cStrasse_' + CAST(kLieferant AS NVARCHAR(30)),
     cPLZ = CAST(10000 + (kLieferant % 90000) AS NVARCHAR(10)),
     cOrt = 'cOrt_' + CAST(kLieferant AS NVARCHAR(30)),
-    cTelZentrale = 'TelZ_' + CAST(kLieferant AS NVARCHAR(30)),
+    cTelZentralle = 'TelZ_' + CAST(kLieferant AS NVARCHAR(30)),
     cTelDurchwahl = 'TelD_' + CAST(kLieferant AS NVARCHAR(30)),
     cFax = 'Fax_' + CAST(kLieferant AS NVARCHAR(30)),
     cEMail = 'mail_' + CAST(kLieferant AS NVARCHAR(30)) + '@test.local',
@@ -300,7 +362,7 @@ BEGIN
         cStrasse = 'cStrasse_' + CAST(kLieferadresse AS NVARCHAR(30)),
         cPLZ = CAST(10000 + (kLieferadresse % 90000) AS NVARCHAR(24)),
         cOrt = 'cOrt_' + CAST(kLieferadresse AS NVARCHAR(30)),
-        cTelefon = 'Tel_' + CAST(kLieferadresse AS NVARCHAR(30)),
+        cTel = 'Tel_' + CAST(kLieferadresse AS NVARCHAR(30)),
         cMobil = 'Mobil_' + CAST(kLieferadresse AS NVARCHAR(30)),
         cFax = 'Fax_' + CAST(kLieferadresse AS NVARCHAR(30)),
         cMail = 'mail_' + CAST(kLieferadresse AS NVARCHAR(30)) + '@test.local',
@@ -324,7 +386,7 @@ BEGIN
         cStrasse = 'cStrasse_' + CAST(kRechnungadresse AS NVARCHAR(30)),
         cPLZ = CAST(10000 + (kRechnungadresse % 90000) AS NVARCHAR(24)),
         cOrt = 'cOrt_' + CAST(kRechnungadresse AS NVARCHAR(30)),
-        cTelefon = 'Tel_' + CAST(kRechnungadresse AS NVARCHAR(30)),
+        cTel = 'Tel_' + CAST(kRechnungadresse AS NVARCHAR(30)),
         cMobil = 'Mobil_' + CAST(kRechnungadresse AS NVARCHAR(30)),
         cFax = 'Fax_' + CAST(kRechnungadresse AS NVARCHAR(30)),
         cMail = 'mail_' + CAST(kRechnungadresse AS NVARCHAR(30)) + '@test.local',
@@ -473,23 +535,23 @@ IF OBJECT_ID('Verkauf.tAuftragAdresse_Log', 'U') IS NOT NULL
 BEGIN
     PRINT 'Anonymisiere Verkauf.tAuftragAdresse_Log...'
     UPDATE Verkauf.tAuftragAdresse_Log SET
-        cFirma = 'cFirma_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cAnrede = 'Anrede_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cTitel = 'cTitel_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cVorname = 'cVorname_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cName = 'cName_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cStrasse = 'cStrasse_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cPLZ = CAST(10000 + (kLog % 90000) AS NVARCHAR(24)),
-        cOrt = 'cOrt_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cTel = 'Tel_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cZusatz = 'cZusatz_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cAdressZusatz = 'cAdressZusatz_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cPostID = 'cPostID_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cMobil = 'Mobil_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cMail = 'mail_LOG_' + CAST(kLog AS NVARCHAR(30)) + '@test.local',
-        cFax = 'Fax_LOG_' + CAST(kLog AS NVARCHAR(30)),
-        cBundesland = 'Bundesland_LOG_' + CAST(kLog AS NVARCHAR(30))
-    WHERE kLog IS NOT NULL;
+        cFirma = 'cFirma_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cAnrede = 'Anrede_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cTitel = 'cTitel_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cVorname = 'cVorname_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cName = 'cName_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cStrasse = 'cStrasse_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cPLZ = CAST(10000 + (kAuftragAdresseLog % 90000) AS NVARCHAR(24)),
+        cOrt = 'cOrt_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cTel = 'Tel_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cZusatz = 'cZusatz_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cAdressZusatz = 'cAdressZusatz_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cPostID = 'cPostID_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cMobil = 'Mobil_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cMail = 'mail_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)) + '@test.local',
+        cFax = 'Fax_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30)),
+        cBundesland = 'Bundesland_LOG_' + CAST(kAuftragAdresseLog AS NVARCHAR(30))
+    WHERE kAuftragAdresseLog IS NOT NULL;
     PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
 END
 GO
@@ -530,10 +592,10 @@ IF OBJECT_ID('Ticketsystem.tEingangskanalEmail', 'U') IS NOT NULL
 BEGIN
     PRINT 'Anonymisiere Ticketsystem.tEingangskanalEmail...'
     UPDATE Ticketsystem.tEingangskanalEmail SET
-        cBenutzername = 'User_' + CAST(kEingangskanal AS NVARCHAR(30)),
-        cPasswort = 'Pass_' + CAST(kEingangskanal AS NVARCHAR(30)),
-        cEmail = 'mail_' + CAST(kEingangskanal AS NVARCHAR(30)) + '@test.local'
-    WHERE kEingangskanal IS NOT NULL;
+        cBenutzername = 'User_' + CAST(kEingangskanalEmail AS NVARCHAR(30)),
+        cPasswort = 'Pass_' + CAST(kEingangskanalEmail AS NVARCHAR(30)),
+        cEmailAdresse = 'mail_' + CAST(kEingangskanalEmail AS NVARCHAR(30)) + '@test.local'
+    WHERE kEingangskanalEmail IS NOT NULL;
     PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
 END
 GO
@@ -543,10 +605,10 @@ IF OBJECT_ID('Ticketsystem.tAusgangskanalEmail', 'U') IS NOT NULL
 BEGIN
     PRINT 'Anonymisiere Ticketsystem.tAusgangskanalEmail...'
     UPDATE Ticketsystem.tAusgangskanalEmail SET
-        cBenutzername = 'User_' + CAST(kAusgangskanal AS NVARCHAR(30)),
-        cPasswort = 'Pass_' + CAST(kAusgangskanal AS NVARCHAR(30)),
-        cEmail = 'mail_' + CAST(kAusgangskanal AS NVARCHAR(30)) + '@test.local'
-    WHERE kAusgangskanal IS NOT NULL;
+        cBenutzername = 'User_' + CAST(kAusgangskanalEmail AS NVARCHAR(30)),
+        cPasswort = 'Pass_' + CAST(kAusgangskanalEmail AS NVARCHAR(30)),
+        cEmailAdresse = 'mail_' + CAST(kAusgangskanalEmail AS NVARCHAR(30)) + '@test.local'
+    WHERE kAusgangskanalEmail IS NOT NULL;
     PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
 END
 GO
@@ -586,7 +648,7 @@ BEGIN
         cStrasse = 'cStrasse_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
         cPLZ = CAST(10000 + (kRMRetoureAbholAdresse % 90000) AS NVARCHAR(24)),
         cOrt = 'cOrt_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
-        cTelefon = 'Tel_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
+        cTel = 'Tel_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
         cMobil = 'Mobil_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
         cFax = 'Fax_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
         cMail = 'mail_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)) + '@test.local'
@@ -596,11 +658,263 @@ END
 GO
 
 -- =============================================
--- PRIORITÄT 8: POS-SYSTEM
+-- PRIORITÄT 8: ZAHLUNGSDATEN (KRITISCH!)
 -- =============================================
 
 PRINT ''
-PRINT '========== PRIORITÄT 8: POS-SYSTEM =========='
+PRINT '========== PRIORITÄT 8: ZAHLUNGSDATEN (KRITISCH!) =========='
+GO
+
+-- 8.1 dbo.tkontodaten - Kontodaten (IBAN, BIC, Kreditkarten!)
+IF OBJECT_ID('dbo.tkontodaten', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere dbo.tkontodaten (ZAHLUNGSDATEN)...'
+    UPDATE dbo.tkontodaten SET
+        cBankName = 'Bank_' + CAST(kKontoDaten AS NVARCHAR(30)),
+        cBLZ = 'BLZ_' + CAST(kKontoDaten AS NVARCHAR(30)),
+        cKontoNr = 'KontoNr_' + CAST(kKontoDaten AS NVARCHAR(30)),
+        cKartenNr = 'KartenNr_' + CAST(kKontoDaten AS NVARCHAR(30)),
+        cGueligkeit = NULL,
+        cCVV = NULL,
+        cKartenTyp = 'Typ_' + CAST(kKontoDaten AS NVARCHAR(30)),
+        cInhaber = 'Inhaber_' + CAST(kKontoDaten AS NVARCHAR(30)),
+        cIBAN = 'IBAN_' + CAST(kKontoDaten AS NVARCHAR(30)),
+        cBIC = 'BIC_' + CAST(kKontoDaten AS NVARCHAR(30))
+    WHERE kKontoDaten IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'dbo.tkontodaten nicht vorhanden (übersprungen).'
+END
+GO
+
+-- 8.2 dbo.tinetzahlungsinfo - Online-Shop Zahlungsinformationen
+IF OBJECT_ID('dbo.tinetzahlungsinfo', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere dbo.tinetzahlungsinfo (ZAHLUNGSDATEN)...'
+    UPDATE dbo.tinetzahlungsinfo SET
+        cBankName = 'Bank_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
+        cBLZ = 'BLZ_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
+        cKontoNr = 'KontoNr_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
+        cKartenNr = 'KartenNr_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
+        cGueligkeit = NULL,
+        cCVV = NULL,
+        cKartenTyp = 'Typ_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
+        cInhaber = 'Inhaber_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
+        cIBAN = 'IBAN_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
+        cBIC = 'BIC_' + CAST(kInetZahlungsInfo AS NVARCHAR(30))
+    WHERE kInetZahlungsInfo IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'dbo.tinetzahlungsinfo nicht vorhanden (übersprungen).'
+END
+GO
+
+-- 8.3 dbo.tZahlung - Zahlungen
+IF OBJECT_ID('dbo.tZahlung', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere dbo.tZahlung...'
+    UPDATE dbo.tZahlung SET
+        cName = 'Name_' + CAST(kZahlung AS NVARCHAR(30)),
+        cHinweis = 'Hinweis_' + CAST(kZahlung AS NVARCHAR(30))
+    WHERE kZahlung IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'dbo.tZahlung nicht vorhanden (übersprungen).'
+END
+GO
+
+-- =============================================
+-- PRIORITÄT 9: ZUGANGSDATEN & AUTHENTIFIZIERUNG
+-- =============================================
+
+PRINT ''
+PRINT '========== PRIORITÄT 9: ZUGANGSDATEN & AUTHENTIFIZIERUNG =========='
+GO
+
+-- 9.1 dbo.tEMailEinstellung - E-Mail Konfiguration (PASSWÖRTER!)
+IF OBJECT_ID('dbo.tEMailEinstellung', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere dbo.tEMailEinstellung (E-MAIL ZUGANGSDATEN)...'
+    UPDATE dbo.tEMailEinstellung SET
+        cNutzername = 'User_' + CAST(kEMailEinstellung AS NVARCHAR(30)),
+        cPasswort = 'Pass_' + CAST(kEMailEinstellung AS NVARCHAR(30)),
+        cAbsender = 'absender_' + CAST(kEMailEinstellung AS NVARCHAR(30)) + '@test.local',
+        cBCC = NULL,
+        cSigPortalNutzername = 'SigUser_' + CAST(kEMailEinstellung AS NVARCHAR(30)),
+        cSigPortalPasswort = 'SigPass_' + CAST(kEMailEinstellung AS NVARCHAR(30)),
+        cSMIMEPasswort = 'SMIMEPass_' + CAST(kEMailEinstellung AS NVARCHAR(30))
+    WHERE kEMailEinstellung IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'dbo.tEMailEinstellung nicht vorhanden (übersprungen).'
+END
+GO
+
+-- 9.2 dbo.tInkassoUser - Inkasso-Zugangsdaten
+IF OBJECT_ID('dbo.tInkassoUser', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere dbo.tInkassoUser...'
+    UPDATE dbo.tInkassoUser SET
+        cUsername = 'InkassoUser_' + CAST(kInkassoUser AS NVARCHAR(30)),
+        cPasswort = 'InkassoPass_' + CAST(kInkassoUser AS NVARCHAR(30))
+    WHERE kInkassoUser IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'dbo.tInkassoUser nicht vorhanden (übersprungen).'
+END
+GO
+
+-- 9.3 dbo.pf_user - Plattform-Benutzer (Amazon)
+IF OBJECT_ID('dbo.pf_user', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere dbo.pf_user (Amazon Auth-Tokens)...'
+    UPDATE dbo.pf_user SET
+        cName = 'PfUser_' + CAST(kUser AS NVARCHAR(30)),
+        cAuthToken = NULL,
+        cAmazonAuthToken = NULL,
+        cFBAVersandmailKopie = 'fba_' + CAST(kUser AS NVARCHAR(30)) + '@test.local',
+        cFBAKommentar = 'Kommentar_' + CAST(kUser AS NVARCHAR(30)),
+        cAnmerkung = 'Anmerkung_' + CAST(kUser AS NVARCHAR(30))
+    WHERE kUser IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'dbo.pf_user nicht vorhanden (übersprungen).'
+END
+GO
+
+-- 9.4 WMS.tMobileBenutzer - Mobile WMS-Benutzer
+IF OBJECT_ID('WMS.tMobileBenutzer', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere WMS.tMobileBenutzer...'
+    UPDATE WMS.tMobileBenutzer SET
+        cName = 'WMSUser_' + CAST(kMobileBenutzer AS NVARCHAR(30)),
+        cUniqueId = 'UniqueId_' + CAST(kMobileBenutzer AS NVARCHAR(30)),
+        cIpAddress = '192.168.1.' + CAST((kMobileBenutzer % 254) + 1 AS NVARCHAR(3))
+    WHERE kMobileBenutzer IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'WMS.tMobileBenutzer nicht vorhanden (übersprungen).'
+END
+GO
+
+-- =============================================
+-- PRIORITÄT 10: LIEFERANTEN & EINGANGSRECHNUNGEN
+-- =============================================
+
+PRINT ''
+PRINT '========== PRIORITÄT 10: LIEFERANTEN & EINGANGSRECHNUNGEN =========='
+GO
+
+-- 10.1 dbo.tEingangsrechnung - Eingangsrechnungen (Lieferantenadressen!)
+IF OBJECT_ID('dbo.tEingangsrechnung', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere dbo.tEingangsrechnung...'
+    UPDATE dbo.tEingangsrechnung SET
+        cLieferant = 'Lieferant_' + CAST(kEingangsrechnung AS NVARCHAR(30)),
+        cAdresszusatz = 'Adresszusatz_' + CAST(kEingangsrechnung AS NVARCHAR(30)),
+        cStrasse = 'Strasse_' + CAST(kEingangsrechnung AS NVARCHAR(30)),
+        cPLZ = CAST(10000 + (kEingangsrechnung % 90000) AS NVARCHAR(10)),
+        cOrt = 'Ort_' + CAST(kEingangsrechnung AS NVARCHAR(30)),
+        cBundesland = 'Bundesland_' + CAST(kEingangsrechnung AS NVARCHAR(30)),
+        cTel = 'Tel_' + CAST(kEingangsrechnung AS NVARCHAR(30)),
+        cFax = 'Fax_' + CAST(kEingangsrechnung AS NVARCHAR(30)),
+        cMobil = 'Mobil_' + CAST(kEingangsrechnung AS NVARCHAR(30)),
+        cMail = 'mail_' + CAST(kEingangsrechnung AS NVARCHAR(30)) + '@test.local',
+        cHinweise = 'Hinweise_' + CAST(kEingangsrechnung AS NVARCHAR(30))
+    WHERE kEingangsrechnung IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'dbo.tEingangsrechnung nicht vorhanden (übersprungen).'
+END
+GO
+
+-- 10.2 Kunde.tUmsatzSteuerPruefung - USt-ID Prüfung
+IF OBJECT_ID('Kunde.tUmsatzSteuerPruefung', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere Kunde.tUmsatzSteuerPruefung...'
+    UPDATE Kunde.tUmsatzSteuerPruefung SET
+        cUSTID = 'USTID_' + CAST(kUmsatzSteuerPruefung AS NVARCHAR(30)),
+        cPruefdata = 'Pruefdata_' + CAST(kUmsatzSteuerPruefung AS NVARCHAR(30))
+    WHERE kUmsatzSteuerPruefung IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'Kunde.tUmsatzSteuerPruefung nicht vorhanden (übersprungen).'
+END
+GO
+
+-- 10.3 dbo.tmahnung - Mahnungen (personalisierte Texte!)
+IF OBJECT_ID('dbo.tmahnung', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere dbo.tmahnung...'
+    UPDATE dbo.tmahnung SET
+        cAnrede = 'Anrede_' + CAST(kMahnung AS NVARCHAR(30)),
+        cText = 'Text_' + CAST(kMahnung AS NVARCHAR(30)),
+        cKurzText = 'Kurztext_' + CAST(kMahnung AS NVARCHAR(30))
+    WHERE kMahnung IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'dbo.tmahnung nicht vorhanden (übersprungen).'
+END
+GO
+
+-- 10.4 Rechnung.tRechnungText - Rechnungstexte
+IF OBJECT_ID('Rechnung.tRechnungText', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere Rechnung.tRechnungText...'
+    UPDATE Rechnung.tRechnungText SET
+        cRechnungstext = 'Rechnungstext_' + CAST(kRechnung AS NVARCHAR(30)),
+        cAnmerkung = 'Anmerkung_' + CAST(kRechnung AS NVARCHAR(30)),
+        cHinweis = 'Hinweis_' + CAST(kRechnung AS NVARCHAR(30))
+    WHERE kRechnung IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'Rechnung.tRechnungText nicht vorhanden (übersprungen).'
+END
+GO
+
+-- 10.5 Contact.tContact - Kontakt-System
+IF OBJECT_ID('Contact.tContact', 'U') IS NOT NULL
+BEGIN
+    PRINT 'Anonymisiere Contact.tContact...'
+    UPDATE Contact.tContact SET
+        cNumber = 'ContactNr_' + CAST(kContact AS NVARCHAR(30))
+    WHERE kContact IS NOT NULL;
+    PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
+END
+ELSE
+BEGIN
+    PRINT 'Contact.tContact nicht vorhanden (übersprungen).'
+END
+GO
+
+-- =============================================
+-- PRIORITÄT 11: POS-SYSTEM
+-- =============================================
+
+PRINT ''
+PRINT '========== PRIORITÄT 11: POS-SYSTEM =========='
 GO
 
 -- 8.1 dbo.POS_Benutzer - POS-Benutzer

@@ -347,8 +347,16 @@ BEGIN TRY
     BEGIN
         UPDATE dbo.tWebshopModule
         SET
-            cAPIKey = '',
-            cLizenzkey = ''
+            cAPIKey = CASE 
+                WHEN cAPIKey IS NOT NULL AND cAPIKey NOT LIKE '%_deactivated' 
+                THEN cAPIKey + '_deactivated'
+                ELSE cAPIKey
+            END,
+            cLizenzkey = CASE 
+                WHEN cLizenzkey IS NOT NULL AND cLizenzkey NOT LIKE '%_deactivated' 
+                THEN cLizenzkey + '_deactivated'
+                ELSE cLizenzkey
+            END
         WHERE (cAPIKey IS NOT NULL AND LEN(TRIM(cAPIKey)) > 0)
            OR (cLizenzkey IS NOT NULL AND LEN(TRIM(cLizenzkey)) > 0);
 
@@ -364,7 +372,7 @@ BEGIN TRY
 
     -- Clear customer and supplier account data (tkontodaten)
     -- Using anonymized bank names (Bank_ID_1, Bank_ID_2, ...)
-    WITH BankNameMapping AS (
+    ;WITH BankNameMapping AS (
         SELECT
             kKontoDaten,
             'Bank_ID_' + CAST(ROW_NUMBER() OVER (ORDER BY kKontoDaten) AS VARCHAR(10)) AS NewBankName
@@ -413,7 +421,7 @@ BEGIN TRY
 
     -- Clear online order payment information (tinetzahlungsinfo)
     -- Using anonymized bank names (Bank_ID_1, Bank_ID_2, ...)
-    WITH BankNameMapping AS (
+    ;WITH BankNameMapping AS (
         SELECT
             kInetZahlungsInfo,
             'Bank_ID_' + CAST(ROW_NUMBER() OVER (ORDER BY kInetZahlungsInfo) AS VARCHAR(10)) AS NewBankName
@@ -472,7 +480,7 @@ BEGIN TRY
         SET
             cAuthId = CASE
                 WHEN cAuthId IS NOT NULL AND cAuthId NOT LIKE '%_deactivated'
-                THEN cAuthId + '_deactivated'
+                THEN LEFT(cAuthId, 15) + '_deactivated'
                 ELSE cAuthId
             END,
             cAuthToken = ''
