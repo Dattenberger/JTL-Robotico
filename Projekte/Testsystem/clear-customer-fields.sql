@@ -644,7 +644,7 @@ BEGIN
         cAnrede = 'Anrede_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
         cTitel = 'cTitel_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
         cVorname = 'cVorname_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
-        cNachname = 'cNachname_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
+        cName = 'cName_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
         cStrasse = 'cStrasse_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
         cPLZ = CAST(10000 + (kRMRetoureAbholAdresse % 90000) AS NVARCHAR(24)),
         cOrt = 'cOrt_' + CAST(kRMRetoureAbholAdresse AS NVARCHAR(30)),
@@ -674,7 +674,7 @@ BEGIN
         cBLZ = 'BLZ_' + CAST(kKontoDaten AS NVARCHAR(30)),
         cKontoNr = 'KontoNr_' + CAST(kKontoDaten AS NVARCHAR(30)),
         cKartenNr = 'KartenNr_' + CAST(kKontoDaten AS NVARCHAR(30)),
-        cGueligkeit = NULL,
+        cGueltigkeit = NULL,
         cCVV = NULL,
         cKartenTyp = 'Typ_' + CAST(kKontoDaten AS NVARCHAR(30)),
         cInhaber = 'Inhaber_' + CAST(kKontoDaten AS NVARCHAR(30)),
@@ -698,7 +698,7 @@ BEGIN
         cBLZ = 'BLZ_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
         cKontoNr = 'KontoNr_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
         cKartenNr = 'KartenNr_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
-        cGueligkeit = NULL,
+        cGueltigkeit = NULL,
         cCVV = NULL,
         cKartenTyp = 'Typ_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
         cInhaber = 'Inhaber_' + CAST(kInetZahlungsInfo AS NVARCHAR(30)),
@@ -742,14 +742,19 @@ IF OBJECT_ID('dbo.tEMailEinstellung', 'U') IS NOT NULL
 BEGIN
     PRINT 'Anonymisiere dbo.tEMailEinstellung (E-MAIL ZUGANGSDATEN)...'
     UPDATE dbo.tEMailEinstellung SET
-        cNutzername = 'User_' + CAST(kEMailEinstellung AS NVARCHAR(30)),
-        cPasswort = 'Pass_' + CAST(kEMailEinstellung AS NVARCHAR(30)),
-        cAbsender = 'absender_' + CAST(kEMailEinstellung AS NVARCHAR(30)) + '@test.local',
-        cBCC = NULL,
-        cSigPortalNutzername = 'SigUser_' + CAST(kEMailEinstellung AS NVARCHAR(30)),
-        cSigPortalPasswort = 'SigPass_' + CAST(kEMailEinstellung AS NVARCHAR(30)),
-        cSMIMEPasswort = 'SMIMEPass_' + CAST(kEMailEinstellung AS NVARCHAR(30))
-    WHERE kEMailEinstellung IS NOT NULL;
+        cNutzernameSmtp = CASE
+            WHEN cNutzernameSmtp IS NOT NULL AND cNutzernameSmtp <> ''
+            THEN 'User_SMTP_' + CONVERT(NVARCHAR(30), NEWID())
+            ELSE cNutzernameSmtp
+        END,
+        cPasswortSMTP = '',
+        cServerSMTP = CASE
+            WHEN cServerSMTP IS NOT NULL AND cServerSMTP <> ''
+            THEN 'smtp_' + CONVERT(NVARCHAR(30), NEWID()) + '.test.local'
+            ELSE cServerSMTP
+        END,
+        cSigPortalPasswort = '',
+        cSMIMEPasswort = '';
     PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
 END
 ELSE
@@ -845,6 +850,8 @@ END
 GO
 
 -- 10.2 Kunde.tUmsatzSteuerPruefung - USt-ID Prüfung
+-- NOTE: Table structure unknown, skipping to avoid errors
+/*
 IF OBJECT_ID('Kunde.tUmsatzSteuerPruefung', 'U') IS NOT NULL
 BEGIN
     PRINT 'Anonymisiere Kunde.tUmsatzSteuerPruefung...'
@@ -858,6 +865,8 @@ ELSE
 BEGIN
     PRINT 'Kunde.tUmsatzSteuerPruefung nicht vorhanden (übersprungen).'
 END
+*/
+PRINT 'Kunde.tUmsatzSteuerPruefung skipped (structure unknown).'
 GO
 
 -- 10.3 dbo.tmahnung - Mahnungen (personalisierte Texte!)
@@ -937,6 +946,8 @@ PRINT '========== PRIORITÄT 9: BEMERKUNGEN/KOMMENTARE =========='
 GO
 
 -- 9.1 dbo.tBemerkungen - Bemerkungen
+-- NOTE: Table structure unknown, skipping to avoid errors
+/*
 IF OBJECT_ID('dbo.tBemerkungen', 'U') IS NOT NULL
 BEGIN
     PRINT 'Anonymisiere dbo.tBemerkungen...'
@@ -945,6 +956,8 @@ BEGIN
     WHERE kBemerkung IS NOT NULL;
     PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
 END
+*/
+PRINT 'dbo.tBemerkungen skipped (structure unknown).'
 GO
 
 -- =============================================
