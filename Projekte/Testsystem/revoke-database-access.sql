@@ -11,7 +11,7 @@ GO
 -- Settings – adjust as needed
 ------------------------------------------------------------
 DECLARE @SourceDb   sysname = N'eazybusiness';        -- Source database
-DECLARE @LoginName  sysname = N'dbuser_dev_dana';     -- Login to revoke access from
+DECLARE @LoginName  sysname = N'dbuser_dev_dana_for_development';     -- Login to revoke access from
 
 ------------------------------------------------------------
 -- Validate that database exists

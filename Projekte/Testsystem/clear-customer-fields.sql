@@ -8,10 +8,11 @@
 -- Version: 2.0 (COMPREHENSIVE)
 -- =============================================
 
-USE eazybusiness_tm2;
+USE [$(TargetDb)];
 GO
 
 SET NOCOUNT ON;
+SET QUOTED_IDENTIFIER ON;
 GO
 
 PRINT '========================================================================='
@@ -744,13 +745,13 @@ BEGIN
     UPDATE dbo.tEMailEinstellung SET
         cNutzernameSmtp = CASE
             WHEN cNutzernameSmtp IS NOT NULL AND cNutzernameSmtp <> ''
-            THEN 'User_SMTP_' + CONVERT(NVARCHAR(30), NEWID())
+            THEN 'User_SMTP_' + CONVERT(NVARCHAR(36), NEWID())
             ELSE cNutzernameSmtp
         END,
         cPasswortSMTP = '',
         cServerSMTP = CASE
             WHEN cServerSMTP IS NOT NULL AND cServerSMTP <> ''
-            THEN 'smtp_' + CONVERT(NVARCHAR(30), NEWID()) + '.test.local'
+            THEN 'smtp_' + CONVERT(NVARCHAR(36), NEWID()) + '.test.local'
             ELSE cServerSMTP
         END,
         cSigPortalPasswort = '',

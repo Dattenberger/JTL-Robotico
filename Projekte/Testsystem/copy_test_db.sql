@@ -9,25 +9,26 @@ USE master;
 GO
 
 ------------------------------------------------------------
+------------------------------------------------------------
 -- 0. Settings – bei Bedarf anpassen
 ------------------------------------------------------------
 DECLARE @SourceDb   sysname       = N'eazybusiness';          -- Quell-DB
-DECLARE @TargetDb   sysname       = N'eazybusiness_tm2';     -- Ziel-DB
+DECLARE @TargetDb   sysname       = N'$(TargetDb)';          -- Ziel-DB via SQLCMD
 DECLARE @BackupFile nvarchar(260) = N'C:\work\eazybusiness_to_test.bak';  -- Pfad zum Backup
-DECLARE @LoginName  sysname       = N'dbuser_dev_dana';          -- EXISTIERENDER Server-Login
 
 ------------------------------------------------------------
 -- 1. Prüfen, ob Quell-DB sowie der User existiert
 ------------------------------------------------------------
+-- SAFETY CHECK: Ensure Target Database is NOT eazybusiness
+IF @TargetDb = 'eazybusiness'
+BEGIN
+    RAISERROR('CRITICAL ERROR: Target database cannot be [eazybusiness]! Operation aborted.', 20, 1) WITH LOG;
+    RETURN;
+END
+
 IF DB_ID(@SourceDb) IS NULL
     BEGIN
         RAISERROR('Quell-Datenbank %s existiert nicht.', 16, 1, @SourceDb);
-        RETURN;
-    END
-
-IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @LoginName)
-    BEGIN
-        RAISERROR('Der Login %s existiert nicht auf dem Server. Bitte zuerst anlegen.', 16, 1, @LoginName);
         RETURN;
     END
 
@@ -41,117 +42,104 @@ DECLARE
     @Sql             nvarchar(max);
 
 ------------------------------------------------------------
--- 2. Wenn Test-DB noch NICHT existiert: COPY_ONLY-Backup + Restore
+-- 2. COPY_ONLY-Backup + Restore (Overwrite if exists)
 ------------------------------------------------------------
-IF DB_ID(@TargetDb) IS NULL
-    BEGIN
-        PRINT 'Test-Datenbank existiert noch nicht. Erstelle Copy-Only-Backup und stelle neue DB her...';
 
-        --------------------------------------------------------
-        -- 2.1 Dateiinformationen der Quell-DB ermitteln
-        --------------------------------------------------------
-        SELECT
-            @DataSourceLogicalName = mf.name,
-            @DataSourcePhysical    = mf.physical_name
-        FROM sys.master_files mf
-        WHERE mf.database_id = DB_ID(@SourceDb)
-          AND mf.type_desc = 'ROWS';
-
-        SELECT
-            @LogSourceLogicalName = mf.name,
-            @LogSourcePhysical    = mf.physical_name
-        FROM sys.master_files mf
-        WHERE mf.database_id = DB_ID(@SourceDb)
-          AND mf.type_desc = 'LOG';
-
-        IF @DataSourceLogicalName IS NULL OR @LogSourceLogicalName IS NULL
-            BEGIN
-                RAISERROR('Konnte Dateiinformationen der Quell-Datenbank nicht ermitteln.', 16, 1);
-                RETURN;
-            END
-
-        -- Annahme: der DB-Name steckt im Pfad. Falls nicht, hier ggf. hart anpassen.
-        SET @DataRestorePhysical = REPLACE(@DataSourcePhysical, @SourceDb, @TargetDb);
-        SET @LogRestorePhysical  = REPLACE(@LogSourcePhysical,  @SourceDb, @TargetDb);
-
-        PRINT 'Quelldatei (Daten): ' + @DataSourcePhysical;
-        PRINT 'Quelldatei (Log):   ' + @LogSourcePhysical;
-        PRINT 'Zieldatei (Daten): ' + @DataRestorePhysical;
-        PRINT 'Zieldatei (Log):   ' + @LogRestorePhysical;
-
-        --------------------------------------------------------
-        -- 2.2 COPY_ONLY-Backup erzeugen
-        --------------------------------------------------------
-        PRINT 'Erzeuge COPY_ONLY-Backup der Quell-Datenbank...';
-
-        SET @Sql = N'
-        BACKUP DATABASE [' + @SourceDb + N']
-        TO DISK = N''' + @BackupFile + N'''
-        WITH INIT, COPY_ONLY, STATS = 10;
-    ';
-
-        PRINT @Sql;  -- Debug-Ausgabe, damit du siehst, was wirklich ausgeführt wird
-        EXEC (@Sql);
-
-        --------------------------------------------------------
-        -- 2.3 Restore als neue Test-DB
-        --------------------------------------------------------
-        PRINT 'Stelle Test-Datenbank aus Copy-Only-Backup wieder her...';
-
-        SET @Sql = N'
-        RESTORE DATABASE [' + @TargetDb + N']
-        FROM DISK = N''' + @BackupFile + N'''
-        WITH
-          MOVE N''' + @DataSourceLogicalName + N''' TO N''' + @DataRestorePhysical + N''',
-          MOVE N''' + @LogSourceLogicalName + N''' TO N''' + @LogRestorePhysical  + N''',
-          STATS = 10;
-    ';
-
-        PRINT @Sql;  -- Debug-Ausgabe, damit du siehst, was wirklich ausgeführt wird
-
-        EXEC (@Sql);
-
-    END
+-- If Target DB exists, kick out users and drop it (or just replace, but drop is cleaner for full reset)
+IF DB_ID(@TargetDb) IS NOT NULL
+BEGIN
+    PRINT 'Test-Datenbank [' + @TargetDb + '] existiert bereits. Trenne Verbindungen und bereite Überschreiben vor...';
+    
+    SET @Sql = N'ALTER DATABASE [' + @TargetDb + N'] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;';
+    EXEC (@Sql);
+    
+    -- We can either DROP or just RESTORE WITH REPLACE. 
+    -- RESTORE WITH REPLACE is safer if we want to keep file locations, but here we calculate them anyway.
+    -- Let's use RESTORE WITH REPLACE logic below implicitly, but setting SINGLE_USER ensures no locks.
+END
 ELSE
-    BEGIN
-        PRINT 'Test-Datenbank [' + @TargetDb + '] existiert bereits – es wird KEIN Restore durchgeführt.';
-    END
+BEGIN
+    PRINT 'Test-Datenbank existiert noch nicht. Erstelle neu...';
+END
 
-------------------------------------------------------------
--- 4. Benutzer in Test-DB anlegen (falls nötig) + db_owner vergeben
-------------------------------------------------------------
+--------------------------------------------------------
+-- 2.1 Dateiinformationen der Quell-DB ermitteln
+--------------------------------------------------------
+SELECT
+    @DataSourceLogicalName = mf.name,
+    @DataSourcePhysical    = mf.physical_name
+FROM sys.master_files mf
+WHERE mf.database_id = DB_ID(@SourceDb)
+  AND mf.type_desc = 'ROWS';
 
-IF DB_ID(@TargetDb) IS NULL
+SELECT
+    @LogSourceLogicalName = mf.name,
+    @LogSourcePhysical    = mf.physical_name
+FROM sys.master_files mf
+WHERE mf.database_id = DB_ID(@SourceDb)
+  AND mf.type_desc = 'LOG';
+
+IF @DataSourceLogicalName IS NULL OR @LogSourceLogicalName IS NULL
     BEGIN
-        RAISERROR('Zieldatenbank %s existiert nicht – Nutzer kann nicht angelegt werden.', 16, 1, @TargetDb);
+        RAISERROR('Konnte Dateiinformationen der Quell-Datenbank nicht ermitteln.', 16, 1);
         RETURN;
     END
 
-DECLARE @UserSql    nvarchar(max);
+-- Annahme: der DB-Name steckt im Pfad. Falls nicht, hier ggf. hart anpassen.
+SET @DataRestorePhysical = REPLACE(@DataSourcePhysical, @SourceDb, @TargetDb);
+SET @LogRestorePhysical  = REPLACE(@LogSourcePhysical,  @SourceDb, @TargetDb);
 
-SET @UserSql = N'
-USE [' + @TargetDb + N'];
+PRINT 'Quelldatei (Daten): ' + @DataSourcePhysical;
+PRINT 'Quelldatei (Log):   ' + @LogSourcePhysical;
+PRINT 'Zieldatei (Daten): ' + @DataRestorePhysical;
+PRINT 'Zieldatei (Log):   ' + @LogRestorePhysical;
 
-IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N''' + @LoginName + N''')
-BEGIN
-    CREATE USER [' + @LoginName + N'] FOR LOGIN [' + @LoginName + N'];
-END;
+--------------------------------------------------------
+-- 2.2 COPY_ONLY-Backup erzeugen
+--------------------------------------------------------
+PRINT 'Erzeuge COPY_ONLY-Backup der Quell-Datenbank...';
 
-IF NOT EXISTS (
-    SELECT 1
-    FROM sys.database_role_members rm
-    JOIN sys.database_principals r ON rm.role_principal_id = r.principal_id
-    JOIN sys.database_principals u ON rm.member_principal_id = u.principal_id
-    WHERE r.name = N''db_owner'' AND u.name = N''' + @LoginName + N'''
-)
-BEGIN
-    EXEC sp_addrolemember N''db_owner'', N''' + @LoginName + N''';
-END;
+SET @Sql = N'
+BACKUP DATABASE [' + @SourceDb + N']
+TO DISK = N''' + @BackupFile + N'''
+WITH INIT, COPY_ONLY, STATS = 10;
 ';
 
-PRINT @UserSql;  -- Debug-Ausgabe, damit du siehst, was wirklich ausgeführt wird
+PRINT @Sql;  -- Debug-Ausgabe, damit du siehst, was wirklich ausgeführt wird
+EXEC (@Sql);
 
-EXEC (@UserSql);
+--------------------------------------------------------
+-- 2.3 Restore als neue Test-DB (WITH REPLACE)
+--------------------------------------------------------
+PRINT 'Stelle Test-Datenbank aus Copy-Only-Backup wieder her (Overwrite)...';
 
-PRINT 'Fertig: Test-Datenbank [' + @TargetDb + '] ist vorhanden und Login [' + @LoginName + '] hat db_owner-Rechte.';
+SET @Sql = N'
+RESTORE DATABASE [' + @TargetDb + N']
+FROM DISK = N''' + @BackupFile + N'''
+WITH
+  MOVE N''' + @DataSourceLogicalName + N''' TO N''' + @DataRestorePhysical + N''',
+  MOVE N''' + @LogSourceLogicalName + N''' TO N''' + @LogRestorePhysical  + N''',
+  REPLACE,
+  STATS = 10;
+';
+
+PRINT @Sql;  -- Debug-Ausgabe, damit du siehst, was wirklich ausgeführt wird
+
+EXEC (@Sql);
+
+--------------------------------------------------------
+-- 2.4 Recovery Model auf SIMPLE setzen (Platz sparen)
+--------------------------------------------------------
+PRINT 'Setze Recovery Model auf SIMPLE...';
+SET @Sql = N'ALTER DATABASE [' + @TargetDb + N'] SET RECOVERY SIMPLE;';
+EXEC (@Sql);
+
+--------------------------------------------------------
+-- 2.5 Datenbank auf MULTI_USER setzen (Zugriff erlauben)
+--------------------------------------------------------
+PRINT 'Setze Datenbank auf MULTI_USER...';
+SET @Sql = N'ALTER DATABASE [' + @TargetDb + N'] SET MULTI_USER;';
+EXEC (@Sql);
+
+PRINT 'Fertig: Test-Datenbank [' + @TargetDb + '] ist vorhanden.';
 GO
