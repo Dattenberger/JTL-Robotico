@@ -11,6 +11,13 @@
 USE [$(TargetDb)];
 GO
 
+-- SAFETY CHECK: Ensure Target Database is NOT eazybusiness
+IF DB_NAME() = 'eazybusiness' OR '$(TargetDb)' = 'eazybusiness'
+    BEGIN
+        RAISERROR('CRITICAL ERROR: Target database cannot be [eazybusiness]! Operation aborted.', 20, 1) WITH LOG;
+        RETURN;
+    END
+
 SET NOCOUNT ON;
 SET QUOTED_IDENTIFIER ON;
 GO
@@ -243,7 +250,8 @@ BEGIN
 END
 GO
 
--- 1.8 dbo.tfirma - Firmendaten
+--Those dont need to be anonymized -Lukas 21.11.2025
+/*-- 1.8 dbo.tfirma - Firmendaten
 IF OBJECT_ID('dbo.tfirma', 'U') IS NOT NULL
 BEGIN
     PRINT 'Anonymisiere dbo.tfirma...'
@@ -263,9 +271,9 @@ BEGIN
     WHERE kFirma IS NOT NULL;
     PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
 END
-GO
+GO*/
 
--- 1.9 dbo.tlieferant - Lieferanten
+/*-- 1.9 dbo.tlieferant - Lieferanten
 PRINT 'Anonymisiere dbo.tlieferant...'
 UPDATE dbo.tlieferant SET
     cFirma = 'cFirma_' + CAST(kLieferant AS NVARCHAR(30)),
@@ -288,7 +296,7 @@ UPDATE dbo.tlieferant SET
     cUstid = 'USTID_' + CAST(kLieferant AS NVARCHAR(30))
 WHERE kLieferant IS NOT NULL;
 PRINT 'Anonymisiert: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' Datensätze'
-GO
+GO*/
 
 -- =============================================
 -- PRIORITÄT 2: TRANSAKTIONSDATEN MIT ADRESSEN

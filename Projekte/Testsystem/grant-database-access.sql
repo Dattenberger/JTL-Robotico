@@ -15,6 +15,13 @@ DECLARE @TargetDb   sysname = N'$(TargetDb)';    -- Target database via SQLCMD
 -- DECLARE @LoginName  sysname = N'dbuser_dev_dana_for_development';     -- Login to grant access to (REPLACED BY SQLCMD VARIABLE)
 DECLARE @LoginName  sysname = N'$(LoginName)';     -- Login via SQLCMD
 
+-- SAFETY CHECK: Ensure Target Database is NOT eazybusiness
+IF @TargetDb = 'eazybusiness'
+    BEGIN
+        RAISERROR('CRITICAL ERROR: Target database cannot be [eazybusiness]! Operation aborted.', 20, 1) WITH LOG;
+        RETURN;
+    END
+
 ------------------------------------------------------------
 -- Validate that login exists
 ------------------------------------------------------------
@@ -23,7 +30,6 @@ BEGIN
     RAISERROR('Login %s does not exist on the server. Please create it first.', 16, 1, @LoginName);
     RETURN;
 END
-
 ------------------------------------------------------------
 -- Grant access to TARGET database
 ------------------------------------------------------------

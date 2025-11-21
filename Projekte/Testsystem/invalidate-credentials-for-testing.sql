@@ -6,6 +6,13 @@
 USE [$(TargetDb)]
 GO
 
+-- SAFETY CHECK: Ensure Target Database is NOT eazybusiness
+IF DB_NAME() = 'eazybusiness' OR '$(TargetDb)' = 'eazybusiness'
+    BEGIN
+        RAISERROR('CRITICAL ERROR: Target database cannot be [eazybusiness]! Operation aborted.', 20, 1) WITH LOG;
+        RETURN;
+    END
+
 BEGIN TRANSACTION
 
 BEGIN TRY
