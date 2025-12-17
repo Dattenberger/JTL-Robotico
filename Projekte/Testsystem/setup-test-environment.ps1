@@ -15,7 +15,7 @@
 .PARAMETER EasyBusinessMandant
     The suffix for the target database (e.g., 'tm2', 'tm3').
     The full database name will be 'eazybusiness_' + EasyBusinessMandant.
-    Default is 'tm2'.
+    This parameter is mandatory.
 
 .PARAMETER LoginName
     The SQL Server login name to grant access to the test database.
@@ -29,8 +29,8 @@
 #>
 
 param(
-    [Parameter(Mandatory = $false)]
-    [string]$EasyBusinessMandant = 'tm2',
+    [Parameter(Mandatory = $true)]
+    [string]$EasyBusinessMandant,
 
     [Parameter(Mandatory = $false)]
     [string]$LoginName = 'dbuser_dev_dana_for_development',
@@ -58,7 +58,7 @@ $TargetDatabase = "eazybusiness_" + $EasyBusinessMandant
 # Define the sequence of SQL scripts
 $SqlScripts = @(
     # "force-error.sql", # Uncomment to test error handling
-    #"copy_test_db.sql",
+    "copy_test_db.sql",
     "invalidate-credentials-for-testing.sql",
     "clear-customer-fields.sql",
     "grant-database-access.sql"

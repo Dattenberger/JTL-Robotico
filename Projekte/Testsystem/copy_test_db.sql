@@ -10,7 +10,7 @@ GO
 
 ------------------------------------------------------------
 ------------------------------------------------------------
--- 0. Settings – bei Bedarf anpassen
+-- 0. Settings – bei Bedarf anpassen./
 ------------------------------------------------------------
 DECLARE @SourceDb   sysname       = N'eazybusiness';          -- Quell-DB
 DECLARE @TargetDb   sysname       = N'$(TargetDb)';          -- Ziel-DB via SQLCMD
