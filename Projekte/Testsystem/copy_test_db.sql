@@ -14,7 +14,7 @@ GO
 ------------------------------------------------------------
 DECLARE @SourceDb   sysname       = N'eazybusiness';          -- Quell-DB
 DECLARE @TargetDb   sysname       = N'$(TargetDb)';          -- Ziel-DB via SQLCMD
-DECLARE @BackupFile nvarchar(260) = N'C:\work\eazybusiness_to_test.bak';  -- Pfad zum Backup
+DECLARE @BackupFile nvarchar(260) = N'E:\work\eazybusiness_to_test.bak';  -- Pfad zum Backup
 
 ------------------------------------------------------------
 -- 1. Prüfen, ob Quell-DB sowie der User existiert
