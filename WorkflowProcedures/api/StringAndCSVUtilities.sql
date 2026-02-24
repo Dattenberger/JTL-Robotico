@@ -124,6 +124,19 @@ ELSE
 GO
 
 -- ============================================================================
+-- Transactional Deployment
+-- ============================================================================
+-- SET XACT_ABORT ON sorgt dafuer, dass bei jedem Fehler die Transaction
+-- automatisch als "doomed" markiert wird. Nachfolgende Batches koennen dann
+-- nicht mehr schreiben und am Ende wird alles zurueckgerollt.
+-- ============================================================================
+SET XACT_ABORT ON
+GO
+
+BEGIN TRANSACTION
+GO
+
+-- ============================================================================
 -- ============================================================================
 --                         STRING FUNCTIONS
 -- ============================================================================
@@ -148,13 +161,7 @@ GO
 --   -- Returns: 'HelloWorld'
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.objects
-          WHERE Name = 'fnStringStripWhitespace'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP FUNCTION Robotico.fnStringStripWhitespace
-GO
-
-CREATE FUNCTION Robotico.fnStringStripWhitespace(@str NVARCHAR(MAX))
+CREATE OR ALTER FUNCTION Robotico.fnStringStripWhitespace(@str NVARCHAR(MAX))
 RETURNS NVARCHAR(MAX)
 AS
 BEGIN
@@ -197,13 +204,7 @@ GO
 --       -- History hat Inhalt, letzte Entry parsen
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.objects
-          WHERE Name = 'fnStringIsEffectivelyEmpty'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP FUNCTION Robotico.fnStringIsEffectivelyEmpty
-GO
-
-CREATE FUNCTION Robotico.fnStringIsEffectivelyEmpty(@str NVARCHAR(MAX))
+CREATE OR ALTER FUNCTION Robotico.fnStringIsEffectivelyEmpty(@str NVARCHAR(MAX))
 RETURNS BIT
 AS
 BEGIN
@@ -246,13 +247,7 @@ GO
 --   SELECT Robotico.fnStringCountLines('A' + CHAR(10))                   -- 2 (trailing LF)
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.objects
-          WHERE Name = 'fnStringCountLines'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP FUNCTION Robotico.fnStringCountLines
-GO
-
-CREATE FUNCTION Robotico.fnStringCountLines(@str NVARCHAR(MAX))
+CREATE OR ALTER FUNCTION Robotico.fnStringCountLines(@str NVARCHAR(MAX))
 RETURNS INT
 AS
 BEGIN
@@ -289,13 +284,7 @@ GO
 --       SET @existingHistory = Robotico.fnStringTrimToMaxLines(@existingHistory, @MAX_ENTRIES);
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.objects
-          WHERE Name = 'fnStringTrimToMaxLines'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP FUNCTION Robotico.fnStringTrimToMaxLines
-GO
-
-CREATE FUNCTION Robotico.fnStringTrimToMaxLines(
+CREATE OR ALTER FUNCTION Robotico.fnStringTrimToMaxLines(
     @str NVARCHAR(MAX),
     @maxLines INT
 )
@@ -355,13 +344,7 @@ GO
 --   SELECT Robotico.fnStringParseGermanDecimal(NULL)         -- NULL
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.objects
-          WHERE Name = 'fnStringParseGermanDecimal'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP FUNCTION Robotico.fnStringParseGermanDecimal
-GO
-
-CREATE FUNCTION Robotico.fnStringParseGermanDecimal(@value NVARCHAR(100))
+CREATE OR ALTER FUNCTION Robotico.fnStringParseGermanDecimal(@value NVARCHAR(100))
 RETURNS DECIMAL(25,13)
 AS
 BEGIN
@@ -423,13 +406,7 @@ GO
 --   SET @clean = Robotico.fnEscapedCSVSanitize(@dirtyInput, NULL);
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.objects
-          WHERE Name = 'fnEscapedCSVSanitize'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP FUNCTION Robotico.fnEscapedCSVSanitize
-GO
-
-CREATE FUNCTION Robotico.fnEscapedCSVSanitize(
+CREATE OR ALTER FUNCTION Robotico.fnEscapedCSVSanitize(
     @input NVARCHAR(MAX),
     @defaultValue NVARCHAR(100) = NULL
 )
@@ -493,13 +470,7 @@ GO
 --   FROM Robotico.fnEscapedCSVParseLine(@lastEntry, ';');
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.objects
-          WHERE Name = 'fnEscapedCSVParseLine'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP FUNCTION Robotico.fnEscapedCSVParseLine
-GO
-
-CREATE FUNCTION Robotico.fnEscapedCSVParseLine(
+CREATE OR ALTER FUNCTION Robotico.fnEscapedCSVParseLine(
     @line NVARCHAR(MAX),
     @separator NCHAR(1) = ';'
 )
@@ -539,13 +510,7 @@ GO
 --   SELECT Robotico.fnEscapedCSVGetField('A; B; C', 4, ';')   -- NULL
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.objects
-          WHERE Name = 'fnEscapedCSVGetField'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP FUNCTION Robotico.fnEscapedCSVGetField
-GO
-
-CREATE FUNCTION Robotico.fnEscapedCSVGetField(
+CREATE OR ALTER FUNCTION Robotico.fnEscapedCSVGetField(
     @csvLine NVARCHAR(MAX),
     @fieldIndex INT,
     @separator NCHAR(1) = ';'
@@ -589,13 +554,7 @@ GO
 --   SET @lastEntry = Robotico.fnEscapedCSVGetLastLine(@existingHistory);
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.objects
-          WHERE Name = 'fnEscapedCSVGetLastLine'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP FUNCTION Robotico.fnEscapedCSVGetLastLine
-GO
-
-CREATE FUNCTION Robotico.fnEscapedCSVGetLastLine(@multiLineCSV NVARCHAR(MAX))
+CREATE OR ALTER FUNCTION Robotico.fnEscapedCSVGetLastLine(@multiLineCSV NVARCHAR(MAX))
 RETURNS NVARCHAR(MAX)
 AS
 BEGIN
@@ -625,26 +584,38 @@ PRINT '+ Function Robotico.fnEscapedCSVGetLastLine created';
 GO
 
 -- ============================================================================
--- Deployment Summary
+-- Transaction Commit / Rollback
 -- ============================================================================
-PRINT '';
-PRINT '============================================================================';
-PRINT 'String & EscapedCSV Utility Functions deployed successfully!';
-PRINT '============================================================================';
-PRINT '';
-PRINT 'String Functions:';
-PRINT '  1. Robotico.fnStringStripWhitespace        (NVARCHAR)';
-PRINT '  2. Robotico.fnStringIsEffectivelyEmpty     (BIT)';
-PRINT '  3. Robotico.fnStringCountLines              (INT)';
-PRINT '  4. Robotico.fnStringTrimToMaxLines          (NVARCHAR) -> nutzt #3';
-PRINT '  5. Robotico.fnStringParseGermanDecimal      (DECIMAL)';
-PRINT '';
-PRINT 'EscapedCSV API:';
-PRINT '  6. Robotico.fnEscapedCSVSanitize            (NVARCHAR) [Write]';
-PRINT '  7. Robotico.fnEscapedCSVParseLine           (TABLE)    [Read - iTVF]';
-PRINT '  8. Robotico.fnEscapedCSVGetField            (NVARCHAR) [Read] -> nutzt #7';
-PRINT '  9. Robotico.fnEscapedCSVGetLastLine         (NVARCHAR) [Read]';
-PRINT '';
-PRINT '============================================================================';
-PRINT '';
+IF XACT_STATE() = 1
+BEGIN
+    COMMIT TRANSACTION;
+    PRINT '';
+    PRINT '============================================================================';
+    PRINT 'String & EscapedCSV Utility Functions deployed successfully!';
+    PRINT '============================================================================';
+    PRINT '';
+    PRINT 'String Functions:';
+    PRINT '  1. Robotico.fnStringStripWhitespace        (NVARCHAR)';
+    PRINT '  2. Robotico.fnStringIsEffectivelyEmpty     (BIT)';
+    PRINT '  3. Robotico.fnStringCountLines              (INT)';
+    PRINT '  4. Robotico.fnStringTrimToMaxLines          (NVARCHAR) -> nutzt #3';
+    PRINT '  5. Robotico.fnStringParseGermanDecimal      (DECIMAL)';
+    PRINT '';
+    PRINT 'EscapedCSV API:';
+    PRINT '  6. Robotico.fnEscapedCSVSanitize            (NVARCHAR) [Write]';
+    PRINT '  7. Robotico.fnEscapedCSVParseLine           (TABLE)    [Read - iTVF]';
+    PRINT '  8. Robotico.fnEscapedCSVGetField            (NVARCHAR) [Read] -> nutzt #7';
+    PRINT '  9. Robotico.fnEscapedCSVGetLastLine         (NVARCHAR) [Read]';
+    PRINT '';
+    PRINT '============================================================================';
+    PRINT '';
+END
+ELSE
+BEGIN
+    IF XACT_STATE() = -1
+        ROLLBACK TRANSACTION;
+    PRINT '';
+    PRINT '!!! DEPLOYMENT FAILED - Alle Aenderungen wurden zurueckgerollt !!!';
+    PRINT '';
+END
 GO

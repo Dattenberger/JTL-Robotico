@@ -1,11 +1,10 @@
-USE eazybusiness
+SET XACT_ABORT ON
 GO
 
-IF EXISTS(SELECT 1 FROM sys.procedures WHERE Name = 'spArticleUpdateAllHistory' AND schema_id = SCHEMA_ID('CustomWorkflows'))
-    DROP PROCEDURE CustomWorkflows.spArticleUpdateAllHistory
+BEGIN TRANSACTION
 GO
 
-CREATE PROCEDURE CustomWorkflows.spArticleUpdateAllHistory
+CREATE OR ALTER PROCEDURE CustomWorkflows.spArticleUpdateAllHistory
     @kArtikel INT,
     @userName NVARCHAR(100) = NULL
 AS
@@ -32,10 +31,21 @@ BEGIN
 END
 GO
 
-EXEC CustomWorkflows._CheckAction @actionName = 'spArticleUpdateAllHistory'
-GO
+IF XACT_STATE() = 1
+BEGIN
+    COMMIT TRANSACTION;
+    PRINT '+ Stored Procedure CustomWorkflows.spArticleUpdateAllHistory deployed';
 
-EXEC CustomWorkflows._SetActionDisplayName
-    @actionName = 'spArticleUpdateAllHistory',
-    @displayName = 'Historie: Alle aktualisieren'
+    EXEC CustomWorkflows._CheckAction @actionName = 'spArticleUpdateAllHistory';
+
+    EXEC CustomWorkflows._SetActionDisplayName
+        @actionName = 'spArticleUpdateAllHistory',
+        @displayName = 'Historie: Alle aktualisieren';
+END
+ELSE
+BEGIN
+    IF XACT_STATE() = -1
+        ROLLBACK TRANSACTION;
+    PRINT '! DEPLOYMENT FAILED - Alle Aenderungen wurden zurueckgerollt';
+END
 GO

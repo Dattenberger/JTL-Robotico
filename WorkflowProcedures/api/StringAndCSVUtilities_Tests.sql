@@ -23,6 +23,10 @@
 -- Date: 2026-02-24
 -- ============================================================================
 
+IF OBJECT_ID('tempdb..#TestResults') IS NOT NULL DROP TABLE #TestResults;
+CREATE TABLE #TestResults (testName NVARCHAR(100), passed INT, total INT);
+GO
+
 PRINT '============================================================================';
 PRINT 'String & EscapedCSV Utility Functions - Test Suite';
 PRINT '============================================================================';
@@ -59,6 +63,7 @@ BEGIN PRINT '  + Spaces preserved'; SET @t1_passed += 1; END
 ELSE PRINT '  x Space preservation: FAILED';
 
 PRINT '  Result: ' + CAST(@t1_passed AS NVARCHAR(5)) + '/' + CAST(@t1_total AS NVARCHAR(5)) + ' passed';
+INSERT INTO #TestResults VALUES ('fnStringStripWhitespace', @t1_passed, @t1_total);
 PRINT '';
 GO
 
@@ -101,6 +106,7 @@ BEGIN PRINT '  + Whitespace+Data+Whitespace -> 0 (not empty)'; SET @t2_passed +=
 ELSE PRINT '  x Whitespace+Data+Whitespace: FAILED (expected 0)';
 
 PRINT '  Result: ' + CAST(@t2_passed AS NVARCHAR(5)) + '/' + CAST(@t2_total AS NVARCHAR(5)) + ' passed';
+INSERT INTO #TestResults VALUES ('fnStringIsEffectivelyEmpty', @t2_passed, @t2_total);
 PRINT '';
 GO
 
@@ -143,6 +149,7 @@ BEGIN PRINT '  + Trailing LF -> 2 (empty trailing line counted)'; SET @t3_passed
 ELSE PRINT '  x Trailing LF: FAILED (got: ' + CAST(Robotico.fnStringCountLines('A' + CHAR(10)) AS NVARCHAR(10)) + ')';
 
 PRINT '  Result: ' + CAST(@t3_passed AS NVARCHAR(5)) + '/' + CAST(@t3_total AS NVARCHAR(5)) + ' passed';
+INSERT INTO #TestResults VALUES ('fnStringCountLines', @t3_passed, @t3_total);
 PRINT '';
 GO
 
@@ -187,6 +194,7 @@ BEGIN PRINT '  + maxLines=0 -> NULL (guarded)'; SET @t4_passed += 1; END
 ELSE PRINT '  x maxLines=0: FAILED (expected NULL)';
 
 PRINT '  Result: ' + CAST(@t4_passed AS NVARCHAR(5)) + '/' + CAST(@t4_total AS NVARCHAR(5)) + ' passed';
+INSERT INTO #TestResults VALUES ('fnStringTrimToMaxLines', @t4_passed, @t4_total);
 PRINT '';
 GO
 
@@ -232,6 +240,7 @@ BEGIN PRINT '  + "abc" -> NULL (invalid)'; SET @t5_passed += 1; END
 ELSE PRINT '  x "abc": FAILED (expected NULL)';
 
 PRINT '  Result: ' + CAST(@t5_passed AS NVARCHAR(5)) + '/' + CAST(@t5_total AS NVARCHAR(5)) + ' passed';
+INSERT INTO #TestResults VALUES ('fnStringParseGermanDecimal', @t5_passed, @t5_total);
 PRINT '';
 GO
 
@@ -290,6 +299,7 @@ BEGIN PRINT '  + Empty without default -> NULL'; SET @t6_passed += 1; END
 ELSE PRINT '  x Empty without default: FAILED (expected NULL)';
 
 PRINT '  Result: ' + CAST(@t6_passed AS NVARCHAR(5)) + '/' + CAST(@t6_total AS NVARCHAR(5)) + ' passed';
+INSERT INTO #TestResults VALUES ('fnEscapedCSVSanitize', @t6_passed, @t6_total);
 PRINT '';
 GO
 
@@ -334,6 +344,7 @@ BEGIN PRINT '  + Values auto-trimmed: "  A  " -> "A"'; SET @t7_passed += 1; END
 ELSE PRINT '  x Auto-trim: FAILED (got: "' + ISNULL(@t7_trimCheck, 'NULL') + '")';
 
 PRINT '  Result: ' + CAST(@t7_passed AS NVARCHAR(5)) + '/' + CAST(@t7_total AS NVARCHAR(5)) + ' passed';
+INSERT INTO #TestResults VALUES ('fnEscapedCSVParseLine', @t7_passed, @t7_total);
 PRINT '';
 GO
 
@@ -378,6 +389,7 @@ BEGIN PRINT '  + NULL input -> NULL'; SET @t8_passed += 1; END
 ELSE PRINT '  x NULL input: FAILED';
 
 PRINT '  Result: ' + CAST(@t8_passed AS NVARCHAR(5)) + '/' + CAST(@t8_total AS NVARCHAR(5)) + ' passed';
+INSERT INTO #TestResults VALUES ('fnEscapedCSVGetField', @t8_passed, @t8_total);
 PRINT '';
 GO
 
@@ -419,6 +431,7 @@ BEGIN PRINT '  + Trailing CRLF -> "Line2" (not empty)'; SET @t9_passed += 1; END
 ELSE PRINT '  x Trailing CRLF: FAILED (got: "' + ISNULL(@t9_trailing_result, 'NULL') + '")';
 
 PRINT '  Result: ' + CAST(@t9_passed AS NVARCHAR(5)) + '/' + CAST(@t9_total AS NVARCHAR(5)) + ' passed';
+INSERT INTO #TestResults VALUES ('fnEscapedCSVGetLastLine', @t9_passed, @t9_total);
 PRINT '';
 GO
 
@@ -473,19 +486,51 @@ BEGIN PRINT '  + Buffer field: "' + @puffer + '"'; SET @ti_passed += 1; END
 ELSE PRINT '  x Buffer field: FAILED (got: "' + ISNULL(@puffer, 'NULL') + '")';
 
 PRINT '  Result: ' + CAST(@ti_passed AS NVARCHAR(5)) + '/' + CAST(@ti_total AS NVARCHAR(5)) + ' passed';
+INSERT INTO #TestResults VALUES ('Integration Test', @ti_passed, @ti_total);
 PRINT '';
 GO
 
 -- ============================================================================
 -- Test Summary
 -- ============================================================================
+DECLARE @totalPassed INT, @totalTests INT, @failedSections INT, @sectionCount INT;
+SELECT @totalPassed = SUM(passed),
+       @totalTests = SUM(total),
+       @failedSections = SUM(CASE WHEN passed < total THEN 1 ELSE 0 END),
+       @sectionCount = COUNT(*)
+FROM #TestResults;
+
 PRINT '============================================================================';
-PRINT 'Test Suite Complete';
+IF @failedSections = 0
+BEGIN
+    PRINT 'ALL TESTS PASSED: '
+        + CAST(@totalPassed AS NVARCHAR(5)) + '/'
+        + CAST(@totalTests AS NVARCHAR(5)) + ' checks in '
+        + CAST(@sectionCount AS NVARCHAR(5)) + ' test sections';
+END
+ELSE
+BEGIN
+    PRINT 'TESTS FAILED: '
+        + CAST(@totalPassed AS NVARCHAR(5)) + '/'
+        + CAST(@totalTests AS NVARCHAR(5)) + ' checks passed, '
+        + CAST(@failedSections AS NVARCHAR(5)) + ' section(s) with failures:';
+    PRINT '';
+
+    DECLARE @failName NVARCHAR(100), @failPassed INT, @failTotal INT;
+    DECLARE failCursor CURSOR LOCAL FAST_FORWARD FOR
+        SELECT testName, passed, total FROM #TestResults WHERE passed < total;
+    OPEN failCursor;
+    FETCH NEXT FROM failCursor INTO @failName, @failPassed, @failTotal;
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        PRINT '  x ' + @failName + ': ' + CAST(@failPassed AS NVARCHAR(5)) + '/' + CAST(@failTotal AS NVARCHAR(5));
+        FETCH NEXT FROM failCursor INTO @failName, @failPassed, @failTotal;
+    END
+    CLOSE failCursor;
+    DEALLOCATE failCursor;
+END
 PRINT '============================================================================';
 PRINT '';
-PRINT 'All tests executed using function calls only (no DB changes).';
-PRINT '';
-PRINT 'Review the output above for any x FAILED indicators.';
-PRINT 'All tests with + markers have passed successfully.';
-PRINT '';
+
+DROP TABLE #TestResults;
 GO

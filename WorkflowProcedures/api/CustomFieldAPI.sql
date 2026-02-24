@@ -23,10 +23,19 @@
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'Robotico')
 BEGIN
     EXEC('CREATE SCHEMA Robotico');
-    PRINT '✓ Schema Robotico created';
+    PRINT '+ Schema Robotico created';
 END
 ELSE
-    PRINT '✓ Schema Robotico already exists';
+    PRINT '= Schema Robotico already exists';
+GO
+
+-- ============================================================================
+-- Transactional Deployment
+-- ============================================================================
+SET XACT_ABORT ON
+GO
+
+BEGIN TRANSACTION
 GO
 
 -- ============================================================================
@@ -61,13 +70,7 @@ GO
 --   WHERE Robotico.fnGetArticleCustomFieldValue(a.kArtikel, 'Vergangene Preise', 0) IS NOT NULL;
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.objects
-          WHERE Name = 'fnGetArticleCustomFieldValue'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP FUNCTION Robotico.fnGetArticleCustomFieldValue
-GO
-
-CREATE FUNCTION Robotico.fnGetArticleCustomFieldValue
+CREATE OR ALTER FUNCTION Robotico.fnGetArticleCustomFieldValue
 (
     @kArtikel INT,
     @fieldName NVARCHAR(255),
@@ -98,7 +101,7 @@ BEGIN
 END
 GO
 
-PRINT '✓ Function Robotico.fnGetArticleCustomFieldValue created';
+PRINT '+ Function Robotico.fnGetArticleCustomFieldValue created';
 GO
 
 -- ============================================================================
@@ -128,13 +131,7 @@ GO
 --   -1 - Error (custom field definition not found)
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.procedures
-          WHERE Name = 'spEnsureArticleCustomField'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP PROCEDURE Robotico.spEnsureArticleCustomField
-GO
-
-CREATE PROCEDURE Robotico.spEnsureArticleCustomField
+CREATE OR ALTER PROCEDURE Robotico.spEnsureArticleCustomField
     @kArtikel INT,
     @fieldName NVARCHAR(255),
     @kSprache INT = 0,  -- Default: German
@@ -242,7 +239,7 @@ BEGIN
 END
 GO
 
-PRINT '✓ Stored Procedure Robotico.spEnsureArticleCustomField created';
+PRINT '+ Stored Procedure Robotico.spEnsureArticleCustomField created';
 GO
 
 -- ============================================================================
@@ -292,13 +289,7 @@ GO
 --       PRINT 'Error writing value';
 -- ============================================================================
 
-IF EXISTS(SELECT 1 FROM sys.procedures
-          WHERE Name = 'spSetArticleCustomFieldValue'
-          AND schema_id = SCHEMA_ID('Robotico'))
-    DROP PROCEDURE Robotico.spSetArticleCustomFieldValue
-GO
-
-CREATE PROCEDURE Robotico.spSetArticleCustomFieldValue
+CREATE OR ALTER PROCEDURE Robotico.spSetArticleCustomFieldValue
     @kArtikel INT,
     @fieldName NVARCHAR(255),
     @newValue NVARCHAR(MAX),
@@ -342,24 +333,36 @@ BEGIN
 END
 GO
 
-PRINT '✓ Stored Procedure Robotico.spSetArticleCustomFieldValue created';
+PRINT '+ Stored Procedure Robotico.spSetArticleCustomFieldValue created';
 GO
 
 -- ============================================================================
--- Deployment Summary
+-- Transaction Commit / Rollback
 -- ============================================================================
-PRINT '';
-PRINT '============================================================================';
-PRINT 'Generic Article Custom Field API deployed successfully!';
-PRINT '============================================================================';
-PRINT '';
-PRINT 'Public API (use these in your workflows):';
-PRINT '  - Robotico.fnGetArticleCustomFieldValue      (Function for SELECT statements)';
-PRINT '  - Robotico.spSetArticleCustomFieldValue      (SP for writing values)';
-PRINT '';
-PRINT 'Internal Helper (used by spSetArticleCustomFieldValue):';
-PRINT '  - Robotico.spEnsureArticleCustomField        (Auto-creates bindings)';
-PRINT '';
-PRINT '============================================================================';
-PRINT '';
+IF XACT_STATE() = 1
+BEGIN
+    COMMIT TRANSACTION;
+    PRINT '';
+    PRINT '============================================================================';
+    PRINT 'Generic Article Custom Field API deployed successfully!';
+    PRINT '============================================================================';
+    PRINT '';
+    PRINT 'Public API (use these in your workflows):';
+    PRINT '  - Robotico.fnGetArticleCustomFieldValue      (Function for SELECT statements)';
+    PRINT '  - Robotico.spSetArticleCustomFieldValue      (SP for writing values)';
+    PRINT '';
+    PRINT 'Internal Helper (used by spSetArticleCustomFieldValue):';
+    PRINT '  - Robotico.spEnsureArticleCustomField        (Auto-creates bindings)';
+    PRINT '';
+    PRINT '============================================================================';
+    PRINT '';
+END
+ELSE
+BEGIN
+    IF XACT_STATE() = -1
+        ROLLBACK TRANSACTION;
+    PRINT '';
+    PRINT '!!! DEPLOYMENT FAILED - Alle Aenderungen wurden zurueckgerollt !!!';
+    PRINT '';
+END
 GO
