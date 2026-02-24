@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "Deploy Test Environment:tm2-dana": "powershell -ExecutionPolicy Bypass -File \"Projekte/Testsystem/setup-test-environment.ps1\" -EasyBusinessMandant tm2",
+    "Deploy Test Environment:tm3-sanda": "powershell -ExecutionPolicy Bypass -File \"Projekte/Testsystem/setup-test-environment.ps1\" -EasyBusinessMandant tm3"
+  },
   "dependencies": {
     "@openai/codex": "^0.16.0"
   }
