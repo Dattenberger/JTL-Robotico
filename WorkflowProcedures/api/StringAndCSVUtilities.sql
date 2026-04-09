@@ -348,14 +348,18 @@ CREATE OR ALTER FUNCTION Robotico.fnStringParseGermanDecimal(@value NVARCHAR(100
 RETURNS DECIMAL(25,13)
 AS
 BEGIN
-    IF @value IS NULL OR LEN(LTRIM(RTRIM(@value))) = 0
-        RETURN NULL;
-
+    -- Single-RETURN-Pfad mit CASE-Ausdruck erlaubt Scalar-UDF-Inlining
+    -- (SQL Server 2019+: Funktionen mit multiplen RETURN-Statements sind
+    --  nicht inlineable). Semantisch identisch zur vorherigen Version.
     -- 1. Tausender-Punkte entfernen, 2. Dezimal-Komma durch Punkt ersetzen
-    RETURN TRY_CAST(
-        REPLACE(REPLACE(@value, '.', ''), ',', '.')
-        AS DECIMAL(25,13)
-    );
+    RETURN
+        CASE
+            WHEN @value IS NULL OR LEN(LTRIM(RTRIM(@value))) = 0 THEN NULL
+            ELSE TRY_CAST(
+                REPLACE(REPLACE(@value, '.', ''), ',', '.')
+                AS DECIMAL(25,13)
+            )
+        END;
 END
 GO
 
