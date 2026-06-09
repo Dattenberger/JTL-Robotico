@@ -1,0 +1,29 @@
+{%- comment -%}
+Erweiterte Eigenschaft (Bedingung) fuer JTL-Workflows - Workflowobjekt Auftrag.
+
+Gibt das Wort WAHR zurueck, wenn der aktuelle Auftrag eine duplizierte
+Bestellung ist - d.h. es existiert ein AELTERER, identischer Auftrag desselben
+Kunden (gleiche Bruttosumme + identische Positionen) innerhalb von 24 Stunden.
+Sonst FALSCH. Der aelteste Auftrag einer Duplikatgruppe ist FALSCH, jeder
+spaetere ist WAHR (Erkennung greift ab dem 2. Auftrag).
+
+Verwendung:
+  - Rueckgabetyp der erweiterten Eigenschaft: Text.
+  - In der Workflow-Bedingung gegen den Wert 'WAHR' pruefen.
+  - Vorgang.Stammdaten.InterneAuftragsnummer == kBestellung
+    == Verkauf.tAuftrag.kAuftrag.
+
+Voraussetzung: Robotico.fnHasOlderDuplicateOrder ist deployt
+(WorkflowProcedures/Duplikaterkennung_Bestellungen.sql). Details:
+docs/SQL/JTL-CUSTOM-WORKFLOWS.md.
+{%- endcomment -%}
+{% capture query -%}
+DECLARE @kAuftrag AS INT = {{ Vorgang.Stammdaten.InterneAuftragsnummer }};
+
+SELECT CASE
+           WHEN Robotico.fnHasOlderDuplicateOrder(@kAuftrag, 24) = 1
+           THEN 'WAHR'
+           ELSE 'FALSCH'
+       END;
+{% endcapture -%}
+{{ query | DirectQueryScalar }}

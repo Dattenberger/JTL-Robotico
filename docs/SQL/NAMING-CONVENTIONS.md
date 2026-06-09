@@ -142,7 +142,6 @@ illustrate the conventions end to end:
 | `Robotico.fnFindDuplicateOrders` | inline TVF | `fn` prefix; output column `bIsOlderThanInput` (`b` = BIT); `@kAuftrag` keeps the JTL key name |
 | `Robotico.fnHasOlderDuplicateOrder` | scalar fn (BIT) | `fn` prefix; predicate style `Has…`; English feature name |
 | `Robotico.spCheckDuplicateOrder` | stored procedure | `sp` prefix; result-set column `bIsDuplicate` (`b` = BIT); plain `sp` (no `spPub_`) |
-| `CustomWorkflows.spCheckDuplicateOrder` | stored procedure (registered action) | thin wrapper; lives in `CustomWorkflows`; first parameter is the workflow object PK `@kAuftrag` |
 
 ---
 

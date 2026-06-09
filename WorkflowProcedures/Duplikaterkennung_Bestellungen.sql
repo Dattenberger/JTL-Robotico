@@ -96,23 +96,19 @@
 -- USE IN A JTL WORKFLOW
 -- ============================================================================
 --
--- There are two surfaces:
+-- A JTL custom ACTION cannot return a boolean that gates the workflow (actions
+-- are fire-and-forget; see docs/SQL/JTL-CUSTOM-WORKFLOWS.md). The truth value is
+-- consumed through a "erweiterte Eigenschaft" (advanced property, DotLiquid)
+-- used as a Bedingung. The shipped property
+-- "Workflows/Auftrag - Ist Duplikat.liquid" returns the word
+-- WAHR / FALSCH via DirectQueryScalar:
 --
--- (A) CONDITION (gates the workflow) - RECOMMENDED for branching. A JTL custom
---     ACTION cannot return a boolean that gates the workflow (actions are
---     fire-and-forget; verified via the CustomWorkflows action infrastructure
---     and JTL docs). Use an SQL/advanced condition on "Auftrag -> wurde erstellt":
+--     DECLARE @kAuftrag INT = {{ Vorgang.Stammdaten.InterneAuftragsnummer }};
+--     SELECT CASE WHEN Robotico.fnHasOlderDuplicateOrder(@kAuftrag, 24) = 1
+--                 THEN 'WAHR' ELSE 'FALSCH' END;
 --
---         SELECT 1 WHERE Robotico.fnHasOlderDuplicateOrder(:kAuftrag, 24) = 1
---
---     (condition is met when the query returns a row). Configure the follow-up
---     (staff e-mail, hold, note) as native JTL actions on that workflow.
---
--- (B) ACTION (registered) - CustomWorkflows.spCheckDuplicateOrder is a thin
---     wrapper around Robotico.spCheckDuplicateOrder, registered as a custom
---     workflow action ("Duplikat-Bestellung prüfen (wahr/falsch)"). It returns
---     the BIT (result set bIsDuplicate + RETURN code). Use it where an action
---     surface is wanted; note it does not gate the workflow by itself.
+-- (InterneAuftragsnummer == kBestellung == Verkauf.tAuftrag.kAuftrag.)
+-- Programmatic callers can use Robotico.spCheckDuplicateOrder (returns BIT).
 --
 -- ============================================================================
 -- DEPENDENCIES
@@ -134,60 +130,42 @@ BEGIN TRANSACTION
 GO
 
 -- ----------------------------------------------------------------------------
--- 0. Remove objects of the previous (v1 logging) design, if present
--- ----------------------------------------------------------------------------
-IF OBJECT_ID('Robotico.tvfFindeDuplikatAuftraege', 'IF') IS NOT NULL
-    DROP FUNCTION Robotico.tvfFindeDuplikatAuftraege;
-IF OBJECT_ID('CustomWorkflows.spProtokolliereDuplikatBestellung', 'P') IS NOT NULL
-    DROP PROCEDURE CustomWorkflows.spProtokolliereDuplikatBestellung;
-IF OBJECT_ID('Robotico.tDuplikatBestellungLog', 'U') IS NOT NULL
-    DROP TABLE Robotico.tDuplikatBestellungLog;
-GO
-
--- ----------------------------------------------------------------------------
 -- 1. Engine: list the duplicate orders of a target order (incl. age flag)
 --    Inline TVF (set-based) -> optimally inlineable.
+--
+--    Three stages, cheapest first:
+--      Stage 0  target basics (PK seek)          - no hashing
+--      Stage 1  candidate pre-filter (kKunde idx) - no hashing; empty here means
+--               the customer has no matching sibling -> nothing else runs
+--      Stage 2  position fingerprint, defined exactly ONCE, computed only for
+--               the target + candidates and ONLY when a candidate exists
+--    A customer without a matching sibling order therefore triggers no hashing.
 -- ----------------------------------------------------------------------------
 CREATE OR ALTER FUNCTION Robotico.fnFindDuplicateOrders
 (
-    @kAuftrag    INT,
+    @kAuftrag     INT,
     @nWindowHours INT = 24
 )
 RETURNS TABLE
 AS
 RETURN
 (
-    -- Stage 0: target order (customer, time, gross value, position fingerprint)
+    -- Stage 0: target basics (PK seek, no hashing)
     WITH Target AS (
         SELECT a.kKunde,
                a.dErstellt,
-               CAST(e.fWertBrutto AS DECIMAL(18,2)) AS GrossValue,
-               cf.Fingerprint
+               CAST(e.fWertBrutto AS DECIMAL(18,2)) AS GrossValue
         FROM Verkauf.tAuftrag a
         JOIN Verkauf.tAuftragEckdaten e ON e.kAuftrag = a.kAuftrag
-        CROSS APPLY (
-            SELECT CONVERT(VARCHAR(64), HASHBYTES('SHA2_256',
-                STRING_AGG(CONVERT(NVARCHAR(MAX),
-                    COALESCE(CAST(p.kArtikel AS NVARCHAR(50)), 'F:' + p.cArtNr)
-                    + '#' + CAST(CAST(p.fAnzahl AS DECIMAL(18,3)) AS NVARCHAR(30))), '|')
-                  WITHIN GROUP (ORDER BY
-                    COALESCE(CAST(p.kArtikel AS NVARCHAR(50)), 'F:' + p.cArtNr)
-                    + '#' + CAST(CAST(p.fAnzahl AS DECIMAL(18,3)) AS NVARCHAR(30)))
-                ), 2) AS Fingerprint
-            FROM Verkauf.tAuftragPosition p
-            WHERE p.kAuftrag = a.kAuftrag
-              AND p.nType IN (0, 1)
-        ) cf
         WHERE a.kAuftrag = @kAuftrag
     ),
-    -- Stage 1: cheap pre-filter via index IX_Verkauf_tAuftrag_kKunde
+    -- Stage 1: candidate pre-filter via index IX_Verkauf_tAuftrag_kKunde (no hashing)
     Candidates AS (
         SELECT a.kAuftrag,
                a.cAuftragsNr,
                a.dErstellt,
-               t.dErstellt    AS dTarget,
-               t.GrossValue,
-               t.Fingerprint  AS TargetFingerprint
+               t.dErstellt AS dTarget,
+               t.GrossValue
         FROM Target t
         JOIN Verkauf.tAuftrag a          ON a.kKunde   = t.kKunde
         JOIN Verkauf.tAuftragEckdaten e  ON e.kAuftrag = a.kAuftrag
@@ -196,8 +174,30 @@ RETURN
           AND CAST(e.fWertBrutto AS DECIMAL(18,2)) = t.GrossValue
           AND a.dErstellt BETWEEN DATEADD(HOUR, -@nWindowHours, t.dErstellt)
                               AND DATEADD(HOUR,  @nWindowHours, t.dErstellt)
+    ),
+    -- Orders whose fingerprint we need: the candidates, plus the target - but
+    -- the target only if at least one candidate exists (else: hash nothing).
+    OrdersToFingerprint AS (
+        SELECT kAuftrag FROM Candidates
+        UNION
+        SELECT @kAuftrag WHERE EXISTS (SELECT 1 FROM Candidates)
+    ),
+    -- Stage 2: the position fingerprint - defined exactly ONCE here.
+    Fingerprints AS (
+        SELECT p.kAuftrag,
+               CONVERT(VARCHAR(64), HASHBYTES('SHA2_256',
+                   STRING_AGG(CONVERT(NVARCHAR(MAX),
+                       COALESCE(CAST(p.kArtikel AS NVARCHAR(50)), 'F:' + p.cArtNr)
+                       + '#' + CAST(CAST(p.fAnzahl AS DECIMAL(18,3)) AS NVARCHAR(30))), '|')
+                     WITHIN GROUP (ORDER BY
+                       COALESCE(CAST(p.kArtikel AS NVARCHAR(50)), 'F:' + p.cArtNr)
+                       + '#' + CAST(CAST(p.fAnzahl AS DECIMAL(18,3)) AS NVARCHAR(30)))
+               ), 2) AS Fingerprint
+        FROM Verkauf.tAuftragPosition p
+        JOIN OrdersToFingerprint o ON o.kAuftrag = p.kAuftrag
+        WHERE p.nType IN (0, 1)
+        GROUP BY p.kAuftrag
     )
-    -- Stage 2: position fingerprint only for the few candidates
     SELECT c.kAuftrag    AS kDuplicateOrder,
            c.cAuftragsNr AS cAuftragsNr,
            c.dErstellt   AS dCreated,
@@ -209,20 +209,9 @@ RETURN
                 ELSE 0
            END AS BIT) AS bIsOlderThanInput
     FROM Candidates c
-    CROSS APPLY (
-        SELECT CONVERT(VARCHAR(64), HASHBYTES('SHA2_256',
-            STRING_AGG(CONVERT(NVARCHAR(MAX),
-                COALESCE(CAST(p.kArtikel AS NVARCHAR(50)), 'F:' + p.cArtNr)
-                + '#' + CAST(CAST(p.fAnzahl AS DECIMAL(18,3)) AS NVARCHAR(30))), '|')
-              WITHIN GROUP (ORDER BY
-                COALESCE(CAST(p.kArtikel AS NVARCHAR(50)), 'F:' + p.cArtNr)
-                + '#' + CAST(CAST(p.fAnzahl AS DECIMAL(18,3)) AS NVARCHAR(30)))
-            ), 2) AS Fingerprint
-        FROM Verkauf.tAuftragPosition p
-        WHERE p.kAuftrag = c.kAuftrag
-          AND p.nType IN (0, 1)
-    ) cf
-    WHERE cf.Fingerprint = c.TargetFingerprint
+    JOIN Fingerprints fc ON fc.kAuftrag = c.kAuftrag
+    JOIN Fingerprints ft ON ft.kAuftrag = @kAuftrag
+    WHERE fc.Fingerprint = ft.Fingerprint
 );
 GO
 PRINT '+ Function Robotico.fnFindDuplicateOrders deployed';
@@ -275,44 +264,12 @@ PRINT '+ Procedure Robotico.spCheckDuplicateOrder deployed';
 GO
 
 -- ----------------------------------------------------------------------------
--- 4. Thin JTL custom-workflow ACTION wrapper around Robotico.spCheckDuplicateOrder
---    First parameter must be the PK of the workflow object (Auftrag -> kAuftrag).
---    The inner SP emits the bIsDuplicate result set; the wrapper passes it
---    through and mirrors the value as RETURN code.
--- ----------------------------------------------------------------------------
-CREATE OR ALTER PROCEDURE CustomWorkflows.spCheckDuplicateOrder
-    @kAuftrag     INT,
-    @nWindowHours INT = 24
-AS
-BEGIN
-    SET NOCOUNT ON;
-
-    DECLARE @bIsDuplicate BIT;
-
-    EXEC Robotico.spCheckDuplicateOrder
-        @kAuftrag     = @kAuftrag,
-        @nWindowHours = @nWindowHours,
-        @bIsDuplicate = @bIsDuplicate OUTPUT;   -- inner SP emits "bIsDuplicate" result set
-
-    RETURN @bIsDuplicate;
-END
-GO
-PRINT '+ Procedure CustomWorkflows.spCheckDuplicateOrder deployed';
-GO
-
--- ----------------------------------------------------------------------------
--- 5. Finish deployment + register the workflow action
+-- 4. Finish deployment
 -- ----------------------------------------------------------------------------
 IF XACT_STATE() = 1
 BEGIN
     COMMIT TRANSACTION;
     PRINT '+ Duplicate order detection deployed successfully';
-
-    EXEC CustomWorkflows._CheckAction @actionName = 'spCheckDuplicateOrder';
-
-    EXEC CustomWorkflows._SetActionDisplayName
-        @actionName  = 'spCheckDuplicateOrder',
-        @displayName = 'Duplikat-Bestellung prüfen (wahr/falsch)';
 END
 ELSE
 BEGIN

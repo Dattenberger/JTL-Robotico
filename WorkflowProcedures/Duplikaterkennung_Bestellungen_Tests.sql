@@ -97,8 +97,8 @@ PRINT '=========================================================================
 PRINT 'Duplicate Order Detection - Test Suite (transaction-based)';
 PRINT '============================================================================';
 PRINT '';
-PRINT 'Tests 1-7, 9: synthetic orders for a real customer without orders.';
-PRINT 'Test 8:       real seed pair (order 236 -> false, 237 -> true).';
+PRINT 'Tests 1-7: synthetic orders for a real customer without orders.';
+PRINT 'Test 8:    real seed pair (order 236 -> false, 237 -> true).';
 PRINT 'All tests roll back automatically - no changes remain.';
 PRINT '';
 
@@ -387,44 +387,6 @@ BEGIN CATCH
 END CATCH
 
 INSERT INTO #TestResults VALUES ('real seed pair 236/237', @t8_passed, @t8_total);
-GO
-
--- ============================================================================
--- Test 9: CustomWorkflows.spCheckDuplicateOrder wrapper (RETURN code)
--- ============================================================================
-PRINT '--- Test 9: CustomWorkflows wrapper RETURN code ---';
-
-DECLARE @t9_passed INT = 0, @t9_total INT = 2;
-DECLARE @kTestKunde INT = (SELECT kKunde FROM #TestEnv);
-
-BEGIN TRANSACTION;
-BEGIN TRY
-    DECLARE @t9_a INT, @t9_b INT, @t9_rc INT;
-    EXEC #CreateTestOrder @kKunde=@kTestKunde, @dErstellt='2026-01-10T10:00:00',
-         @cArtNr='DUP-ART-9', @fAnzahl=1, @fVkNetto=42.00, @fWertBrutto=49.98, @kAuftrag=@t9_a OUTPUT;
-    EXEC #CreateTestOrder @kKunde=@kTestKunde, @dErstellt='2026-01-10T11:00:00',
-         @cArtNr='DUP-ART-9', @fAnzahl=1, @fVkNetto=42.00, @fWertBrutto=49.98, @kAuftrag=@t9_b OUTPUT;
-
-    -- duplicate (b) -> RETURN 1
-    EXEC @t9_rc = CustomWorkflows.spCheckDuplicateOrder @kAuftrag=@t9_b, @nWindowHours=24;
-    IF @t9_rc = 1
-    BEGIN PRINT '  + wrapper RETURN = 1 for duplicate'; SET @t9_passed += 1; END
-    ELSE PRINT '  x wrapper RETURN should be 1';
-
-    -- first order (a) -> RETURN 0
-    EXEC @t9_rc = CustomWorkflows.spCheckDuplicateOrder @kAuftrag=@t9_a, @nWindowHours=24;
-    IF @t9_rc = 0
-    BEGIN PRINT '  + wrapper RETURN = 0 for first order'; SET @t9_passed += 1; END
-    ELSE PRINT '  x wrapper RETURN should be 0';
-
-    ROLLBACK TRANSACTION;
-END TRY
-BEGIN CATCH
-    IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
-    PRINT '  x ERROR: ' + ERROR_MESSAGE();
-END CATCH
-
-INSERT INTO #TestResults VALUES ('CustomWorkflows wrapper RETURN code', @t9_passed, @t9_total);
 GO
 
 -- ============================================================================
