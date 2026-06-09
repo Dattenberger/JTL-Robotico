@@ -1,21 +1,48 @@
 {%- comment -%}
-Erweiterte Eigenschaft (Bedingung) fuer JTL-Workflows - Workflowobjekt Auftrag.
+================================================================================
+Erweiterte Eigenschaft (DotLiquid) für JTL-Workflows – Workflowobjekt "Auftrag"
+================================================================================
 
-Gibt das Wort WAHR zurueck, wenn der aktuelle Auftrag eine duplizierte
-Bestellung ist - d.h. es existiert ein AELTERER, identischer Auftrag desselben
-Kunden (gleiche Bruttosumme + identische Positionen) innerhalb von 24 Stunden.
-Sonst FALSCH. Der aelteste Auftrag einer Duplikatgruppe ist FALSCH, jeder
-spaetere ist WAHR (Erkennung greift ab dem 2. Auftrag).
+ZWECK
+  Gibt das Wort WAHR zurück, wenn der aktuelle Auftrag eine duplizierte
+  Bestellung ist – d. h. es existiert ein ÄLTERER, identischer Auftrag
+  desselben Kunden (gleiche Bruttosumme UND identische Positionen) innerhalb
+  von 24 Stunden. Andernfalls FALSCH.
 
-Verwendung:
-  - Rueckgabetyp der erweiterten Eigenschaft: Text.
-  - In der Workflow-Bedingung gegen den Wert 'WAHR' pruefen.
-  - Vorgang.Stammdaten.InterneAuftragsnummer == kBestellung
-    == Verkauf.tAuftrag.kAuftrag.
+  "Ab dem 2. Auftrag": Der älteste Auftrag einer Duplikatgruppe liefert FALSCH
+  (er hat keinen älteren Zwilling), jeder spätere Auftrag liefert WAHR. So
+  feuert ein darauf aufgebauter Workflow nur für die versehentliche Wieder-
+  holung, nicht für die ursprüngliche Bestellung.
 
-Voraussetzung: Robotico.fnHasOlderDuplicateOrder ist deployt
-(WorkflowProcedures/Duplikaterkennung_Bestellungen.sql). Details:
-docs/SQL/JTL-CUSTOM-WORKFLOWS.md.
+FUNKTIONSWEISE (Aufbau dieses Liquids)
+  1. Der capture-Block baut den SQL-Text als String zusammen. Darin ersetzt
+     JTL den Platzhalter "Vorgang.Stammdaten.InterneAuftragsnummer" zur
+     Laufzeit durch die interne Auftragsnummer des auslösenden Auftrags.
+  2. Das CASE im SQL bildet den BIT-Rückgabewert der Funktion
+     Robotico.fnHasOlderDuplicateOrder direkt auf die Wörter WAHR / FALSCH ab.
+     Dadurch kommt bewusst KEINE Zahl (0/1) zurück, sondern der Text.
+  3. Der Filter DirectQueryScalar führt den SQL-Text aus und gibt den ersten
+     Spaltenwert der ersten Zeile zurück – hier also WAHR oder FALSCH. Dieser
+     Wert ist die Ausgabe der erweiterten Eigenschaft.
+
+EINRICHTUNG IN JTL-WAWI
+  a) Workflow auf dem Objekt "Auftrag" anlegen, Auslöser z. B. "Auftrag wurde
+     erstellt".
+  b) Diesen Liquid-Inhalt als "erweiterte Eigenschaft" hinterlegen,
+     Rückgabetyp = Text.
+  c) In der Bedingung des Workflows: erweiterte Eigenschaft  Gleich  WAHR.
+  d) Folgeaktionen (z. B. Hinweis-E-Mail ans Team, Auftrag zurückhalten) als
+     normale JTL-Aktionen anhängen.
+
+SCHLÜSSEL-ZUORDNUNG
+  Vorgang.Stammdaten.InterneAuftragsnummer == dbo.tbestellung.kBestellung
+                                           == Verkauf.tAuftrag.kAuftrag.
+
+VORAUSSETZUNG
+  Robotico.fnHasOlderDuplicateOrder muss deployt sein
+  (WorkflowProcedures/Duplikaterkennung_Bestellungen.sql).
+  Hintergrund zur JTL-Workflow-Mechanik: docs/SQL/JTL-CUSTOM-WORKFLOWS.md.
+================================================================================
 {%- endcomment -%}
 {% capture query -%}
 DECLARE @kAuftrag AS INT = {{ Vorgang.Stammdaten.InterneAuftragsnummer }};
