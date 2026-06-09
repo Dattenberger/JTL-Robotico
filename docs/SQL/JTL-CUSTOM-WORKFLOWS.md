@@ -1,14 +1,14 @@
 # JTL-Wawi Custom Workflows — Architecture & Custom Workflow Actions
 
 > Status: Research / reference document
-> Scope: how JTL-Wawi workflows (Ereignis → Bedingung → Aktion) work, with a deep focus on **Custom Workflow Actions** (the `CustomWorkflows` SQL schema), how a custom action is discovered/registered/parameterised/invoked, and the definitive answer to "can an Aktion return a gating boolean?".
+> Scope: how JTL-Wawi workflows (event → condition → action (Ereignis → Bedingung → Aktion)) work, with a deep focus on **Custom Workflow Actions** (the `CustomWorkflows` SQL schema), how a custom action is discovered/registered/parameterised/invoked, and the definitive answer to "can an action return a gating boolean?".
 >
 > Two evidence classes are kept strictly separate throughout:
 > - **[DB]** — verified against the live `eazybusiness` test database (object definitions, table contents, live workflow rows). This is the primary, authoritative source for the `CustomWorkflows` infrastructure.
 > - **[WEB]** — JTL-Guide / forum statements. Used for licensing, UI behaviour, and intent that the DB cannot show.
 > - **[INFER]** — conclusions/assumptions drawn by combining the above. Explicitly flagged.
 >
-> JTL domain terms (Ereignis, Bedingung, Aktion, Workflowobjekt, erweiterte Eigenschaft) are kept in German on purpose.
+> The JTL-Wawi UI is German; the original German concept labels (Ereignis, Bedingung, Aktion, Workflowobjekt, erweiterte Eigenschaft) are given in parentheses on first use so the reader can locate them in the UI.
 
 ---
 
@@ -16,22 +16,22 @@
 
 JTL-Wawi ships an **event-driven workflow engine**. A workflow (`dbo.tWorkflow`) binds:
 
-1. an **Ereignis** (event / trigger) on a **Workflowobjekt** (Auftrag, Artikel, Lieferschein, …),
-2. zero or more **Bedingungen** (conditions) that gate whether the actions run,
-3. one or more **Aktionen** (actions) that are executed when the conditions are met.
+1. an **event / trigger (Ereignis / Auslöser)** on a **workflow object (Workflowobjekt)** (Auftrag, Artikel, Lieferschein, …),
+2. zero or more **conditions (Bedingungen)** that gate whether the actions run,
+3. one or more **actions (Aktionen)** that are executed when the conditions are met.
 
-Out of the box, JTL provides a fixed catalogue of built-in Aktionen (set value, send mail, create exchange order, add to purchase list, …). The separately-licensed **Custom Workflow Actions** module adds the ability to call **your own SQL stored procedures** as Aktionen, registered in a dedicated `CustomWorkflows` database schema ([WEB] forum: "Es gibt ein Modul | Custom Workflow Actions, das man separat buchen muss"; introduced in JTL-Wawi 1.6).
+Out of the box, JTL provides a fixed catalogue of built-in actions (set value, send mail, create exchange order, add to purchase list, …). The separately-licensed **Custom Workflow Actions** module adds the ability to call **your own SQL stored procedures** as actions, registered in a dedicated `CustomWorkflows` database schema ([WEB] forum: "Es gibt ein Modul | Custom Workflow Actions, das man separat buchen muss"; introduced in JTL-Wawi 1.6).
 
 This document is anchored on the `CustomWorkflows` schema as it exists in this repo's target database (`eazybusiness`), cross-checked against the JTL-Guide and the JTL support forum.
 
 ---
 
-## 2. Architecture: Ereignis → Bedingung → Aktion
+## 2. Architecture: event → condition → action (Ereignis → Bedingung → Aktion)
 
 [WEB] JTL-Guide *Einleitung zur Workflow-Verwaltung*:
 > "Wählen Sie ein auslösendes Ereignis (z. B. Auftrag_Erstellt), definieren Sie optional eine oder mehrere Bedingungen (z. B. Zahlstatus: Ist Bezahlt) und bestimmen eine oder mehrere Aktionen."
 
-For multiple Bedingungen the UI lets you choose whether **all**, **only one**, or **none** must be satisfied ([WEB]: "ob alle Bedingungen erfüllt, nur eine Bedingung erfüllt oder keine Bedingungen erfüllt sein müssen").
+For multiple conditions the UI lets you choose whether **all**, **only one**, or **none** must be satisfied ([WEB]: "ob alle Bedingungen erfüllt, nur eine Bedingung erfüllt oder keine Bedingungen erfüllt sein müssen").
 
 ### Native storage tables [DB]
 
@@ -40,33 +40,33 @@ Verified column structures (`INFORMATION_SCHEMA.COLUMNS`) of the native engine t
 | Table | Purpose | Key columns [DB] |
 |---|---|---|
 | `dbo.tWorkflow` | the workflow header | `kWorkflow`, `cName`, `nEvent`, `nObjekt`, `nVerknuepfung` (AND/OR/NONE link of conditions), `nTyp`, `nApplikation`, scheduler fields (`nSchedulerOptions`, `dtSchedulerTime`, `nSchedulerHour/Minute/DayValue/MonthValue`) |
-| `dbo.tWorkflowEvent` | catalogue of available Ereignisse per Workflowobjekt | `kWorkflowEvent`, `nEvent`, `nObjekt`, `cDisplayName`, `nSortierung` |
+| `dbo.tWorkflowEvent` | catalogue of available events per workflow object | `kWorkflowEvent`, `nEvent`, `nObjekt`, `cDisplayName`, `nSortierung` |
 | `dbo.tWorkflowEventGroup` / `tWorkflowEventGroupMapping` | groups events in the UI tree | `kWorkflowEventGroup`, `nObjekt`, `cDisplayName`; mapping joins group↔event |
-| `dbo.tWorkflowBedingung` | a single Bedingung of a workflow | `kWorkflowBedingung`, `kWorkflow`, `cEigenschaft` (XML PropertyProxy path), `nOperator`, `cVergleichswert`, `kWorkflowEigenschaft`, `nPos` |
-| `dbo.tWorkflowEigenschaft` | reusable **erweiterte Eigenschaft** (advanced property) | `kWorkflowEigenschaft`, `cDotLiquid` (the DotLiquid/SQL template), `cName`, `nObjekt`, `nDatenTyp` (return type) |
-| `dbo.tWorkflowAktion` | a single Aktion of a workflow | `kWorkflowAktion`, `kWorkflow`, `xXmlObjekt` (serialised .NET action config), `nPos`, `cName` |
+| `dbo.tWorkflowBedingung` | a single condition of a workflow | `kWorkflowBedingung`, `kWorkflow`, `cEigenschaft` (XML PropertyProxy path), `nOperator`, `cVergleichswert`, `kWorkflowEigenschaft`, `nPos` |
+| `dbo.tWorkflowEigenschaft` | reusable **advanced property (erweiterte Eigenschaft)** | `kWorkflowEigenschaft`, `cDotLiquid` (the DotLiquid/SQL template), `cName`, `nObjekt`, `nDatenTyp` (return type) |
+| `dbo.tWorkflowAktion` | a single action of a workflow | `kWorkflowAktion`, `kWorkflow`, `xXmlObjekt` (serialised .NET action config), `nPos`, `cName` |
 | `dbo.tWorkflowQueue` | pending/queued workflow executions | `kWorkflowQueue`, `nEvent`, `kWorkflow`, `kObjektPk`, `kBenutzer`, `dStartDate`, `nStatus` |
 | `dbo.tWorkflowLog` | execution log | `kWorkflowLog`, `kObjektPk`, `kWorkflowAktion`, `dDatum`, `kBenutzer`, `nTyp`, `cLog`, `kWorkflow`, `uniqueId` |
 
 `nTyp` on `tWorkflow` has values `0` (121 rows) and `2` (29 rows) in this DB [DB] — [INFER] `0` = event-triggered, `2` = scheduler/queue-driven (consistent with the scheduler columns and `tWorkflowQueue`). Not independently confirmed from web.
 
-### Ereignisse for Aufträge [DB]
+### Events for Aufträge [DB]
 
-`tWorkflowEvent` keys events by `nObjekt` (the Workflowobjekt id — see §7) and `nEvent`. Counts per object in this DB [DB]: Artikel(1)=11, Kunde(5)=3, **Auftrag(6)=26**, Lieferschein(7)=8, Rechnung(8)=1, Gutschrift(9)=1, Pickliste(10)=2, plus objects 15 and 16.
+`tWorkflowEvent` keys events by `nObjekt` (the workflow object id — see §7) and `nEvent`. Counts per object in this DB [DB]: Artikel(1)=11, Kunde(5)=3, **Auftrag(6)=26**, Lieferschein(7)=8, Rechnung(8)=1, Gutschrift(9)=1, Pickliste(10)=2, plus objects 15 and 16.
 
-The `cDisplayName` values for Auftrag events in this DB are **customer-defined workflow names**, not the canonical JTL event names (e.g. "Unbezahlt Mahnung und Storno in 7 Tagen", "Geändert oder Erstellt", "Interner Auftrag"). [INFER] The shipped/native event for "order created or changed" is what JTL labels `Auftrag_Erstellt` / `Auftrag_Geändert` in the UI ([WEB] guide example uses `Auftrag_Erstellt`); the rows here are this business's configured triggers layered on those base events.
+The `cDisplayName` values for Auftrag events in this DB are **customer-defined workflow names**, not the canonical JTL event names (e.g. "Unbezahlt Mahnung und Storno in 7 Tagen", "Geändert oder Erstellt", "Interner Auftrag"). [INFER] The shipped/native event for "order created or changed" is what JTL labels "Auftrag_Erstellt" / "Auftrag_Geändert" in the UI ([WEB] guide example uses "Auftrag_Erstellt"); the rows here are this business's configured triggers layered on those base events.
 
-### How a Bedingung produces a truth value [DB][WEB]
+### How a condition produces a truth value [DB][WEB]
 
-A Bedingung (`tWorkflowBedingung`) references a property path (`cEigenschaft`, an XML `<Properties><Property parentType=… propertyName=…/></Properties>` chain), an `nOperator`, and a `cVergleichswert`. Two patterns are visible in this DB [DB]:
+A condition (`tWorkflowBedingung`) references a property path (`cEigenschaft`, an XML `<Properties><Property parentType=… propertyName=…/></Properties>` chain), an `nOperator`, and a `cVergleichswert`. Two patterns are visible in this DB [DB]:
 
 1. **Direct property comparison** — e.g. compares `…Zahlungsart.cName` to the literal `Rechnung` (operator `13`).
-2. **Reference to an erweiterte Eigenschaft** — the property path points at `propertyName="_workflowEigenschaft"` + a `jtlWorkfloweigenschaft` id, i.e. the Bedingung evaluates a row from `tWorkflowEigenschaft` and compares the result against `True`/`wahr`.
+2. **Reference to an advanced property** — the property path points at `propertyName="_workflowEigenschaft"` + a `jtlWorkfloweigenschaft` id, i.e. the condition evaluates a row from `tWorkflowEigenschaft` and compares the result against `True`/`wahr`.
 
-The erweiterte Eigenschaft is where DotLiquid (and SQL) live (see §6). Its **return type** is `tWorkflowEigenschaft.nDatenTyp`; in this DB [DB] the distinct values are `0` (text/string, 4 rows), `1` (number, 1 row), `3` (boolean, 30 rows). This matches [WEB] forum statements that an advanced property has a configurable return type (Boolean / Number / Decimal / Text). The Bedingung becomes "erfüllt" when the operator comparison against the property's rendered value holds.
+The advanced property is where DotLiquid (and SQL) live (see §6). Its **return type** is `tWorkflowEigenschaft.nDatenTyp`; in this DB [DB] the distinct values are `0` (text/string, 4 rows), `1` (number, 1 row), `3` (boolean, 30 rows). This matches [WEB] forum statements that an advanced property has a configurable return type (Boolean / Number / Decimal / Text). The condition is satisfied when the operator comparison against the property's rendered value holds.
 
 > [!IMPORTANT]
-> **Gating happens at the Bedingung/erweiterte-Eigenschaft layer, not at the Aktion layer.** This is the crux of §5.
+> **Gating happens at the condition / advanced-property layer, not at the action layer.** This is the crux of §5.
 
 ---
 
@@ -75,7 +75,7 @@ The erweiterte Eigenschaft is where DotLiquid (and SQL) live (see §6). Its **re
 ### Licensing & requirements [WEB]
 
 - **Separate module.** Custom Workflow Actions must be booked separately in the JTL Kundencenter license management. [WEB] forum *"CustomWorkflow erscheint nicht in den Workflow-Aktionen"*: the resolution was *"Es gibt ein Modul | Custom Workflow Actions, das man separat buchen muss."*
-- **Restart + license refresh** after booking: *"Wawi neu gestartet, Lizenz aktualisiert"* before the custom actions appear in the UI ([WEB], same thread).
+- **Restart + license refresh** after booking (*"Wawi neu gestartet, Lizenz aktualisiert"*) before the custom actions appear in the UI ([WEB], same thread).
 - **Available since JTL-Wawi 1.6** ([WEB] forum/guide). The oldest custom action XML in this DB carries `<WawiVersion>1.6.44.2</WawiVersion>` [DB], consistent with that.
 - The procedure must execute against the **business database** (`eazybusiness`), not `master` — a common forum pitfall ([WEB] *"custom-workflows-anlegen"*).
 
@@ -93,7 +93,7 @@ Full object inventory of the schema in this DB (`sys.objects` where `schema_id =
 | `CustomWorkflows.vCustomActionParameter` | view | Flattens each SP's parameters (position, name, datatype, display name). |
 | `CustomWorkflows.vCustomActionCheck` | view | Per-SP validity check; computes `Status = 'OK' / 'ERROR'`. |
 | `CustomWorkflows.vCustomAction` | view | The list JTL consumes: `vCustomActionCheck` filtered to `Status = 'OK'`. |
-| `CustomWorkflows.tWorkflowObjects` | table | The 15 supported Workflowobjekte and their PK columns (see §7). |
+| `CustomWorkflows.tWorkflowObjects` | table | The 15 supported workflow objects and their PK columns (see §7). |
 | `CustomWorkflows.tAllowedDatatypes` | table | The 11 allowed SQL parameter datatypes. |
 
 **Custom actions registered in this DB** (the `sp*` procedures) [DB] — these are this business's own actions, e.g. `spAuftragPreiseAufNull`, `spArticleUpdateAllHistory`, `spGebindeErstellen`, `spPaypalTrackingLieferschein/Versand`, `spSeriennummerStandardZuWMS`, `spCMArtikel`.
@@ -104,7 +104,7 @@ Full object inventory of the schema in this DB (`sys.objects` where `schema_id =
 
 - `nParamCount > 7` → `'Es dürfen neben dem Parameter für den PK maximal 6 weitere Parameter angegeben werden'` (so: 1 PK + up to 6 = **7 parameters max**).
 - `cNotAllowedParamTypesInAction IS NOT NULL` → `'Nicht erlaubte Datentypen in den Parametern der Aktion gefunden'`, then **prints the allowed list** by cursoring over `tAllowedDatatypes`.
-- `nObject IS NULL` → `'PK-Spalte muss erster Parameter der Aktion sein'`, then prints *"Über den ersten Parameter der Aktion wird bestimmt, für welches Workflowobjekt diese Aktion verwendet werden kann. Dieser muss vom Typ "int" sein"* and cursors over `tWorkflowObjects` to print each object + its PK column.
+- `nObject IS NULL` → `'PK-Spalte muss erster Parameter der Aktion sein'`, then prints *"Über den ersten Parameter der Aktion wird bestimmt, für welches Workflowobjekt diese Aktion verwendet werden kann. Dieser muss vom Typ "int" sein"* and cursors over `tWorkflowObjects` to print each object + its PK column. (The message states that the first parameter determines which workflow object the action applies to and must be of type "int".)
 
 So `_CheckAction` is a **developer-facing validator**: it does not register anything; it just tells you why your SP would be rejected. The actual "registration" is purely structural (see §4) — the SP becoming valid is a side effect of meeting the rules the views encode. `_CheckAction` produces **no error and no message when the SP is already valid** (the `IF @status = 'ERROR'` block is skipped). [DB]
 
@@ -120,7 +120,7 @@ This one operates on a **user-defined type**, not on the procedure. It checks fo
 
 ## 4. How a custom action is discovered, registered, parameterised, and invoked
 
-### 4.1 Discovery — what makes an SP appear as an Aktion [DB]
+### 4.1 Discovery — what makes an SP appear as an action [DB]
 
 JTL reads `CustomWorkflows.vCustomAction`, which is `vCustomActionCheck WHERE Status = 'OK'`. The full chain (all verified from `OBJECT_DEFINITION`) [DB]:
 
@@ -131,7 +131,7 @@ JTL reads `CustomWorkflows.vCustomAction`, which is `vCustomActionCheck WHERE St
 - `cDisplayName` = the `DisplayName` extended property of the parameter's **user-defined type**, falling back to the stripped parameter name.
 
 **`vCustomActionCheck`** then builds three CTEs over those parameters:
-- `PkParams` — joins parameter **position 0** of type **`int`** against `tWorkflowObjects.cPkColumn`. A match yields the Workflowobjekt (`nObjekt`, `cObjekt`, `cPkCol`). This is the **PK-first rule**.
+- `PkParams` — joins parameter **position 0** of type **`int`** against `tWorkflowObjects.cPkColumn`. A match yields the workflow object (`nObjekt`, `cObjekt`, `cPkCol`). This is the **PK-first rule**.
 - `NotAllowedParamTypes` — any parameter with `cDataType IS NULL` (i.e. a type not in `tAllowedDatatypes`).
 - `ParamCounts` — total parameter count per SP.
 
@@ -145,14 +145,14 @@ It also pulls three procedure-level extended properties: `DisplayName`, `Descrip
 ### 4.2 The three structural rules a custom action SP must satisfy [DB]
 
 1. **Schema + name** — in `CustomWorkflows`, name not starting with `_`.
-2. **PK-first rule** — the **first** parameter (position 0) must be of type **`int`** and be **named exactly like the PK column** of one of the 15 Workflowobjekte in `tWorkflowObjects` (e.g. `@kAuftrag`, `@kArtikel`, `@kLieferschein`). That first parameter both (a) determines which Workflowobjekt the action attaches to and (b) is auto-filled by JTL at runtime with the triggering object's PK.
+2. **PK-first rule** — the **first** parameter (position 0) must be of type **`int`** and be **named exactly like the PK column** of one of the 15 workflow objects in `tWorkflowObjects` (e.g. `@kAuftrag`, `@kArtikel`, `@kLieferschein`). That first parameter both (a) determines which workflow object the action attaches to and (b) is auto-filled by JTL at runtime with the triggering object's PK.
 3. **Datatypes + count** — every parameter type ∈ `tAllowedDatatypes`; total parameters ≤ 7 (1 PK + ≤ 6 extra).
 
 [WEB] confirms the PK-first rule from the troubleshooting angle: a user whose action did not appear had used `cAuftragsNr` instead of `kAuftrag` ([WEB] *"CustomWorkflow erscheint nicht…"*).
 
 ### 4.3 Parameterisation & invocation — verified from live action XML [DB]
 
-A custom Aktion is stored in `dbo.tWorkflowAktion.xXmlObjekt` as a serialised .NET object with `i:type="a:jtlAktionCustomWorkflow"`. Two live examples from this DB [DB]:
+A custom action is stored in `dbo.tWorkflowAktion.xXmlObjekt` as a serialised .NET object with `i:type="a:jtlAktionCustomWorkflow"`. Two live examples from this DB [DB]:
 
 No extra params (`spAuftragPreiseAufNull`):
 ```xml
@@ -193,21 +193,21 @@ Key observations [DB]:
 
 ---
 
-## 5. Conditions vs. actions — can an Aktion return a gating boolean?
+## 5. Conditions vs. actions — can an action return a gating boolean?
 
-**Definitive answer: No. A custom Aktion cannot return a value that steers the workflow. Gating is the job of a Bedingung / erweiterte Eigenschaft, evaluated *before* the actions run.**
+**Definitive answer: No. A custom action cannot return a value that steers the workflow. Gating is the job of a condition / advanced property, evaluated *before* the actions run.**
 
 Evidence:
 
 - **[DB] The metadata layer has no concept of a return/OUTPUT.** `vCustomActionParameter` enumerates `sys.parameters` including the implicit return parameter, but `vCustomActionCheck` only ever uses parameters by **position and input type** (PK-first, allowed-types, count). `_CheckAction` raises errors purely about parameters; nothing reads a RETURN value or an OUTPUT parameter, and nothing maps such a value back into `tWorkflow*`. There is no column anywhere in `CustomWorkflows.*` or `dbo.tWorkflow*` that stores an action's result for gating. An OUTPUT parameter would simply count toward the 7-parameter budget and (if its type is allowed) be treated as an input slot — its written-back value is ignored by the engine. [INFER, but tightly grounded in the absence of any consuming structure.]
 - **[DB] The action XML (`jtlAktionCustomWorkflow`) carries only inputs and `CancelOnError`** — there is no "branch on result" element. The only control an action exposes over the workflow is the binary "abort-on-error" flag.
-- **[WEB] Control flow lives in Bedingungen via erweiterte Eigenschaften with a Boolean return type.** Forum *"Erweiterte Eigenschaften Rückgabewert Boolean"*: an advanced property is configured with return type **Boolean** and a DotLiquid body such as `{% if … %} true {% else %} false {% endif %}`; that property is then used as a workflow **condition** to gate execution. Return types offered are Boolean / Number / Decimal / Text. ([WEB] also notes a caveat that the engine internally string-compares the rendered value — "convert Boolean to String = String" — so robust conditions compare against the literal `true`/`True`.)
+- **[WEB] Control flow lives in conditions via advanced properties with a Boolean return type.** Forum *"Erweiterte Eigenschaften Rückgabewert Boolean"*: an advanced property is configured with return type **Boolean** and a DotLiquid body such as `{% if … %} true {% else %} false {% endif %}`; that property is then used as a workflow **condition** to gate execution. Return types offered are Boolean / Number / Decimal / Text. ([WEB] also notes a caveat that the engine internally string-compares the rendered value — "convert Boolean to String = String" — so robust conditions compare against the literal `true`/`True`.)
 - **[DB] Confirms the same shape:** `tWorkflowEigenschaft.nDatenTyp` distinct values `0`/`1`/`3` (text/number/boolean), with 30 of the 34 rows being boolean (`nDatenTyp = 3`) — exactly the gating use-case. Conditions reference these via `tWorkflowBedingung.kWorkflowEigenschaft` / the `_workflowEigenschaft` property path.
 
 **Contradiction note:** none found between DB and WEB. Both agree gating is a condition-layer concern; the action layer only writes side effects + optionally aborts on error.
 
 > [!WARNING]
-> A common misconception is to write a "validation" custom action that `RETURN`s 0/1 expecting JTL to branch. It will not. To gate on a SQL computation, put the SQL in an **erweiterte Eigenschaft** (SELECT-only, returns a string/boolean) and use it as a **Bedingung**, not as an Aktion.
+> A common misconception is to write a "validation" custom action that `RETURN`s 0/1 expecting JTL to branch. It will not. To gate on a SQL computation, put the SQL in an **advanced property** (SELECT-only, returns a string/boolean) and use it as a **condition**, not as an action.
 
 ---
 
@@ -215,7 +215,7 @@ Evidence:
 
 [WEB] JTL-Guide: DotLiquid is the templating/expression language across templates and workflows — *"Dabei bietet Ihnen die Programmiersprache DotLiquid die Möglichkeit, mit wenigen einfachen Befehlen und Funktionen, individuelle Lösungen … einzurichten."*
 
-**Erweiterte Eigenschaften (advanced properties):** reusable named expressions (`tWorkflowEigenschaft`) [DB] that can:
+**Advanced properties (erweiterte Eigenschaften):** reusable named expressions (`tWorkflowEigenschaft`) [DB] that can:
 - access the full DotLiquid `Vorgang.*` object graph (e.g. `Vorgang.Zahlungen.Zahlungsart.Name`, `Vorgang.Artikel.Bestandsübersicht.Verfügbar`),
 - run loops/conditionals, and
 - **execute SQL** ([WEB] forum: SQL is allowed, with great query flexibility, but **INSERT/UPDATE/DELETE are not permitted** — SELECT only; an advanced property always returns a **string** which is then coerced to the configured return type).
@@ -236,7 +236,7 @@ false
 - Arithmetic conditions must use return type **Decimal** (not Number, which expects integers) to avoid formatting errors (forum *"Workflow erweiterte Eigenschaften"*).
 - Boolean conditions are string-compared internally; compare against the literal you actually emit (`true`/`True`).
 
-DotLiquid is also used **inside custom-action parameters** (see §4.3, `UseDotLiquid=true`), so the same expression language fills both Bedingungen and Aktion parameter values.
+DotLiquid is also used **inside custom-action parameters** (see §4.3, `UseDotLiquid=true`), so the same expression language fills both condition and action parameter values.
 
 ---
 
@@ -309,12 +309,12 @@ CREATE TYPE CustomWorkflows.Param_Hinweis FROM NVARCHAR(255);
 GO
 EXEC CustomWorkflows._SetActionParameterDisplayName
      @parameterName = 'Param_Hinweis',     -- the user-defined TYPE name
-     @displayName   = 'Anzuhängender Hinweistext';
+     @displayName   = 'Anzuhängender Hinweistext';  -- the label shown in the JTL UI
 GO
 -- then declare the extra param AS CustomWorkflows.Param_Hinweis instead of NVARCHAR(255).
 ```
 
-After this, refresh in JTL-Wawi (and ensure the **Custom Workflow Actions** module is licensed + Wawi restarted). The action appears for Workflowobjekt *Auftrag*, parameterisable in the workflow editor; JTL fills `@kAuftrag` with the triggering order's PK and renders any DotLiquid you put in `@hinweis`.
+After this, refresh in JTL-Wawi (and ensure the **Custom Workflow Actions** module is licensed + Wawi restarted). The action appears for workflow object *Auftrag*, parameterisable in the workflow editor; JTL fills `@kAuftrag` with the triggering order's PK and renders any DotLiquid you put in `@hinweis`.
 
 > [!NOTE]
 > **Parameter display names need user-defined types.** [DB] In *this* DB no user-defined types exist in `CustomWorkflows`, so every live extra parameter (e.g. `userName`) shows its raw name as `cDisplayName`. `_SetActionParameterDisplayName` only takes effect when the parameter is typed with a user-defined type that carries the `DisplayName` extended property — see step 4.
@@ -333,20 +333,20 @@ After this, refresh in JTL-Wawi (and ensure the **Custom Workflow Actions** modu
 | `CustomWorkflows.vCustomActionParameter` | Parameter flattening: `nPos = parameter_id-1`, datatype gated by `tAllowedDatatypes`, display-name fallback. |
 | `CustomWorkflows.vCustomActionCheck` | The `OK/ERROR` logic: PK-first match, disallowed-type, count>7; pulls DisplayName/Description/VersionCode. |
 | `CustomWorkflows.vCustomAction` | The action list JTL consumes (`Status='OK'`). |
-| `CustomWorkflows.tWorkflowObjects` | 15 Workflowobjekte + their PK columns (§7). |
+| `CustomWorkflows.tWorkflowObjects` | 15 workflow objects + their PK columns (§7). |
 | `CustomWorkflows.tAllowedDatatypes` | 11 allowed parameter datatypes. |
 | `CustomWorkflows.spAuftragPreiseAufNull` (+ siblings) | Live custom-action SP shape (`@kAuftrag INT` first param). |
 | `dbo.tWorkflow`, `tWorkflowAktion`, `tWorkflowBedingung`, `tWorkflowEigenschaft`, `tWorkflowEvent(+Group/Mapping)`, `tWorkflowQueue`, `tWorkflowLog` | Native engine structure; live `jtlAktionCustomWorkflow` XML proving implicit-PK + DotLiquid params + `CancelOnError`; `nDatenTyp` boolean return types for gating. |
 
 ### (b) Web sources
 
-- [JTL-Guide — Einleitung zur Workflow-Verwaltung](https://guide.jtl-software.com/jtl-wawi/jtl-workflows/einleitung-zur-workflow-verwaltung/) — Ereignis/Bedingung/Aktion model; AND/OR/NONE condition combination; DotLiquid as the extensibility layer; `Auftrag_Erstellt` example.
+- [JTL-Guide — Einleitung zur Workflow-Verwaltung](https://guide.jtl-software.com/jtl-wawi/jtl-workflows/einleitung-zur-workflow-verwaltung/) — event/condition/action model; AND/OR/NONE condition combination; DotLiquid as the extensibility layer; `Auftrag_Erstellt` example.
 - [JTL-Guide — JTL-Workflows (overview)](https://guide.jtl-software.com/jtl-wawi/jtl-workflows/) — workflow automation overview.
 - [JTL-Guide — Allgemeine Beispiele für DotLiquid](https://guide.jtl-software.com/jtl-wawi/vorlagen/allgemeine-beispiele-fuer-dotliquid/) — DotLiquid syntax reference.
 - [Forum — CustomWorkflow erscheint nicht in den Workflow-Aktionen](https://forum.jtl-software.de/threads/customworkflow-erscheint-nicht-in-den-workflow-aktionen.240151/) — **separate "Custom Workflow Actions" module must be booked + Wawi restart + license refresh**; PK-first gotcha (`cAuftragsNr` vs `kAuftrag`); schema must be `CustomWorkflows`.
 - [Forum — Custom Workflows anlegen](https://forum.jtl-software.de/threads/custom-workflows-anlegen.188254/) — full SQL example (`spArtikelUeberverkaeufeDeaktivieren @kArtikel INT`, `_CheckAction`, `_SetActionDisplayName`); must run against `eazybusiness` not `master`.
 - [Forum — eigene CustomWorkflows anlegen](https://forum.jtl-software.de/threads/eigene-customworkflows-anlegen.216028/) — skeleton incl. `CREATE TYPE` + `_SetActionParameterDisplayName` for parameter labels; NULL-safety in action body.
-- [Forum — Erweiterte Eigenschaften Rückgabewert Boolean](https://forum.jtl-software.de/threads/erweiterte-eigenschaften-rueckgabewert-boolean.172219/) — **gating boolean lives in an erweiterte Eigenschaft/Bedingung**, return types (Boolean/Number/Decimal/Text), Boolean-as-string caveat.
+- [Forum — Erweiterte Eigenschaften Rückgabewert Boolean](https://forum.jtl-software.de/threads/erweiterte-eigenschaften-rueckgabewert-boolean.172219/) — **gating boolean lives in an advanced property / condition**, return types (Boolean/Number/Decimal/Text), Boolean-as-string caveat.
 - [Forum — Workflow erweiterte Eigenschaften](https://forum.jtl-software.de/threads/workflow-erweiterte-eigenschaften.125208/) — DotLiquid arithmetic in conditions; Decimal vs Number return type.
 - [Forum — Workflow … DotLiquid-Variablen für „Eigenschaften"](https://forum.jtl-software.de/threads/workflow-dotliquid-variablen-fuer-eigenschaften-implementieren.107532/) — SQL in advanced properties, SELECT-only (no INSERT/UPDATE/DELETE), always returns a string.
 - [Forum — Tatsächlichen Rückgabewert einer Abfrage für einen Workflow](https://forum.jtl-software.de/threads/tatsaechlichen-rueckgabewert-einer-abfrage-fuer-einen-worklflow-ausgeben-lassen.124206/) — advanced-property route for surfacing query results into a workflow.
@@ -358,10 +358,10 @@ After this, refresh in JTL-Wawi (and ensure the **Custom Workflow Actions** modu
 | Claim | Class |
 |---|---|
 | Action label / parameter datatype gating / PK-first / ≤7 params | **[DB]** verified in `_CheckAction` + views |
-| 15 Workflowobjekte + PK columns; 11 allowed datatypes | **[DB]** full table content |
+| 15 workflow objects + PK columns; 11 allowed datatypes | **[DB]** full table content |
 | Custom action stored as `jtlAktionCustomWorkflow` XML; PK implicit; extra params support DotLiquid; `CancelOnError` | **[DB]** live `tWorkflowAktion.xXmlObjekt` |
 | Separate "Custom Workflow Actions" module, since 1.6, needs restart + license refresh, run on `eazybusiness` | **[WEB]** forum/guide |
-| Gating boolean belongs to Bedingung/erweiterte Eigenschaft, not Aktion; return types Boolean/Number/Decimal/Text; SQL SELECT-only in properties | **[WEB]** + **[DB]** (`nDatenTyp`) — both agree |
+| Gating boolean belongs to condition / advanced property, not action; return types Boolean/Number/Decimal/Text; SQL SELECT-only in properties | **[WEB]** + **[DB]** (`nDatenTyp`) — both agree |
 | Action OUTPUT/RETURN is ignored by the engine | **[INFER]** — grounded in absence of any consuming structure in DB + action XML |
 | `tWorkflow.nTyp` 0=event / 2=scheduler | **[INFER]** from column semantics; not web-confirmed |
 | No registry step — discovery is purely structural via the views | **[INFER]** from view definitions (no registry table exists) |
