@@ -1,15 +1,37 @@
 -- =====================================================================================
--- Preisrecherche Export für Excel (Performance-optimiert)
+-- Preisrecherche Export für Excel  (optimiert, Msg-8711-sicher)
 -- Erstellt: $(date)
--- Beschreibung: Ermittelt umfassende Artikelinformationen für Preisrecherche
+-- Beschreibung: Ermittelt umfassende Artikelinformationen für Preisrecherche.
+--
+-- Optimierungen ggü. PreisRecherche.sql:
+--   1) PARAMETER @cArtNr oben: leer = alle Artikel, sonst Filter auf genau diese
+--      Artikelnummer (ersetzt den fest verdrahteten Debug-Filter).
+--   2) Jede SORTIERTE Aggregation (STRING_AGG ... WITHIN GROUP) wird in einem
+--      EIGENEN Statement in eine Temp-Table materialisiert. Dadurch trifft in
+--      keinem Scope mehr als eine Sortierung aufeinander
+--      -> kein "Msg 8711: inkompatible Sortierungen" mehr.
+--   3) CSV-Parsing der Historie über die projektweite Read-Primitive
+--      Robotico.fnEscapedCSVParseLine (statt handgebautem STRING_SPLIT-Pivot).
+--   4) DROP TABLE IF EXISTS vor jeder Temp-Table -> in derselben Session
+--      wiederholt lauffähig.
+--   5) NVARCHAR(MAX)-Schutz in STRING_AGG -> keine 8000-Zeichen-Abschneidung
+--      bei langen Historien.
 -- =====================================================================================
 
 -- =====================================================================================
--- TEIL 1: Temp Tables erstellen (Performance: Materialisierung)
+-- PARAMETER
 -- =====================================================================================
+DECLARE @cArtNr NVARCHAR(50) = N'';   -- <<< Artikelnummer hier eingeben (leer = alle Artikel)
 
--- Temp Table: Rohdaten beider Historien (MATERIALISIERT)
--- Aufgeteilt in 3 CTEs für bessere Lesbarkeit und Fehlerbehandlung
+
+-- =====================================================================================
+-- TEIL 1: Historie-Rohdaten materialisieren (#RohDatenHistorie)
+--   Parst beide Historien-Typen ("Vergangene Preise" + "Vergangene Label") in einem
+--   Durchlauf. Spalten-Split über Robotico.fnEscapedCSVParseLine (EscapedCSV-Format:
+--   Datum; Netto; Brutto; Puffer X; User).
+-- =====================================================================================
+DROP TABLE IF EXISTS #RohDatenHistorie;
+
 ;WITH
 -- CTE 1: Attributdaten lesen (beide Historien-Typen in einer Query)
 AttributDaten AS (
@@ -17,7 +39,7 @@ AttributDaten AS (
         a.kArtikel,
         CASE
             WHEN attrs.cName = 'Vergangene Preise' THEN 'Preis'
-            WHEN attrs.cName = 'Vergangene Label' THEN 'Label'
+            WHEN attrs.cName = 'Vergangene Label'  THEN 'Label'
         END AS HistorieTyp,
         aas.cWertVarchar AS cFeldWert
     FROM dbo.tArtikel a
@@ -31,6 +53,7 @@ AttributDaten AS (
       AND a.nIstVater = 0
       AND attrs.cName IN ('Vergangene Preise', 'Vergangene Label')
       AND aas.kSprache = 0
+      AND (@cArtNr = N'' OR a.cArtNr = @cArtNr)
 ),
 
 -- CTE 2: CSV auf Zeilen splitten (Zeilenumbrüche)
@@ -45,36 +68,22 @@ ZeilenAufgesplittet AS (
     WHERE LTRIM(RTRIM(s.value)) != ''
 ),
 
--- CTE 3: Spalten-Split mit ordinal (separate CTE um Sortierungs-Konflikt zu vermeiden)
-SpaltenMitNummer AS (
+-- CTE 3: Spalten-Pivot über Robotico.fnEscapedCSVParseLine (projektweite Read-Primitive)
+SpaltenPivot AS (
     SELECT
-        kArtikel,
-        HistorieTyp,
-        VollstaendigeZeile,
-        ZeilenNummer,
-        value_split.ordinal AS spalte_nr,
-        LTRIM(RTRIM(value_split.value)) AS value
-    FROM ZeilenAufgesplittet
-    CROSS APPLY STRING_SPLIT(VollstaendigeZeile, ';', 1) value_split
-),
-
--- CTE 4: Pivot zu Spalten (OHNE ROW_NUMBER - nur noch MAX/GROUP BY)
-SpaltenAufgesplittet AS (
-    SELECT
-        kArtikel,
-        HistorieTyp,
-        ZeilenNummer,
-        MAX(VollstaendigeZeile) AS VollstaendigeZeile,  -- VollstaendigeZeile als Aggregat
-        MAX(CASE WHEN spalte_nr = 1 THEN value END) AS Spalte1,
-        MAX(CASE WHEN spalte_nr = 2 THEN value END) AS Spalte2,
-        MAX(CASE WHEN spalte_nr = 3 THEN value END) AS Spalte3,
-        MAX(CASE WHEN spalte_nr = 4 THEN value END) AS Spalte4,
-        MAX(CASE WHEN spalte_nr = 5 THEN value END) AS Spalte5
-    FROM SpaltenMitNummer
-    GROUP BY kArtikel, HistorieTyp, ZeilenNummer  -- VollstaendigeZeile NICHT im GROUP BY
+        z.kArtikel,
+        z.HistorieTyp,
+        z.ZeilenNummer,
+        z.VollstaendigeZeile,
+        MAX(CASE WHEN p.ordinal = 1 THEN p.value END) AS Spalte1,  -- Datum + Zeit
+        MAX(CASE WHEN p.ordinal = 2 THEN p.value END) AS Spalte2,  -- Netto / Label
+        MAX(CASE WHEN p.ordinal = 3 THEN p.value END) AS Spalte3,  -- Brutto
+        MAX(CASE WHEN p.ordinal = 4 THEN p.value END) AS Spalte4,  -- Puffer
+        MAX(CASE WHEN p.ordinal = 5 THEN p.value END) AS Spalte5   -- User
+    FROM ZeilenAufgesplittet z
+    CROSS APPLY Robotico.fnEscapedCSVParseLine(z.VollstaendigeZeile, ';') p
+    GROUP BY z.kArtikel, z.HistorieTyp, z.ZeilenNummer, z.VollstaendigeZeile
 )
-
--- Finale SELECT INTO: Datums-Parsing hinzufügen
 SELECT
     kArtikel,
     HistorieTyp,
@@ -94,34 +103,207 @@ SELECT
     VollstaendigeZeile,
     ZeilenNummer
 INTO #RohDatenHistorie
-FROM SpaltenAufgesplittet;
+FROM SpaltenPivot;
 
--- Index für schnellen Zugriff erstellen
 CREATE CLUSTERED INDEX IX_RohDaten ON #RohDatenHistorie(kArtikel, HistorieTyp, ZeilenNummer);
 
+
 -- =====================================================================================
--- TEIL 2: CTEs (verwenden Temp Tables + reguläre Tabellen)
+-- TEIL 2: Sortierte Aggregate je in eigener Temp-Table (vermeidet Msg 8711)
+--   Jede STRING_AGG ... WITHIN GROUP (ORDER BY ...) lebt in einem eigenen Scope.
+-- =====================================================================================
+
+-- ---------------------------------------------------------------------------
+-- #Komponenten  (ORDER BY s.nSort)  -- Was enthält dieser Stücklistenartikel?
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS #Komponenten;
+
+SELECT
+    a.kArtikel,
+    Komponenten =
+        CASE
+            WHEN a.kStueckliste > 0 THEN
+                ISNULL(  -- ISNULL statt COALESCE: COALESCE würde die STRING_AGG doppeln -> Msg 8711
+                    STRING_AGG(
+                        CONVERT(NVARCHAR(MAX),
+                            ko_a.cArtNr + ' (' +
+                            CASE WHEN s.fAnzahl = FLOOR(s.fAnzahl)
+                                 THEN CAST(CAST(s.fAnzahl AS INT) AS VARCHAR(10))
+                                 ELSE LTRIM(STR(s.fAnzahl, 10, 2)) END + 'x)'),
+                        ', '
+                    ) WITHIN GROUP (ORDER BY s.nSort),
+                    'Keine Komponenten gefunden'
+                )
+            ELSE ''
+        END
+INTO #Komponenten
+FROM dbo.tArtikel a
+LEFT JOIN dbo.tStueckliste s  ON s.kStueckliste = a.kStueckliste
+LEFT JOIN dbo.tArtikel  ko_a  ON s.kArtikel = ko_a.kArtikel AND ko_a.nDelete = 0
+WHERE a.nDelete = 0 AND a.cAktiv = 'Y' AND a.nIstVater = 0
+  AND (@cArtNr = N'' OR a.cArtNr = @cArtNr)
+GROUP BY a.kArtikel, a.kStueckliste;
+
+CREATE CLUSTERED INDEX IX_Komponenten ON #Komponenten(kArtikel);
+
+-- ---------------------------------------------------------------------------
+-- #VerwendetIn  (ORDER BY ue_a.cArtNr)  -- In welchen Stücklisten kommt der Artikel vor?
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS #VerwendetIn;
+
+SELECT
+    a.kArtikel,
+    VerwendetIn =
+        ISNULL(  -- ISNULL statt COALESCE: vermeidet Doppelung der STRING_AGG -> Msg 8711
+            STRING_AGG(
+                CONVERT(NVARCHAR(MAX),
+                    ue_a.cArtNr + ' (' +
+                    CASE WHEN s2.fAnzahl = FLOOR(s2.fAnzahl)
+                         THEN CAST(CAST(s2.fAnzahl AS INT) AS VARCHAR(10))
+                         ELSE LTRIM(STR(s2.fAnzahl, 10, 2)) END + 'x)'),
+                ', '
+            ) WITHIN GROUP (ORDER BY ue_a.cArtNr),
+            ''
+        )
+INTO #VerwendetIn
+FROM dbo.tArtikel a
+LEFT JOIN dbo.tStueckliste s2 ON s2.kArtikel = a.kArtikel
+LEFT JOIN dbo.tArtikel  ue_a  ON s2.kStueckliste = ue_a.kStueckliste AND ue_a.nDelete = 0
+WHERE a.nDelete = 0 AND a.cAktiv = 'Y' AND a.nIstVater = 0
+  AND (@cArtNr = N'' OR a.cArtNr = @cArtNr)
+GROUP BY a.kArtikel;
+
+CREATE CLUSTERED INDEX IX_VerwendetIn ON #VerwendetIn(kArtikel);
+
+-- ---------------------------------------------------------------------------
+-- #HistDedup  -- geparste Historie mit Änderungs-Flag (LAG je Artikel + Typ)
+--   IstAenderung = 1, wenn der relevante Wert (Preis: Brutto/Spalte3,
+--   Label: Spalte2) sich gegenüber dem Vorgänger geändert hat.
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS #HistDedup;
+
+SELECT
+    kArtikel,
+    HistorieTyp,
+    DatumZeit,
+    ZeilenNummer,
+    VollstaendigeZeile,
+    Spalte2,
+    Spalte3,
+    CASE
+        WHEN HistorieTyp = 'Preis' THEN
+            CASE WHEN LAG(Spalte3) OVER (PARTITION BY kArtikel, HistorieTyp ORDER BY ZeilenNummer) IS NULL
+                      OR Spalte3 <> LAG(Spalte3) OVER (PARTITION BY kArtikel, HistorieTyp ORDER BY ZeilenNummer)
+                 THEN 1 ELSE 0 END
+        ELSE
+            CASE WHEN LAG(Spalte2) OVER (PARTITION BY kArtikel, HistorieTyp ORDER BY ZeilenNummer) IS NULL
+                      OR Spalte2 <> LAG(Spalte2) OVER (PARTITION BY kArtikel, HistorieTyp ORDER BY ZeilenNummer)
+                 THEN 1 ELSE 0 END
+    END AS IstAenderung
+INTO #HistDedup
+FROM #RohDatenHistorie
+WHERE DatumZeit IS NOT NULL;
+
+CREATE CLUSTERED INDEX IX_HistDedup ON #HistDedup(kArtikel, HistorieTyp, ZeilenNummer);
+
+-- ---------------------------------------------------------------------------
+-- #PreisHist  (ORDER BY ZeilenNummer DESC)  -- Spalte "Vergangene Preise"
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS #PreisHist;
+
+SELECT
+    kArtikel,
+    VergangenePreise =
+        ISNULL(  -- ISNULL statt COALESCE: vermeidet Doppelung der STRING_AGG -> Msg 8711
+            STRING_AGG(
+                CONVERT(NVARCHAR(MAX),
+                    LTRIM(RTRIM(Spalte3)) + ' (' + CONVERT(VARCHAR(10), DatumZeit, 104) + ')'),
+                '; '
+            ) WITHIN GROUP (ORDER BY ZeilenNummer DESC),
+            ''
+        )
+INTO #PreisHist
+FROM #HistDedup
+WHERE HistorieTyp = 'Preis' AND IstAenderung = 1
+GROUP BY kArtikel;
+
+CREATE CLUSTERED INDEX IX_PreisHist ON #PreisHist(kArtikel);
+
+-- ---------------------------------------------------------------------------
+-- #LabelHist  (ORDER BY ZeilenNummer DESC)  -- Spalte "Vergangene Label"
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS #LabelHist;
+
+SELECT
+    kArtikel,
+    VergangeneLabel =
+        ISNULL(  -- ISNULL statt COALESCE: vermeidet Doppelung der STRING_AGG -> Msg 8711
+            STRING_AGG(
+                CONVERT(NVARCHAR(MAX),
+                    LTRIM(RTRIM(Spalte2)) + ' (' + CONVERT(VARCHAR(10), DatumZeit, 104) + ')'),
+                '; '
+            ) WITHIN GROUP (ORDER BY ZeilenNummer DESC),
+            ''
+        )
+INTO #LabelHist
+FROM #HistDedup
+WHERE HistorieTyp = 'Label' AND IstAenderung = 1
+GROUP BY kArtikel;
+
+CREATE CLUSTERED INDEX IX_LabelHist ON #LabelHist(kArtikel);
+
+-- ---------------------------------------------------------------------------
+-- #KombiHist  (ORDER BY DatumZeit DESC, Typ, ZeilenNummer DESC)
+--   Neue Spalte "Historie": alle Änderungen (Preis + Label) chronologisch.
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS #KombiHist;
+
+SELECT
+    kArtikel,
+    Historie =
+        ISNULL(  -- ISNULL statt COALESCE: COALESCE würde die STRING_AGG doppeln -> Msg 8711
+            STRING_AGG(CONVERT(NVARCHAR(MAX), VollstaendigeZeile), CHAR(10))
+                WITHIN GROUP (
+                    ORDER BY
+                        DatumZeit DESC,
+                        CASE WHEN HistorieTyp = 'Label' THEN 0 ELSE 1 END,  -- Label vor Preis
+                        ZeilenNummer DESC
+                ),
+            ''
+        )
+INTO #KombiHist
+FROM #HistDedup
+WHERE IstAenderung = 1
+GROUP BY kArtikel;
+
+CREATE CLUSTERED INDEX IX_KombiHist ON #KombiHist(kArtikel);
+
+
+-- =====================================================================================
+-- TEIL 3: Finale Abfrage
+--   Nur noch nicht-sortierte Aggregate (FOR XML PATH / Subqueries) im Scope,
+--   sortierte Aggregate kommen fertig aus den Temp-Tables -> kein Msg 8711.
 -- =====================================================================================
 
 ;WITH
--- CTE 1: Stücklisten-Beziehungen und Gruppierungs-IDs berechnen
+-- CTE: Stücklisten-Beziehungen und Gruppierungs-IDs berechnen
 StuecklistenGruppen AS (
-    SELECT 
+    SELECT
         a.kArtikel,
-        CASE 
-            WHEN a.kStueckliste > 0 OR EXISTS(SELECT 1 FROM dbo.tStueckliste s WHERE s.kArtikel = a.kArtikel) THEN 
-                (SELECT MIN(alle_ids.stuecklisten_id) 
+        CASE
+            WHEN a.kStueckliste > 0 OR EXISTS(SELECT 1 FROM dbo.tStueckliste s WHERE s.kArtikel = a.kArtikel) THEN
+                (SELECT MIN(alle_ids.stuecklisten_id)
                  FROM (
                      SELECT a.kStueckliste as stuecklisten_id WHERE a.kStueckliste > 0
                      UNION
                      SELECT s.kStueckliste FROM dbo.tStueckliste s WHERE s.kArtikel = a.kArtikel
                      UNION
-                     SELECT s2.kStueckliste 
+                     SELECT s2.kStueckliste
                      FROM dbo.tStueckliste s1
                      INNER JOIN dbo.tStueckliste s2 ON s1.kArtikel = s2.kArtikel
                      WHERE s1.kStueckliste = a.kStueckliste AND a.kStueckliste > 0
                      UNION
-                     SELECT s3.kStueckliste 
+                     SELECT s3.kStueckliste
                      FROM dbo.tStueckliste s3
                      INNER JOIN dbo.tArtikel a2 ON s3.kArtikel = a2.kArtikel
                      WHERE a2.kStueckliste IN (
@@ -132,9 +314,10 @@ StuecklistenGruppen AS (
         END AS GruppenID
     FROM dbo.tArtikel a
     WHERE a.nDelete = 0 AND a.cAktiv = 'Y' AND a.nIstVater = 0
+      AND (@cArtNr = N'' OR a.cArtNr = @cArtNr)
 ),
 
--- CTE 2: Aggregierte Daten sammeln (ohne Komponenten/VerwendetIn wegen Msg 8711)
+-- CTE: Aggregierte Daten sammeln (Label via FOR XML PATH + Abverkauf-Attribut)
 AggregatedData AS (
     SELECT
         a.kArtikel,
@@ -164,57 +347,10 @@ AggregatedData AS (
         ) AS Abverkauf
     FROM dbo.tArtikel a
     WHERE a.nDelete = 0 AND a.cAktiv = 'Y' AND a.nIstVater = 0
+      AND (@cArtNr = N'' OR a.cArtNr = @cArtNr)
 ),
 
--- CTE 3: Komponenten separat aggregieren (separater Scope für ORDER BY s.nSort)
-KomponentenCTE AS (
-    SELECT
-        a.kArtikel,
-        Komponenten =
-            CASE
-                WHEN a.kStueckliste > 0 THEN
-                    COALESCE(
-                        STRING_AGG(
-                            ko_a.cArtNr + ' (' +
-                            CASE WHEN s.fAnzahl = FLOOR(s.fAnzahl)
-                                 THEN CAST(CAST(s.fAnzahl AS INT) AS VARCHAR(10))
-                                 ELSE LTRIM(STR(s.fAnzahl, 10, 2)) END + 'x)',
-                            ', '
-                        ) WITHIN GROUP (ORDER BY s.nSort),
-                        'Keine Komponenten gefunden'
-                    )
-                ELSE ''
-            END
-    FROM dbo.tArtikel a
-    LEFT JOIN dbo.tStueckliste s   ON s.kStueckliste = a.kStueckliste
-    LEFT JOIN dbo.tArtikel   ko_a  ON s.kArtikel = ko_a.kArtikel AND ko_a.nDelete = 0
-    WHERE a.nDelete = 0 AND a.cAktiv = 'Y' AND a.nIstVater = 0
-    GROUP BY a.kArtikel, a.kStueckliste
-),
-
--- CTE 4: "Verwendet in Stücklisten" separat aggregieren (separater Scope für ORDER BY ue_a.cArtNr)
-VerwendetInCTE AS (
-    SELECT
-        a.kArtikel,
-        VerwendetIn =
-            COALESCE(
-                STRING_AGG(
-                    ue_a.cArtNr + ' (' +
-                    CASE WHEN s2.fAnzahl = FLOOR(s2.fAnzahl)
-                         THEN CAST(CAST(s2.fAnzahl AS INT) AS VARCHAR(10))
-                         ELSE LTRIM(STR(s2.fAnzahl, 10, 2)) END + 'x)',
-                    ', '
-                ) WITHIN GROUP (ORDER BY ue_a.cArtNr),
-                ''
-            )
-    FROM dbo.tArtikel a
-    LEFT JOIN dbo.tStueckliste s2 ON s2.kArtikel = a.kArtikel
-    LEFT JOIN dbo.tArtikel ue_a   ON s2.kStueckliste = ue_a.kStueckliste AND ue_a.nDelete = 0
-    WHERE a.nDelete = 0 AND a.cAktiv = 'Y' AND a.nIstVater = 0
-    GROUP BY a.kArtikel
-),
-
--- CTE 5: Alle Lieferanten pro Artikel sammeln
+-- CTE: Alle Lieferanten pro Artikel sammeln
 AllelieferantenProArtikel AS (
     SELECT
         la.tArtikel_kArtikel,
@@ -233,7 +369,7 @@ AllelieferantenProArtikel AS (
     GROUP BY la.tArtikel_kArtikel
 ),
 
--- CTE 6: Stücklisten-Lieferanten ermitteln
+-- CTE: Stücklisten-Lieferanten ermitteln
 StücklistenLieferanten AS (
     SELECT
         a.kArtikel,
@@ -260,119 +396,10 @@ StücklistenLieferanten AS (
     FROM dbo.tArtikel a
     LEFT JOIN AllelieferantenProArtikel alpa_eigen ON a.kArtikel = alpa_eigen.tArtikel_kArtikel
     WHERE a.nDelete = 0 AND a.cAktiv = 'Y' AND a.nIstVater = 0
+      AND (@cArtNr = N'' OR a.cArtNr = @cArtNr)
 ),
 
--- CTE 7: Preishistorie parsen (nutzt #RohDatenHistorie - kein STRING_SPLIT mehr!)
-PreisHistorieParsed AS (
-    SELECT
-        rdh.kArtikel,
-        rdh.DatumZeit,
-        rdh.Spalte2 AS Netto,
-        rdh.Spalte3 AS Brutto,
-        rdh.VollstaendigeZeile,
-        rdh.ZeilenNummer,
-        -- Vorherigen Brutto für Deduplizierung
-        LAG(rdh.Spalte3) OVER (PARTITION BY rdh.kArtikel ORDER BY rdh.ZeilenNummer) AS VorherigerBrutto
-    FROM #RohDatenHistorie rdh
-    WHERE rdh.HistorieTyp = 'Preis'
-      AND rdh.DatumZeit IS NOT NULL
-),
-
--- CTE 8: Labelhistorie parsen (nutzt #RohDatenHistorie - kein STRING_SPLIT mehr!)
-LabelHistorieParsed AS (
-    SELECT
-        rdh.kArtikel,
-        rdh.DatumZeit,
-        rdh.Spalte2 AS Label,
-        rdh.VollstaendigeZeile,
-        rdh.ZeilenNummer,
-        -- Vorherige Label für Deduplizierung
-        LAG(rdh.Spalte2) OVER (PARTITION BY rdh.kArtikel ORDER BY rdh.ZeilenNummer) AS VorherigeLabel
-    FROM #RohDatenHistorie rdh
-    WHERE rdh.HistorieTyp = 'Label'
-      AND rdh.DatumZeit IS NOT NULL
-),
-
--- CTE 9: PreisHistorieFormatiert (für alte Spalte "Vergangene Preise")
--- OPTIMIERT: STRING_AGG statt korrelierte Subquery
-PreisHistorieFormatiert AS (
-    SELECT
-        kArtikel,
-        COALESCE(
-            STRING_AGG(
-                LTRIM(RTRIM(Brutto)) + ' (' + CONVERT(VARCHAR(10), DatumZeit, 104) + ')',
-                '; '
-            ) WITHIN GROUP (ORDER BY ZeilenNummer DESC),
-            ''
-        ) AS VergangenePreise
-    FROM PreisHistorieParsed
-    WHERE VorherigerBrutto IS NULL
-       OR Brutto != VorherigerBrutto
-    GROUP BY kArtikel
-),
-
--- CTE 10: LabelHistorieFormatiert (für alte Spalte "Vergangene Label")
--- OPTIMIERT: STRING_AGG statt korrelierte Subquery
-LabelHistorieFormatiert AS (
-    SELECT
-        kArtikel,
-        COALESCE(
-            STRING_AGG(
-                LTRIM(RTRIM(Label)) + ' (' + CONVERT(VARCHAR(10), DatumZeit, 104) + ')',
-                '; '
-            ) WITHIN GROUP (ORDER BY ZeilenNummer DESC),
-            ''
-        ) AS VergangeneLabel
-    FROM LabelHistorieParsed
-    WHERE VorherigeLabel IS NULL
-       OR Label != VorherigeLabel
-    GROUP BY kArtikel
-),
-
--- CTE 11: KombinierteHistorie (neue Spalte mit allen Änderungen chronologisch)
--- OPTIMIERT: STRING_AGG statt korrelierte Subquery
-KombinierteHistorie AS (
-    SELECT
-        kArtikel,
-        COALESCE(
-            STRING_AGG(VollstaendigeZeile, CHAR(10))
-                WITHIN GROUP (
-                    ORDER BY
-                        DatumZeit DESC,
-                        CASE WHEN HistorieTyp = 'Label' THEN 0 ELSE 1 END,  -- Label vor Preis
-                        ZeilenNummer DESC
-                ),
-            ''
-        ) AS Historie
-    FROM (
-        -- Preis-Einträge (nur Änderungen)
-        SELECT
-            kArtikel,
-            'Preis' AS HistorieTyp,
-            DatumZeit,
-            VollstaendigeZeile,
-            ZeilenNummer
-        FROM PreisHistorieParsed
-        WHERE VorherigerBrutto IS NULL
-           OR Brutto != VorherigerBrutto
-
-        UNION ALL
-
-        -- Label-Einträge (nur Änderungen)
-        SELECT
-            kArtikel,
-            'Label' AS HistorieTyp,
-            DatumZeit,
-            VollstaendigeZeile,
-            ZeilenNummer
-        FROM LabelHistorieParsed
-        WHERE VorherigeLabel IS NULL
-           OR Label != VorherigeLabel
-    ) kombiniert
-    GROUP BY kArtikel
-),
-
--- CTE 12: Gruppengrößen berechnen
+-- CTE: Gruppengrößen berechnen
 GruppenGroessen AS (
     SELECT
         sg.GruppenID,
@@ -421,10 +448,10 @@ SELECT
     ROUND(a.fArtGewicht, 3)       AS [Artikelgewicht (kg)],
 
     -- Stücklistenkomponenten (Was enthält dieser Artikel?)
-    kc.Komponenten                AS [Stücklistenkomponenten],
+    COALESCE(kc.Komponenten, '')  AS [Stücklistenkomponenten],
 
     -- Verwendet in Stücklisten (In welchen Stücklisten wird dieser Artikel verwendet?)
-    vi.VerwendetIn                AS [Verwendet in Stücklisten],
+    COALESCE(vi.VerwendetIn, '')  AS [Verwendet in Stücklisten],
 
     -- Stücklistentyp-Klassifizierung
     CASE
@@ -488,27 +515,27 @@ SELECT
     GETDATE() AS [Exportdatum]
 
 FROM dbo.tArtikel a
-    -- CTEs einbinden
+    -- CTEs / Temp-Tables einbinden
     LEFT JOIN StuecklistenGruppen sg ON a.kArtikel = sg.kArtikel
     LEFT JOIN AggregatedData ad ON a.kArtikel = ad.kArtikel
-    LEFT JOIN KomponentenCTE kc ON a.kArtikel = kc.kArtikel
-    LEFT JOIN VerwendetInCTE vi ON a.kArtikel = vi.kArtikel
+    LEFT JOIN #Komponenten kc ON a.kArtikel = kc.kArtikel
+    LEFT JOIN #VerwendetIn vi ON a.kArtikel = vi.kArtikel
     LEFT JOIN GruppenGroessen gg ON sg.GruppenID = gg.GruppenID
     LEFT JOIN StücklistenLieferanten sl ON a.kArtikel = sl.kArtikel
-    LEFT JOIN PreisHistorieFormatiert phf ON a.kArtikel = phf.kArtikel
-    LEFT JOIN LabelHistorieFormatiert lhf ON a.kArtikel = lhf.kArtikel
-    LEFT JOIN KombinierteHistorie kh ON a.kArtikel = kh.kArtikel
-    
+    LEFT JOIN #PreisHist phf ON a.kArtikel = phf.kArtikel
+    LEFT JOIN #LabelHist lhf ON a.kArtikel = lhf.kArtikel
+    LEFT JOIN #KombiHist kh ON a.kArtikel = kh.kArtikel
+
     -- Artikelbeschreibung (deutsch)
-    LEFT JOIN dbo.tArtikelBeschreibung ab ON a.kArtikel = ab.kArtikel 
+    LEFT JOIN dbo.tArtikelBeschreibung ab ON a.kArtikel = ab.kArtikel
         AND ab.kSprache = 1 -- Deutsche Sprache
-    
+
     -- Lagerbestand
     LEFT JOIN dbo.tlagerbestand lb ON a.kArtikel = lb.kArtikel
-    
+
     -- Warengruppe
     LEFT JOIN dbo.tWarengruppe wg ON a.kWarengruppe = wg.kWarengruppe
-    
+
     -- Versandklasse
     LEFT JOIN dbo.tVersandklasse vk ON a.kVersandklasse = vk.kVersandklasse
 
@@ -516,10 +543,9 @@ WHERE
     a.nDelete = 0  -- Nicht gelöschte Artikel
     AND a.cAktiv = 'Y'  -- Aktive Artikel
     AND a.nIstVater = 0  -- Keine Vaterartikel (Variationen)
-    -- Stücklistenartikel sind jetzt INKLUDIERT für kombinierte Sicht
-    AND cArtNr = '9008395'
+    AND (@cArtNr = N'' OR a.cArtNr = @cArtNr)  -- Optionaler Artikelnummer-Filter (leer = alle)
 
-ORDER BY 
+ORDER BY
     sg.GruppenID,  -- Primär nach Stücklisten-Gruppen-ID sortieren
     CASE WHEN a.kStueckliste > 0 THEN 0 ELSE 1 END,  -- Stücklistenartikel vor Komponenten
-    a.cArtNr  -- Dann nach Artikelnummer
+    a.cArtNr;  -- Dann nach Artikelnummer
