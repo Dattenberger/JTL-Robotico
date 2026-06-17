@@ -19,6 +19,14 @@
 --   * DROP TABLE IF EXISTS vor jeder Temp-Table (in derselben Session wiederholbar),
 --     NVARCHAR(MAX)-Schutz gegen Abschneiden langer Historien.
 --
+-- Analyse-Spalten (aus der Preis-/Label-Historie, Fenster 30 / 60 Tage):
+--   * Preisänderung 30/60 Tage (netto): Gesamtrichtung ggü. dem Preis VOR dem Zeitraum
+--     (Erhöhung / Reduktion / Keine Änderung). Ohne Referenzpreis vor dem Zeitraum ->
+--     'Keine Änderung' (Fallback auf ersten Preis im Fenster ist deaktiviert/auskommentiert).
+--   * Preisbewegung 30/60 Tage (Verlauf): einzelne Bewegungen IM Zeitraum, kommagetrennt
+--     ('Erhöhung', 'Reduktion', 'Erhöhung, Reduktion', 'Keine Änderung').
+--   * Label 30/60 Tage (historisch): im Zeitraum gesetzte Labels, kommagetrennt.
+--
 -- Hinweis: Label- und Lieferantenlisten werden deterministisch sortiert ausgegeben
 -- (vorher willkürliche FOR-XML-Reihenfolge) - inhaltlich identische Menge.
 -- =====================================================================================
@@ -182,6 +190,134 @@ FROM (
 GROUP BY kArtikel;
 CREATE CLUSTERED INDEX IX_KombiHist ON #KombiHist(kArtikel);
 
+-- #PreisTrend: Preisentwicklung je Artikel in 30/60 Tagen (Enum-Werte)
+--   Basis: Brutto-Änderungen aus #PreisRoh, numerisch via Robotico.fnStringParseGermanDecimal.
+--   Zwei Sichten je Fenster:
+--     * Nettoänderung: aktueller Preis vs. Preis zu FENSTERBEGINN (= letzte Änderung VOR
+--       dem Fenster, ggf. ein alter Preis außerhalb des Zeitraums).
+--       Enum: Erhöhung | Reduktion | Keine Änderung.
+--     * Preisbewegung (Verlauf): einzelne Änderungen IM Fenster; 'Gemischt' wenn rauf UND
+--       runter. Enum: Erhöhung | Reduktion | Gemischt | Keine Änderung.
+--   Erste Preiserfassung (kein Vorgängerpreis) zählt für 'Verlauf' nicht als Richtung,
+--   bildet aber für 'Netto' einen gültigen Vergleichspreis.
+DECLARE @Cut30 DATETIME = DATEADD(DAY,-30,GETDATE());
+DECLARE @Cut60 DATETIME = DATEADD(DAY,-60,GETDATE());
+
+DROP TABLE IF EXISTS #PreisTrend;
+;WITH Parsed AS (   -- Brutto je Änderung EINMAL numerisch parsen (Scalar-UDF nur 1x/Zeile)
+    SELECT kArtikel, DatumZeit, ZeilenNummer,
+        b = Robotico.fnStringParseGermanDecimal(Brutto)
+    FROM #PreisRoh
+    WHERE IstAenderung = 1
+),
+Chg AS (            -- Richtung je Änderung ggü. dem Vorgängerpreis
+    SELECT kArtikel, DatumZeit, ZeilenNummer, b,
+        Richtung = SIGN(b - LAG(b) OVER (PARTITION BY kArtikel ORDER BY ZeilenNummer))
+    FROM Parsed
+),
+Rang AS (
+    SELECT kArtikel, DatumZeit, b, Richtung,
+        rnAktuell = ROW_NUMBER() OVER (PARTITION BY kArtikel ORDER BY ZeilenNummer DESC),  -- 1 = aktuellster Preis
+        rnVor30   = ROW_NUMBER() OVER (PARTITION BY kArtikel, CASE WHEN DatumZeit<@Cut30 THEN 1 ELSE 0 END ORDER BY ZeilenNummer DESC),
+        rnVor60   = ROW_NUMBER() OVER (PARTITION BY kArtikel, CASE WHEN DatumZeit<@Cut60 THEN 1 ELSE 0 END ORDER BY ZeilenNummer DESC),
+        -- Fallback deaktiviert (erster Preis IM Fenster) – zum Reaktivieren einkommentieren:
+        -- rnImF30   = ROW_NUMBER() OVER (PARTITION BY kArtikel, CASE WHEN DatumZeit>=@Cut30 THEN 1 ELSE 0 END ORDER BY ZeilenNummer ASC),  -- 1 = erster Preis IM Fenster
+        -- rnImF60   = ROW_NUMBER() OVER (PARTITION BY kArtikel, CASE WHEN DatumZeit>=@Cut60 THEN 1 ELSE 0 END ORDER BY ZeilenNummer ASC),
+        vor30 = CASE WHEN DatumZeit<@Cut30 THEN 1 ELSE 0 END,
+        vor60 = CASE WHEN DatumZeit<@Cut60 THEN 1 ELSE 0 END
+    FROM Chg
+),
+Agg AS (
+    SELECT kArtikel,
+        Aktuell = MAX(CASE WHEN rnAktuell=1 THEN b END),                 -- aktueller Preis
+        Basis30 = MAX(CASE WHEN vor30=1 AND rnVor30=1 THEN b END),       -- Preis zu Fensterbeginn (vor 30T)
+        Basis60 = MAX(CASE WHEN vor60=1 AND rnVor60=1 THEN b END),       -- Preis zu Fensterbeginn (vor 60T)
+        -- Fallback deaktiviert – zum Reaktivieren einkommentieren:
+        -- FirstIn30 = MAX(CASE WHEN DatumZeit>=@Cut30 AND rnImF30=1 THEN b END),  -- Fallback: erster Preis IM Fenster
+        -- FirstIn60 = MAX(CASE WHEN DatumZeit>=@Cut60 AND rnImF60=1 THEN b END),
+        ImFenster30 = MAX(CASE WHEN DatumZeit>=@Cut30 THEN 1 ELSE 0 END),
+        ImFenster60 = MAX(CASE WHEN DatumZeit>=@Cut60 THEN 1 ELSE 0 END),
+        Auf30 = MAX(CASE WHEN DatumZeit>=@Cut30 AND Richtung>0 THEN 1 ELSE 0 END),
+        Ab30  = MAX(CASE WHEN DatumZeit>=@Cut30 AND Richtung<0 THEN 1 ELSE 0 END),
+        Auf60 = MAX(CASE WHEN DatumZeit>=@Cut60 AND Richtung>0 THEN 1 ELSE 0 END),
+        Ab60  = MAX(CASE WHEN DatumZeit>=@Cut60 AND Richtung<0 THEN 1 ELSE 0 END)
+    FROM Rang
+    GROUP BY kArtikel
+),
+Agg2 AS (
+    SELECT kArtikel, Aktuell, ImFenster30, ImFenster60, Auf30, Ab30, Auf60, Ab60,
+        -- Ohne Preis VOR dem Fenster -> kein Vergleich über den vollen Zeitraum -> 'Keine Änderung'.
+        -- Fallback (erster Preis IM Fenster) bewusst deaktiviert.
+        -- Zum Reaktivieren: COALESCE(Basis30, FirstIn30) bzw. COALESCE(Basis60, FirstIn60)
+        -- (und rnImF30/60 + FirstIn30/60 oben einkommentieren).
+        EffBasis30 = Basis30,
+        EffBasis60 = Basis60
+    FROM Agg
+)
+SELECT kArtikel,
+    Netto30 = CASE WHEN ImFenster30=1 AND EffBasis30 IS NOT NULL AND Aktuell<>EffBasis30
+                   THEN CASE WHEN Aktuell>EffBasis30 THEN N'Erhöhung' ELSE N'Reduktion' END
+                   ELSE N'Keine Änderung' END,
+    Netto60 = CASE WHEN ImFenster60=1 AND EffBasis60 IS NOT NULL AND Aktuell<>EffBasis60
+                   THEN CASE WHEN Aktuell>EffBasis60 THEN N'Erhöhung' ELSE N'Reduktion' END
+                   ELSE N'Keine Änderung' END,
+    -- Kommagetrennt: 'Erhöhung' wenn >=1 Aufwärtsbewegung, 'Reduktion' wenn >=1 Abwärts-
+    -- bewegung (erste Bewegung inkl. Vergleich mit dem Preis vor dem Fenster); beides möglich.
+    Verlauf30 = ISNULL(NULLIF(CONCAT_WS(N', ',
+                    CASE WHEN Auf30=1 THEN N'Erhöhung' END,
+                    CASE WHEN Ab30=1  THEN N'Reduktion' END), N''), N'Keine Änderung'),
+    Verlauf60 = ISNULL(NULLIF(CONCAT_WS(N', ',
+                    CASE WHEN Auf60=1 THEN N'Erhöhung' END,
+                    CASE WHEN Ab60=1  THEN N'Reduktion' END), N''), N'Keine Änderung')
+INTO #PreisTrend
+FROM Agg2;
+CREATE CLUSTERED INDEX IX_PreisTrend ON #PreisTrend(kArtikel);
+
+-- #LabelFenster: welche Label waren je Artikel in den letzten 30 / 60 Tagen gesetzt?
+--   Quelle: Label-Historie (#LabelRoh, Feld 2 = Label-Liste). Berücksichtigt den Label-Stand
+--   ZU FENSTERBEGINN (letzte Änderung vor dem Fenster) plus alle Änderungen IM Fenster ->
+--   alle Label, die im Zeitraum zu irgendeinem Zeitpunkt gesetzt waren. Einzel-Label,
+--   alphabetisch, kommagetrennt (z.B. 'Abverkauf, BW nachteilig').
+DROP TABLE IF EXISTS #LabelFenster;
+;WITH LabChg AS (
+    SELECT kArtikel, DatumZeit, ZeilenNummer, LabelListe,
+        rnVor30 = ROW_NUMBER() OVER (PARTITION BY kArtikel, CASE WHEN DatumZeit<@Cut30 THEN 1 ELSE 0 END ORDER BY ZeilenNummer DESC),
+        rnVor60 = ROW_NUMBER() OVER (PARTITION BY kArtikel, CASE WHEN DatumZeit<@Cut60 THEN 1 ELSE 0 END ORDER BY ZeilenNummer DESC)
+    FROM #LabelRoh
+    WHERE IstAenderung = 1
+),
+-- relevante Label-Stände je Fenster: alle IM Fenster + der letzte Stand VOR dem Fenster
+Rel30 AS (
+    SELECT kArtikel, LabelListe FROM LabChg WHERE DatumZeit>=@Cut30
+    UNION ALL
+    SELECT kArtikel, LabelListe FROM LabChg WHERE DatumZeit<@Cut30 AND rnVor30=1
+),
+Rel60 AS (
+    SELECT kArtikel, LabelListe FROM LabChg WHERE DatumZeit>=@Cut60
+    UNION ALL
+    SELECT kArtikel, LabelListe FROM LabChg WHERE DatumZeit<@Cut60 AND rnVor60=1
+),
+-- Label-Listen in Einzel-Label splitten (Separator ',') und je Artikel deduplizieren
+Einzel30 AS (
+    SELECT DISTINCT r.kArtikel, LTRIM(RTRIM(s.value)) AS Label
+    FROM Rel30 r CROSS APPLY STRING_SPLIT(r.LabelListe, ',') s
+    WHERE LTRIM(RTRIM(s.value)) <> ''
+),
+Einzel60 AS (
+    SELECT DISTINCT r.kArtikel, LTRIM(RTRIM(s.value)) AS Label
+    FROM Rel60 r CROSS APPLY STRING_SPLIT(r.LabelListe, ',') s
+    WHERE LTRIM(RTRIM(s.value)) <> ''
+),
+Agg30 AS (SELECT kArtikel, Labels=STRING_AGG(CONVERT(NVARCHAR(MAX),Label),', ') WITHIN GROUP (ORDER BY Label) FROM Einzel30 GROUP BY kArtikel),
+Agg60 AS (SELECT kArtikel, Labels=STRING_AGG(CONVERT(NVARCHAR(MAX),Label),', ') WITHIN GROUP (ORDER BY Label) FROM Einzel60 GROUP BY kArtikel)
+SELECT COALESCE(a60.kArtikel, a30.kArtikel) AS kArtikel,
+    Labels30 = a30.Labels,
+    Labels60 = a60.Labels
+INTO #LabelFenster
+FROM Agg60 a60
+FULL JOIN Agg30 a30 ON a30.kArtikel = a60.kArtikel;
+CREATE CLUSTERED INDEX IX_LabelFenster ON #LabelFenster(kArtikel);
+
 -- =====================================================================================
 -- TEIL 2b: Set-basierte Materialisierung der bisher korrelierten Subqueries
 -- =====================================================================================
@@ -292,10 +428,16 @@ SELECT
     a.cHAN AS [HAN],
     COALESCE(ab.cName,'') AS [Artikelname],
     COALESCE(lbl.Label,'') AS [Label],
+    COALESCE(lf.Labels30,'') AS [Label 30 Tage (historisch)],
+    COALESCE(lf.Labels60,'') AS [Label 60 Tage (historisch)],
     COALESCE(av.Abverkauf,'') AS [Abverkauf],
     ROUND(a.fVKNetto,2) AS [VK],
     ROUND(a.fEKNetto,2) AS [EK],
     ROUND(a.fUVP,2) AS [UVP],
+    COALESCE(pt.Netto30,  N'Keine Änderung') AS [Preisänderung 30 Tage (netto)],
+    COALESCE(pt.Netto60,  N'Keine Änderung') AS [Preisänderung 60 Tage (netto)],
+    COALESCE(pt.Verlauf30,N'Keine Änderung') AS [Preisbewegung 30 Tage (Verlauf)],
+    COALESCE(pt.Verlauf60,N'Keine Änderung') AS [Preisbewegung 60 Tage (Verlauf)],
     COALESCE(lb.fLagerbestand,0) AS [Bestand],
     COALESCE(lb.fVerfuegbar,0) AS [Verfügbar],
     COALESCE(lb.fZulauf,0) AS [In Zulauf],
@@ -340,6 +482,8 @@ FROM dbo.tArtikel a
     LEFT JOIN #PreisHist phf ON a.kArtikel=phf.kArtikel
     LEFT JOIN #LabelHist lhf ON a.kArtikel=lhf.kArtikel
     LEFT JOIN #KombiHist kh ON a.kArtikel=kh.kArtikel
+    LEFT JOIN #PreisTrend pt ON a.kArtikel=pt.kArtikel
+    LEFT JOIN #LabelFenster lf ON a.kArtikel=lf.kArtikel
     LEFT JOIN #Label lbl ON a.kArtikel=lbl.kArtikel
     LEFT JOIN #Abverkauf av ON a.kArtikel=av.kArtikel
     LEFT JOIN #AlleLieferanten ale ON a.kArtikel=ale.kArtikel
