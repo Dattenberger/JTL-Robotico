@@ -20,12 +20,18 @@
 --     NVARCHAR(MAX)-Schutz gegen Abschneiden langer Historien.
 --
 -- Analyse-Spalten (aus der Preis-/Label-Historie, Fenster 30 / 60 Tage):
---   * Preisänderung 30/60 Tage (netto): Gesamtrichtung ggü. dem Preis VOR dem Zeitraum
---     (Erhöhung / Reduktion / Keine Änderung). Ohne Referenzpreis vor dem Zeitraum ->
---     'Keine Änderung' (Fallback auf ersten Preis im Fenster ist deaktiviert/auskommentiert).
---   * Preisbewegung 30/60 Tage (Verlauf): einzelne Bewegungen IM Zeitraum, kommagetrennt
---     ('Erhöhung', 'Reduktion', 'Erhöhung, Reduktion', 'Keine Änderung').
---   * Label 30/60 Tage (historisch): im Zeitraum gesetzte Labels, kommagetrennt.
+-- Alle drei beziehen den Stand VOR dem Zeitraum als Vergleichsbasis ein (nicht nur Netto):
+--   * Preisänderung 30/60 Tage (netto): Gesamtrichtung = aktueller Preis vs. Preis VOR dem
+--     Zeitraum (letzte Änderung vor dem Fenster) -> Erhöhung / Reduktion / Keine Änderung.
+--     Gibt es keinen Preis vor dem Zeitraum (ganz neuer Artikel) -> 'Keine Änderung'
+--     (Fallback auf den ersten Preis im Fenster ist bewusst deaktiviert/auskommentiert).
+--   * Preisbewegung 30/60 Tage (Verlauf): jede Preisbewegung im Zeitraum, kommagetrennt
+--     ('Erhöhung', 'Reduktion', 'Erhöhung, Reduktion', 'Keine Änderung'). Die ERSTE Bewegung
+--     im Fenster wird gegen den Preis VOR dem Zeitraum gemessen, z.B. 5 € (Tag -31, vor dem
+--     Fenster) -> 4 € (Tag -29, im Fenster) ergibt 'Reduktion'.
+--   * Label 30/60 Tage (historisch): alle Label, die im Zeitraum zu irgendeinem Zeitpunkt
+--     gesetzt waren -> Label-Stand VOR dem Zeitraum (letzter Stand vor dem Fenster) plus
+--     alle Änderungen im Fenster; kommagetrennt.
 --
 -- Hinweis: Label- und Lieferantenlisten werden deterministisch sortiert ausgegeben
 -- (vorher willkürliche FOR-XML-Reihenfolge) - inhaltlich identische Menge.
