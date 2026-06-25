@@ -32,6 +32,10 @@
 --   * Label 30/60 Tage (historisch): alle Label, die im Zeitraum zu irgendeinem Zeitpunkt
 --     gesetzt waren -> Label-Stand VOR dem Zeitraum (letzter Stand vor dem Fenster) plus
 --     alle Änderungen im Fenster; kommagetrennt.
+--   * Tage seit Abverkauf-/Benachteiligt-Label: Anzahl Tage seit dem JÜNGSTEN Zeitpunkt, an
+--     dem ein negatives Preislabel gesetzt war (gesamte Label-Historie, nicht nur 30/60 Tage).
+--     Leer, wenn das Label nie gesetzt war. Kategorien: Abverkauf = 'Abverkauf' /
+--     'AS: Abverkaufartikel'; Benachteiligt = 'bw nachteilig' / 'AS: BW nachteilig'.
 --
 -- Hinweis: Label- und Lieferantenlisten werden deterministisch sortiert ausgegeben
 -- (vorher willkürliche FOR-XML-Reihenfolge) - inhaltlich identische Menge.
@@ -324,6 +328,30 @@ FROM Agg60 a60
 FULL JOIN Agg30 a30 ON a30.kArtikel = a60.kArtikel;
 CREATE CLUSTERED INDEX IX_LabelFenster ON #LabelFenster(kArtikel);
 
+-- #NegLabel: wann war je Artikel ZULETZT ein negatives Preislabel gesetzt? (in Tagen)
+--   Quelle: vollständige Label-Historie (#LabelRoh, ALLE Snapshots, nicht nur Änderungen) ->
+--   jüngster Zeitpunkt, an dem die Label-Liste ein negatives Label enthielt. DATEDIFF in Tagen
+--   bis heute; NULL (= leer im Export), wenn das Label nie gesetzt war.
+--   Zwei Kategorien (Label-Schreibweisen exakt wie in dbo.tLabel):
+--     * Abverkauf:      'Abverkauf', 'AS: Abverkaufartikel'
+--     * Benachteiligt:  'bw nachteilig', 'AS: BW nachteilig'
+--   Weitere Negativ-Label hier in die jeweilige IN-Liste aufnehmen.
+DROP TABLE IF EXISTS #NegLabel;
+;WITH NegEinzel AS (   -- Label-Listen je Snapshot in Einzel-Label splitten (Separator ',')
+    SELECT lr.kArtikel, lr.DatumZeit, LTRIM(RTRIM(s.value)) AS Label
+    FROM #LabelRoh lr
+    CROSS APPLY STRING_SPLIT(lr.LabelListe, ',') s
+    WHERE LTRIM(RTRIM(s.value)) <> ''
+)
+SELECT kArtikel,
+    LetztAbverkauf     = MAX(CASE WHEN Label IN (N'Abverkauf', N'AS: Abverkaufartikel') THEN DatumZeit END),
+    LetztBenachteiligt = MAX(CASE WHEN Label IN (N'bw nachteilig', N'AS: BW nachteilig') THEN DatumZeit END)
+INTO #NegLabel
+FROM NegEinzel
+WHERE Label IN (N'Abverkauf', N'AS: Abverkaufartikel', N'bw nachteilig', N'AS: BW nachteilig')
+GROUP BY kArtikel;
+CREATE CLUSTERED INDEX IX_NegLabel ON #NegLabel(kArtikel);
+
 -- =====================================================================================
 -- TEIL 2b: Set-basierte Materialisierung der bisher korrelierten Subqueries
 -- =====================================================================================
@@ -360,6 +388,23 @@ INNER JOIN dbo.tlieferant l ON la.tLieferant_kLieferant=l.kLieferant
 WHERE l.cAktiv='Y'
 GROUP BY la.tArtikel_kArtikel;
 CREATE CLUSTERED INDEX IX_AlleLieferanten ON #AlleLieferanten(kArtikel);
+
+-- #StandardLieferant: kLieferant des Standardlieferanten je Artikel (tliefartikel.nStandard=1).
+--   ORDER BY nStandard DESC -> Standard-Zuordnung zuerst; rn=1 nimmt sie (Fallback: erster
+--   Lieferant, falls kein nStandard=1 gesetzt). Bewusst OHNE cAktiv-Filter: liefert den
+--   hinterlegten Standardlieferanten unabhängig vom Aktiv-Status.
+DROP TABLE IF EXISTS #StandardLieferant;
+SELECT kArtikel, kStandardLieferant
+INTO #StandardLieferant
+FROM (
+    SELECT la.tArtikel_kArtikel AS kArtikel,
+           la.tLieferant_kLieferant AS kStandardLieferant,
+           rn = ROW_NUMBER() OVER (PARTITION BY la.tArtikel_kArtikel
+                                   ORDER BY la.nStandard DESC, la.tLieferant_kLieferant)
+    FROM dbo.tliefartikel la
+) x
+WHERE rn = 1;
+CREATE CLUSTERED INDEX IX_StandardLieferant ON #StandardLieferant(kArtikel);
 
 -- #StklLieferanten: je Stückliste die DISTINCT-Lieferantenlisten ihrer Komponenten
 --   (set-basiert statt geschachteltem FOR XML; deterministisch sortiert)
@@ -436,6 +481,9 @@ SELECT
     COALESCE(lbl.Label,'') AS [Label],
     COALESCE(lf.Labels30,'') AS [Label 30 Tage (historisch)],
     COALESCE(lf.Labels60,'') AS [Label 60 Tage (historisch)],
+    -- Tage seit dem letzten Mal, dass ein negatives Preislabel gesetzt war (leer = nie gesetzt)
+    DATEDIFF(DAY, nl.LetztAbverkauf,     GETDATE()) AS [Tage seit Abverkauf-Label],
+    DATEDIFF(DAY, nl.LetztBenachteiligt, GETDATE()) AS [Tage seit Benachteiligt-Label],
     COALESCE(av.Abverkauf,'') AS [Abverkauf],
     ROUND(a.fVKNetto,2) AS [VK],
     ROUND(a.fEKNetto,2) AS [EK],
@@ -473,6 +521,7 @@ SELECT
     CASE WHEN a.kStueckliste>0
          THEN COALESCE(NULLIF(skl.KompLieferanten,''), ale.AlleLieferanten, '')  -- Stückliste: Komponenten-Lieferanten, sonst eigene
          ELSE COALESCE(ale.AlleLieferanten,'') END AS [Lieferanten],
+    stl.kStandardLieferant AS [kStandartLieferant],   -- kLieferant des Standardlieferanten (leer, wenn keiner hinterlegt)
     COALESCE(phf.VergangenePreise,'') AS [Vergangene Preise],
     COALESCE(lhf.VergangeneLabel,'') AS [Vergangene Label],
     COALESCE(kh.Historie,'') AS [Historie],
@@ -490,9 +539,11 @@ FROM dbo.tArtikel a
     LEFT JOIN #KombiHist kh ON a.kArtikel=kh.kArtikel
     LEFT JOIN #PreisTrend pt ON a.kArtikel=pt.kArtikel
     LEFT JOIN #LabelFenster lf ON a.kArtikel=lf.kArtikel
+    LEFT JOIN #NegLabel nl ON a.kArtikel=nl.kArtikel
     LEFT JOIN #Label lbl ON a.kArtikel=lbl.kArtikel
     LEFT JOIN #Abverkauf av ON a.kArtikel=av.kArtikel
     LEFT JOIN #AlleLieferanten ale ON a.kArtikel=ale.kArtikel
+    LEFT JOIN #StandardLieferant stl ON a.kArtikel=stl.kArtikel
     LEFT JOIN #StklLieferanten skl ON a.kStueckliste=skl.kStueckliste
     LEFT JOIN dbo.tArtikelBeschreibung ab ON a.kArtikel=ab.kArtikel AND ab.kSprache=1
     LEFT JOIN dbo.tlagerbestand lb ON a.kArtikel=lb.kArtikel
