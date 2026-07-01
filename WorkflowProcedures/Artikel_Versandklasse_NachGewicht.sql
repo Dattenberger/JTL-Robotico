@@ -44,6 +44,14 @@
 -- Grenze (bis 276 kg) - genau die korrigiert diese Aktion.
 -- Die Schwelle ist als Aktionsparameter konfigurierbar (DotLiquid-faehig).
 --
+-- PILOT-/SICHERHEITSGRENZE (@kWarengruppe):
+--   Optionaler dritter Parameter. Ist er gesetzt, wirkt die Aktion NUR auf
+--   Artikel dieser einen Warengruppe (dbo.tArtikel.kWarengruppe). So kann der
+--   Workflow risikoarm erst fuer EINE Warengruppe pilotiert werden; laeuft
+--   etwas schief, ist der Schaden auf diese Gruppe begrenzt. Fuer den spaeteren
+--   Voll-Rollout den Parameter einfach leer lassen (NULL = alle Warengruppen).
+--   Warengruppen-ID ermitteln:  SELECT kWarengruppe, cName FROM dbo.tWarengruppe;
+--
 -- ============================================================================
 -- ZWEI LAYER
 -- ============================================================================
@@ -99,26 +107,36 @@ GO
 -- Layer 2: Custom Workflow Action (Workflowobjekt Artikel -> @kArtikel)
 -- ----------------------------------------------------------------------------
 CREATE OR ALTER PROCEDURE CustomWorkflows.spArtikelVersandklasseNachGewicht
-    @kArtikel    INT,                       -- pos 0: PK, von JTL zur Laufzeit gefuellt
-    @fSchwelleKg DECIMAL(18, 3) = 31.5      -- pos 1: Grenze in kg (im Workflow einstellbar)
+    @kArtikel     INT,                      -- pos 0: PK, von JTL zur Laufzeit gefuellt
+    @fSchwelleKg  DECIMAL(18, 3) = 31.5,    -- pos 1: Grenze in kg (im Workflow einstellbar)
+    @kWarengruppe INT           = NULL      -- pos 2: OPTIONAL. Wenn gesetzt, wirkt die
+                                            --        Aktion NUR auf Artikel dieser
+                                            --        Warengruppe (Pilot-/Sicherheits-
+                                            --        grenze). NULL = alle Warengruppen.
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    DECLARE @fGewicht DECIMAL(25, 13),
-            @cAktuell NVARCHAR(255),
-            @cZiel    NVARCHAR(255),
-            @kZiel    INT;
+    DECLARE @fGewicht          DECIMAL(25, 13),
+            @cAktuell          NVARCHAR(255),
+            @kArtikelWarengrp  INT,
+            @cZiel             NVARCHAR(255),
+            @kZiel             INT;
 
-    -- Gewicht + aktuellen Klassennamen des Artikels lesen
-    SELECT @fGewicht = a.fGewicht,
-           @cAktuell = vk.cName
+    -- Gewicht + aktuellen Klassennamen + Warengruppe des Artikels lesen
+    SELECT @fGewicht         = a.fGewicht,
+           @cAktuell         = vk.cName,
+           @kArtikelWarengrp = a.kWarengruppe
     FROM dbo.tArtikel a
              LEFT JOIN dbo.tVersandklasse vk ON vk.kVersandklasse = a.kVersandklasse
     WHERE a.kArtikel = @kArtikel;
 
     IF @@ROWCOUNT = 0
         RETURN;   -- Artikel existiert nicht -> nichts tun
+
+    -- Sicherheitsgrenze: nur die Pilot-Warengruppe anfassen (falls gesetzt)
+    IF @kWarengruppe IS NOT NULL AND @kArtikelWarengrp <> @kWarengruppe
+        RETURN;   -- gehoert nicht zur Pilot-Warengruppe -> nichts tun
 
     -- Entscheidung an die reine Funktion delegieren
     SET @cZiel = Robotico.fnVersandklasseNachGewicht(@fGewicht, @fSchwelleKg, @cAktuell);

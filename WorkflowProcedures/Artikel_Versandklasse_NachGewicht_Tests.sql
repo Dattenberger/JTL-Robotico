@@ -67,6 +67,8 @@ GO
 DECLARE @kSpedition INT = (SELECT kVersandklasse FROM dbo.tVersandklasse WHERE cName = 'Spedition');
 DECLARE @kStandard  INT = (SELECT TOP 1 kVersandklasse FROM dbo.tVersandklasse WHERE cName LIKE 'standard%' ORDER BY kVersandklasse);
 DECLARE @kArtikel   INT = (SELECT TOP 1 kArtikel FROM dbo.tArtikel ORDER BY kArtikel);
+DECLARE @kWG1       INT = (SELECT MIN(kWarengruppe) FROM dbo.tWarengruppe);
+DECLARE @kWG2       INT = (SELECT MIN(kWarengruppe) FROM dbo.tWarengruppe WHERE kWarengruppe <> (SELECT MIN(kWarengruppe) FROM dbo.tWarengruppe));
 
 IF @kSpedition IS NULL
     INSERT INTO #TestResults VALUES ('SETUP', 0, 'Versandklasse "Spedition" fehlt in dbo.tVersandklasse');
@@ -104,6 +106,28 @@ BEGIN
         SELECT 'SP: eigene Schwelle 10kg -> Spedition',
                CASE WHEN kVersandklasse = @kSpedition THEN 1 ELSE 0 END,
                CONCAT('kVersandklasse=', kVersandklasse, ' erwartet=', @kSpedition)
+        FROM dbo.tArtikel WHERE kArtikel = @kArtikel;
+    ROLLBACK TRANSACTION;
+
+    -- Test D: Warengruppen-Schutz - passende Warengruppe -> wird hochgestuft
+    BEGIN TRANSACTION;
+        UPDATE dbo.tArtikel SET fGewicht = 42.0, kVersandklasse = @kStandard, kWarengruppe = @kWG1 WHERE kArtikel = @kArtikel;
+        EXEC CustomWorkflows.spArtikelVersandklasseNachGewicht @kArtikel = @kArtikel, @kWarengruppe = @kWG1;
+        INSERT INTO #TestResults
+        SELECT 'SP: Pilot-Warengruppe passt -> Spedition',
+               CASE WHEN kVersandklasse = @kSpedition THEN 1 ELSE 0 END,
+               CONCAT('kVersandklasse=', kVersandklasse, ' erwartet=', @kSpedition)
+        FROM dbo.tArtikel WHERE kArtikel = @kArtikel;
+    ROLLBACK TRANSACTION;
+
+    -- Test E: Warengruppen-Schutz - andere Warengruppe -> bleibt unveraendert
+    BEGIN TRANSACTION;
+        UPDATE dbo.tArtikel SET fGewicht = 42.0, kVersandklasse = @kStandard, kWarengruppe = @kWG1 WHERE kArtikel = @kArtikel;
+        EXEC CustomWorkflows.spArtikelVersandklasseNachGewicht @kArtikel = @kArtikel, @kWarengruppe = @kWG2;
+        INSERT INTO #TestResults
+        SELECT 'SP: andere Warengruppe -> unveraendert',
+               CASE WHEN kVersandklasse = @kStandard THEN 1 ELSE 0 END,
+               CONCAT('kVersandklasse=', kVersandklasse, ' erwartet=', @kStandard)
         FROM dbo.tArtikel WHERE kArtikel = @kArtikel;
     ROLLBACK TRANSACTION;
 END
