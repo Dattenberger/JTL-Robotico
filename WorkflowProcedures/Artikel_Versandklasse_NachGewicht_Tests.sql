@@ -85,6 +85,13 @@ BEGIN
                CASE WHEN kVersandklasse = @kSpedition THEN 1 ELSE 0 END,
                CONCAT('kVersandklasse=', kVersandklasse, ' erwartet=', @kSpedition)
         FROM dbo.tArtikel WHERE kArtikel = @kArtikel;
+        -- Log-Zeile muss geschrieben worden sein
+        INSERT INTO #TestResults
+        SELECT 'SP: Aenderung wird geloggt',
+               CASE WHEN COUNT(*) = 1 THEN 1 ELSE 0 END,
+               CONCAT('Log-Zeilen=', COUNT(*), ' erwartet=1')
+        FROM Robotico.tVersandklassenLog
+        WHERE kArtikel = @kArtikel AND kVersandklasseNeu = @kSpedition;
     ROLLBACK TRANSACTION;
 
     -- Test B: leichter Standard-Artikel bleibt unveraendert
@@ -96,6 +103,12 @@ BEGIN
                CASE WHEN kVersandklasse = @kStandard THEN 1 ELSE 0 END,
                CONCAT('kVersandklasse=', kVersandklasse, ' erwartet=', @kStandard)
         FROM dbo.tArtikel WHERE kArtikel = @kArtikel;
+        -- Ohne Aenderung darf KEIN Log entstehen
+        INSERT INTO #TestResults
+        SELECT 'SP: keine Aenderung -> kein Log',
+               CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END,
+               CONCAT('Log-Zeilen=', COUNT(*), ' erwartet=0')
+        FROM Robotico.tVersandklassenLog WHERE kArtikel = @kArtikel;
     ROLLBACK TRANSACTION;
 
     -- Test C: konfigurierbare Schwelle greift (Schwelle 10 -> 12 kg wird hochgestuft)

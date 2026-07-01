@@ -26,8 +26,14 @@ GO
 
 IF OBJECT_ID('CustomWorkflows.spArtikelVersandklasseNachGewicht', 'P') IS NOT NULL
     DROP PROCEDURE CustomWorkflows.spArtikelVersandklasseNachGewicht;
+IF OBJECT_ID('Robotico.vVersandklassenLog', 'V') IS NOT NULL
+    DROP VIEW Robotico.vVersandklassenLog;
 IF OBJECT_ID('Robotico.fnVersandklasseNachGewicht', 'FN') IS NOT NULL
     DROP FUNCTION Robotico.fnVersandklasseNachGewicht;
+
+-- ACHTUNG: Log-Tabelle enthaelt die Aenderungshistorie. Standardmaessig BEHALTEN.
+-- Zum vollstaendigen Entfernen die naechste Zeile einkommentieren:
+-- IF OBJECT_ID('Robotico.tVersandklassenLog', 'U') IS NOT NULL DROP TABLE Robotico.tVersandklassenLog;
 
 COMMIT TRANSACTION;
 PRINT '+ Teardown complete - Versandklasse-nach-Gewicht-Objekte entfernt';

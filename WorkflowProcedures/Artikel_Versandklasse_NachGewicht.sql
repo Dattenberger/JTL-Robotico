@@ -63,6 +63,14 @@
 --       liest Gewicht + aktuelle Klasse, ruft die Funktion, loest den
 --       Zielnamen zu kVersandklasse auf und schreibt dbo.tArtikel.
 --
+-- AUDIT-LOG:
+--   Jede TATSAECHLICHE Aenderung wird in Robotico.tVersandklassenLog
+--   protokolliert (Artikel, alt/neu, Gewicht, Schwelle, Benutzer, Zeit).
+--   Bequem auswertbar ueber die View Robotico.vVersandklassenLog:
+--       SELECT * FROM Robotico.vVersandklassenLog ORDER BY dErstellt DESC;
+--   Optionaler Parameter @cBenutzer nimmt das JTL-Login auf (DotLiquid:
+--   {{ AktuellerBenutzer.Login }}); sonst wird der DB-User geloggt.
+--
 -- Idempotent (CREATE OR ALTER) und transaktional. Gegen eazybusiness ausfuehren.
 -- Voraussetzung: Modul "Custom Workflow Actions" lizenziert (siehe
 -- docs/SQL/JTL-CUSTOM-WORKFLOWS.md).
@@ -75,6 +83,29 @@ SET XACT_ABORT ON
 GO
 
 BEGIN TRANSACTION
+GO
+
+-- ----------------------------------------------------------------------------
+-- Audit-Log: jede automatische Aenderung wird hier protokolliert
+-- ----------------------------------------------------------------------------
+IF NOT EXISTS (SELECT 1 FROM sys.tables
+               WHERE name = 'tVersandklassenLog' AND schema_id = SCHEMA_ID('Robotico'))
+    CREATE TABLE Robotico.tVersandklassenLog
+    (
+        kVersandklassenLog INT IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_tVersandklassenLog PRIMARY KEY,
+        kArtikel           INT            NOT NULL,
+        cArtNr             NVARCHAR(255)  NULL,   -- Snapshot der Artikelnummer
+        fGewicht           DECIMAL(25,13) NULL,   -- Gewicht, das die Aenderung ausloeste
+        fSchwelleKg        DECIMAL(18,3)  NULL,   -- verwendete Schwelle
+        kVersandklasseAlt  INT            NULL,
+        cVersandklasseAlt  NVARCHAR(255)  NULL,
+        kVersandklasseNeu  INT            NULL,
+        cVersandklasseNeu  NVARCHAR(255)  NULL,
+        cBenutzer          NVARCHAR(255)  NULL,   -- JTL-Login (falls uebergeben) sonst DB-User
+        dErstellt          DATETIME2(0)   NOT NULL
+            CONSTRAINT DF_tVersandklassenLog_dErstellt DEFAULT (SYSDATETIME())
+    );
 GO
 
 -- ----------------------------------------------------------------------------
@@ -109,23 +140,30 @@ GO
 CREATE OR ALTER PROCEDURE CustomWorkflows.spArtikelVersandklasseNachGewicht
     @kArtikel     INT,                      -- pos 0: PK, von JTL zur Laufzeit gefuellt
     @fSchwelleKg  DECIMAL(18, 3) = 31.5,    -- pos 1: Grenze in kg (im Workflow einstellbar)
-    @kWarengruppe INT           = NULL      -- pos 2: OPTIONAL. Wenn gesetzt, wirkt die
+    @kWarengruppe INT           = NULL,     -- pos 2: OPTIONAL. Wenn gesetzt, wirkt die
                                             --        Aktion NUR auf Artikel dieser
                                             --        Warengruppe (Pilot-/Sicherheits-
                                             --        grenze). NULL = alle Warengruppen.
+    @cBenutzer    NVARCHAR(255) = NULL      -- pos 3: OPTIONAL. JTL-Login fuers Log,
+                                            --        im Workflow via DotLiquid:
+                                            --        {{ AktuellerBenutzer.Login }}
 AS
 BEGIN
     SET NOCOUNT ON;
 
     DECLARE @fGewicht          DECIMAL(25, 13),
             @cAktuell          NVARCHAR(255),
+            @kAlt              INT,
+            @cArtNr            NVARCHAR(255),
             @kArtikelWarengrp  INT,
             @cZiel             NVARCHAR(255),
             @kZiel             INT;
 
-    -- Gewicht + aktuellen Klassennamen + Warengruppe des Artikels lesen
+    -- Gewicht + aktuelle Klasse (Id+Name) + Warengruppe + Snapshotfeld lesen
     SELECT @fGewicht         = a.fGewicht,
+           @kAlt             = a.kVersandklasse,
            @cAktuell         = vk.cName,
+           @cArtNr           = a.cArtNr,
            @kArtikelWarengrp = a.kWarengruppe
     FROM dbo.tArtikel a
              LEFT JOIN dbo.tVersandklasse vk ON vk.kVersandklasse = a.kVersandklasse
@@ -162,7 +200,36 @@ BEGIN
     SET kVersandklasse = @kZiel
     WHERE kArtikel = @kArtikel
       AND (kVersandklasse IS NULL OR kVersandklasse <> @kZiel);
+
+    -- Nur bei tatsaechlicher Aenderung protokollieren
+    IF @@ROWCOUNT > 0
+        INSERT INTO Robotico.tVersandklassenLog
+            (kArtikel, cArtNr, fGewicht, fSchwelleKg,
+             kVersandklasseAlt, cVersandklasseAlt, kVersandklasseNeu, cVersandklasseNeu, cBenutzer)
+        VALUES
+            (@kArtikel, @cArtNr, @fGewicht, @fSchwelleKg,
+             @kAlt, @cAktuell, @kZiel, @cZiel, ISNULL(@cBenutzer, SUSER_SNAME()));
 END
+GO
+
+-- ----------------------------------------------------------------------------
+-- Auswertungs-View auf das Log (bequem fuer "was hat der Workflow geaendert?")
+-- ----------------------------------------------------------------------------
+CREATE OR ALTER VIEW Robotico.vVersandklassenLog
+AS
+SELECT l.kVersandklassenLog,
+       l.dErstellt,
+       l.kArtikel,
+       l.cArtNr,
+       wg.cName AS cWarengruppe,
+       l.fGewicht,
+       l.fSchwelleKg,
+       l.cVersandklasseAlt,
+       l.cVersandklasseNeu,
+       l.cBenutzer
+FROM Robotico.tVersandklassenLog l
+         LEFT JOIN dbo.tArtikel a     ON a.kArtikel = l.kArtikel
+         LEFT JOIN dbo.tWarengruppe wg ON wg.kWarengruppe = a.kWarengruppe;
 GO
 
 IF XACT_STATE() = 1 COMMIT TRANSACTION; ELSE ROLLBACK TRANSACTION;
