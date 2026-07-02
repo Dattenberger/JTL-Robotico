@@ -85,6 +85,10 @@ GO
 BEGIN TRANSACTION
 GO
 
+-- Schema sicherstellen (falls in dieser DB noch nicht vorhanden)
+IF SCHEMA_ID('Robotico') IS NULL EXEC('CREATE SCHEMA Robotico');
+GO
+
 -- ----------------------------------------------------------------------------
 -- Audit-Log: jede automatische Aenderung wird hier protokolliert
 -- ----------------------------------------------------------------------------
