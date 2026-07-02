@@ -1,0 +1,54 @@
+{%- comment -%}
+================================================================================
+Erweiterte Eigenschaft (DotLiquid) für JTL-Workflows – Workflowobjekt "Auftrag"
+================================================================================
+
+ZWECK
+  Gibt das Wort WAHR zurück, wenn der aktuelle Auftrag mindestens eine Position
+  enthält, deren Artikel als geräteabhängig markiert ist – d. h. das Eigene Feld
+  (Attribut) GeräteVerifizierungMail = 1 gesetzt hat. Andernfalls FALSCH.
+
+  Damit feuert ein darauf aufgebauter Workflow nur, wenn eine Rückfrage nach dem
+  genauen Gerätemodell sinnvoll ist (Motor, Messer, Akku, Ladegerät …), um eine
+  Fehlbestellung und die daraus folgende Retoure zu vermeiden.
+
+FUNKTIONSWEISE (Aufbau dieses Liquids)
+  1. Der capture-Block baut den SQL-Text als String zusammen. JTL ersetzt darin
+     den Platzhalter "Vorgang.Stammdaten.InterneAuftragsnummer" zur Laufzeit
+     durch die interne Auftragsnummer des auslösenden Auftrags.
+  2. Das CASE bildet den BIT-Rückgabewert von
+     Robotico.fnAuftragBrauchtGeraeteabfrage direkt auf WAHR / FALSCH ab
+     (bewusst Text, keine 0/1).
+  3. DirectQueryScalar führt den SQL-Text aus und gibt den ersten Spaltenwert
+     der ersten Zeile zurück – hier WAHR oder FALSCH.
+
+EINRICHTUNG IN JTL-WAWI
+  a) Workflow auf dem Objekt "Auftrag" anlegen, Auslöser "Auftrag_Erstellt".
+  b) Diesen Liquid-Inhalt als "erweiterte Eigenschaft" hinterlegen,
+     Rückgabetyp = Text.
+  c) In der Bedingung des Workflows: erweiterte Eigenschaft  Gleich  WAHR.
+  d) Folgeaktionen anhängen:
+     - E-Mail an Kunden (Body: Workflows/Geräte-Verifizierung/E-Mail - Geräteabfrage.liquid)
+     - Auftrag zurückhalten (Versandsperre/Status "Warten auf Gerätebestätigung")
+
+SCHLÜSSEL-ZUORDNUNG
+  Vorgang.Stammdaten.InterneAuftragsnummer == dbo.tbestellung.kBestellung
+                                           == Verkauf.tAuftrag.kAuftrag.
+
+VORAUSSETZUNG
+  Robotico.fnAuftragBrauchtGeraeteabfrage muss deployt sein
+  (WorkflowProcedures/Geraete-Verifizierung.sql) und das Eigene Feld
+  GeräteVerifizierungMail an den relevanten Artikeln gesetzt sein
+  (siehe docs/Prozesse/Geraete-Verifizierung-bei-Ersatzteilbestellung.md).
+================================================================================
+{%- endcomment -%}
+{% capture query -%}
+DECLARE @kAuftrag AS INT = {{ Vorgang.Stammdaten.InterneAuftragsnummer }};
+
+SELECT CASE
+           WHEN Robotico.fnAuftragBrauchtGeraeteabfrage(@kAuftrag) = 1
+           THEN 'WAHR'
+           ELSE 'FALSCH'
+       END;
+{% endcapture -%}
+{{ query | DirectQueryScalar }}

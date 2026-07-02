@@ -1,0 +1,56 @@
+{%- comment -%}
+================================================================================
+E-Mail-Vorlage (DotLiquid) – Aktion "E-Mail an Kunden" im Geräte-Verifizierungs-
+Workflow (Workflowobjekt "Auftrag").
+================================================================================
+
+ZWECK
+  Bittet den Kunden nach einer Ersatzteil-/Motorbestellung um Angabe des genauen
+  Gerätemodells, damit vor dem Versand geprüft werden kann, ob das bestellte Teil
+  passt – zur Vermeidung von Fehlbestellungen/Retouren.
+
+EINSATZ
+  Als Text/Body der E-Mail-Aktion im Workflow verwenden (Bedingung: erweiterte
+  Eigenschaft "Auftrag - Braucht Geräteabfrage" == WAHR). Die betroffenen
+  Positionen werden über Robotico.fnAuftragGeraeteabfrageArtikelListe per
+  DirectQueryScalar als HTML-Liste eingefügt.
+
+  Anrede/Signatur ggf. an die bestehenden Robotico-Mailvorlagen anpassen.
+
+SCHLÜSSEL-ZUORDNUNG
+  Vorgang.Stammdaten.InterneAuftragsnummer == Verkauf.tAuftrag.kAuftrag.
+================================================================================
+{%- endcomment -%}
+{% capture positionen -%}
+DECLARE @kAuftrag AS INT = {{ Vorgang.Stammdaten.InterneAuftragsnummer }};
+SELECT Robotico.fnAuftragGeraeteabfrageArtikelListe(@kAuftrag);
+{% endcapture -%}
+<p>Guten Tag {{ Vorgang.Kunde.Rechnungsadresse.Vorname }} {{ Vorgang.Kunde.Rechnungsadresse.Nachname }},</p>
+
+<p>vielen Dank für Ihre Bestellung {{ Vorgang.Stammdaten.Auftragsnummer }}.</p>
+
+<p>Ihre Bestellung enthält Teile, die je nach Gerätemodell unterschiedlich sein
+können. Damit wir Ihnen wirklich das <strong>passende</strong> Teil senden und
+Ihnen eine Rücksendung ersparen, brauchen wir kurz die Angabe Ihres Geräts:</p>
+
+<ul>
+{{ positionen | DirectQueryScalar }}
+</ul>
+
+<p>Bitte antworten Sie einfach auf diese E-Mail mit:</p>
+<ul>
+  <li><strong>Hersteller und genaues Modell</strong> Ihres Geräts
+      (z. B. „Modell XY 500")</li>
+  <li>wenn vorhanden: <strong>Serien-/Typennummer</strong> (meist auf dem
+      Typenschild am Gerät)</li>
+  <li>optional: ein <strong>Foto des Typenschilds</strong></li>
+</ul>
+
+<p>Sobald uns Ihre Angabe vorliegt, prüfen wir die Passgenauigkeit und versenden
+Ihre Bestellung. Bis dahin halten wir den Versand kurz zurück, damit kein
+falsches Teil zu Ihnen unterwegs ist.</p>
+
+<p>Vielen Dank für Ihre Mithilfe!</p>
+
+<p>Mit freundlichen Grüßen<br>
+Ihr Team von JTL Robotico</p>
