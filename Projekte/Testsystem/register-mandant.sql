@@ -1,17 +1,25 @@
 ------------------------------------------------------------
 -- register-mandant.sql
--- Registriert den Test-Mandanten in dbo.tMandant, damit er im
--- JTL-Login (Mandantenauswahl) erscheint.
+-- Registriert einen Test-Mandanten vollstaendig, sodass er im JTL-Login
+-- erscheint UND alle Benutzer (inkl. Kollegen) darin arbeiten koennen.
+-- Zwei Schritte:
 --
--- Hintergrund: dbo.tMandant ist die JTL-Mandanten-Registry
--- (kMandant, cName, cDB). JTL liest die Mandantenliste beim Start aus
--- der verbundenen DB; massgeblich ist die Standard-/Haupt-DB
--- [eazybusiness]. JTL haelt die Tabelle in ALLEN Mandanten-DBs
--- konsistent - daher pflegen wir den Eintrag hier ebenfalls in jede
--- registrierte Mandanten-DB + die neue Ziel-DB.
+--   1) dbo.tMandant  - JTL-Mandanten-Registry (kMandant, cName, cDB).
+--      Ohne Eintrag erscheint der Mandant nicht in der WaWi-Auswahl.
+--      JTL haelt die Tabelle in ALLEN Mandanten-DBs konsistent -> Upsert
+--      in jede registrierte Mandanten-DB + die neue Ziel-DB.
 --
--- Idempotent: Schluessel ist cDB (Ziel-DB-Name). Existiert der Eintrag
--- schon, wird nur cName aktualisiert; sonst neu angelegt.
+--   2) dbo.tBenutzerFirma  - Benutzer<->Firma-Zuordnung PRO Mandant
+--      (kBenutzer, kFirma, kMandant). Fehlt sie fuer den neuen kMandant,
+--      meldet JTL beim Login "keine Firma hinterlegt". Wir uebernehmen die
+--      Zuordnung des Standard-Mandanten (kMandant 1) aus der Haupt-DB, damit
+--      ALLE Benutzer sofort eine Firma haben. JTL verwaltet Benutzer/Firma
+--      zentral in der Standard-DB [eazybusiness]; die Mandanten-DB spiegelt
+--      es (Klon-Muster) -> Seed in beide.
+--      (Benutzer-RECHTE sind global, nicht mandantenspezifisch -> kein Seed.)
+--
+-- Idempotent: tMandant keyed by cDB; tBenutzerFirma wird fuer den kMandant
+-- vor dem Einfuegen geleert und neu befuellt.
 --
 -- Aufruf (via SQLCMD-Variablen):
 --   sqlcmd -S <server> -E -b -v TargetDb="eazybusiness_tm4" \
@@ -103,8 +111,67 @@ CLOSE dbcur;
 DEALLOCATE dbcur;
 
 ------------------------------------------------------------
--- Verifikation: Haupt-Registry ausgeben
+-- 2) tBenutzerFirma: Benutzer<->Firma-Zuordnung fuer den neuen kMandant
+--    aus dem Standard-Mandanten (kMandant 1) der Haupt-DB uebernehmen.
+--    Ziel: Haupt-DB [eazybusiness] (massgeblich) + die Mandanten-Ziel-DB.
+--    Idempotent: erst kMandant-Zeilen loeschen, dann neu befuellen.
+------------------------------------------------------------
+DECLARE @refMandant int = 1;   -- Standard-Mandant als Vorlage
+
+IF @k = @refMandant
+BEGIN
+    PRINT 'HINWEIS: Ziel-kMandant = Standard-Mandant -> tBenutzerFirma-Seed uebersprungen.';
+END
+ELSE
+BEGIN
+    -- Ziel-DBs fuer den Seed: Haupt-DB + Mandanten-Ziel-DB
+    DECLARE @seedDbs TABLE (name sysname PRIMARY KEY);
+    INSERT INTO @seedDbs (name) VALUES (N'eazybusiness');
+    IF NOT EXISTS (SELECT 1 FROM @seedDbs WHERE name = @TargetDb)
+        INSERT INTO @seedDbs (name) VALUES (@TargetDb);
+
+    DECLARE @sdb sysname, @seedSql nvarchar(max);
+    DECLARE seedcur CURSOR LOCAL FAST_FORWARD FOR SELECT name FROM @seedDbs;
+    OPEN seedcur;
+    FETCH NEXT FROM seedcur INTO @sdb;
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        -- Nur Benutzer/Firmen uebernehmen, die in der Ziel-DB auch existieren
+        -- (schuetzt vor FK-/Fremdschluessel-Problemen bei aelteren Klonen).
+        SET @seedSql = N'
+            DELETE FROM ' + QUOTENAME(@sdb) + N'.dbo.tBenutzerFirma
+             WHERE kMandant = @k;
+            INSERT INTO ' + QUOTENAME(@sdb) + N'.dbo.tBenutzerFirma (kBenutzer, kFirma, kMandant)
+            SELECT bf.kBenutzer, bf.kFirma, @k
+            FROM eazybusiness.dbo.tBenutzerFirma bf
+            WHERE bf.kMandant = @refMandant
+              AND EXISTS (SELECT 1 FROM ' + QUOTENAME(@sdb) + N'.dbo.tBenutzer b WHERE b.kBenutzer = bf.kBenutzer)
+              AND EXISTS (SELECT 1 FROM ' + QUOTENAME(@sdb) + N'.dbo.tFirma   f WHERE f.kFirma   = bf.kFirma);';
+        BEGIN TRY
+            EXEC sp_executesql @seedSql,
+                N'@k int, @refMandant int', @k = @k, @refMandant = @refMandant;
+            PRINT '  [' + @sdb + '] tBenutzerFirma fuer kMandant '
+                + CAST(@k AS varchar(10)) + ' aus Standard-Mandant uebernommen ('
+                + CAST(@@ROWCOUNT AS varchar(10)) + ' Zuordnungen).';
+        END TRY
+        BEGIN CATCH
+            PRINT '  [' + @sdb + '] tBenutzerFirma FEHLER: ' + ERROR_MESSAGE();
+        END CATCH
+        FETCH NEXT FROM seedcur INTO @sdb;
+    END
+    CLOSE seedcur;
+    DEALLOCATE seedcur;
+END
+
+------------------------------------------------------------
+-- Verifikation
 ------------------------------------------------------------
 PRINT '--- Mandanten-Registry [eazybusiness] ---';
 SELECT kMandant, cName, cDB FROM eazybusiness.dbo.tMandant ORDER BY kMandant;
+
+PRINT '--- tBenutzerFirma je Mandant [eazybusiness] ---';
+SELECT kMandant, COUNT(*) AS Zuordnungen
+FROM eazybusiness.dbo.tBenutzerFirma
+GROUP BY kMandant
+ORDER BY kMandant;
 GO
