@@ -140,9 +140,12 @@
 ## Open Questions
 
 - **O1**: Semantik der `Worker.tTarget.nAbgleichstyp`-Werte (0,2,3,4,5,7,8,13,17,18) — affected: §3/§4, owner: Research (Probeliste auf test1). Bis zur Klärung: tTarget nicht anfassen (D9).
+  - **Probe-Ergebnis (C3, 2026-07-10, `probes/01_worker_ttarget_semantics.sql` gegen test1):** Kein DB-seitiges Lookup vorhanden — `Sync.tSyncType` existiert, ist aber LEER; die nAbgleichstyp→Bedeutung-Zuordnung ist JTL-intern (Worker-Quelle/JTL-Support), nicht aus dem Schema ableitbar. test1 = 10 Zeilen, alle kMandant=1, Werteset identisch zum prod-Survey. **Verbleibt „braucht JTL-seitige Klärung"; D9 (tTarget unangetastet) bleibt gültig.**
 - **O2**: Entdeckt der Worker einen frischen tMandant-Eintrag sofort oder erst nach Neustart? — affected: §4-Probeliste, owner: Research (test1).
+  - **Status (C3):** braucht manuellen Lauf mit laufendem Worker — Anleitung in `probes/02_worker_discovery.md` (nicht read-only per SQL beantwortbar). Konservativer Default im Runbook: Worker-Dienst vor jeder Registrierung gestoppt.
 - **O3**: `eazybusiness_premig` — Backup+Drop oder behalten? — affected: §6, owner: User.
 - **O4**: Amazon-Konten (`pf_user`) in den tm-Klonen vorhanden? — affected: §3 (Neutralisierung ist guarded, funktioniert so oder so), owner: Research (test1/Klone).
+  - **Probe-Ergebnis (C3, 2026-07-10, `probes/03_pf_user_in_clones.sql` gegen test1):** `pf_user` = 0 Zeilen in beiden test1-DBs (`eazybusiness`, `eazybusiness_e2e_r3_pre_snap`). Die prod-tm-Klone liegen auf vm-sql2 und sind in dieser Session nicht abfragbar (Constraint: nur test1 read-only) → **braucht manuellen Lauf gegen prod**. Für den Reset unkritisch: die pf_user-Neutralisierung ist `IF OBJECT_ID`-guarded und no-oped auf leerer Tabelle.
 - **O5**: Zertifikats-Passwort-Ablage: `~/.claude-secrets.md`-Eintrag + Deploy-Prompt — bestätigen — affected: §2/§5-Runbook, owner: User.
 
 ---
