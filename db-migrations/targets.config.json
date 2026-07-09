@@ -1,0 +1,15 @@
+{
+  "$comment": "Target catalog for deploy.ps1. Windows-authentication only — NO secrets in this file. 'eazybusiness' lists the Ebene-A target DBs per environment (mandant clones are regular Ebene-A targets, D11). 'global' is the single Ebene-B DB (RoboticoOps).",
+  "environments": {
+    "TEST": {
+      "server": "vm-sql-test1.zdbikes.local",
+      "eazybusiness": ["eazybusiness"],
+      "global": "RoboticoOps"
+    },
+    "PROD": {
+      "server": "vm-sql2.zdbikes.local",
+      "eazybusiness": ["eazybusiness", "eazybusiness_tm2", "eazybusiness_tm3", "eazybusiness_tm4"],
+      "global": "RoboticoOps"
+    }
+  }
+}
