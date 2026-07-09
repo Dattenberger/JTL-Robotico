@@ -67,8 +67,17 @@ BEGIN TRY
     WHERE (Login IS NOT NULL AND LEN(TRIM(Login)) > 0)
        OR (Passwort IS NOT NULL AND LEN(TRIM(Passwort)) > 0)
        OR (cEbayUsername IS NOT NULL AND LEN(TRIM(cEbayUsername)) > 0);
-    
+
     PRINT 'eBay credentials deactivated: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' records'
+
+    -- eBay-Abgleich abschalten: nGesperrt = 1 setzt den "gesperrt"-Haken im
+    -- eBay-Konto-Dialog. Gesperrte Konten werden vom JTL-Worker beim Abgleich
+    -- uebersprungen -> kein eazyBusiness<->eBay-Abgleich im Testsystem.
+    UPDATE dbo.ebay_user
+    SET nGesperrt = 1
+    WHERE nGesperrt = 0;
+
+    PRINT 'eBay accounts locked (Abgleich disabled): ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' records'
     
     -- =================================================================
     -- Deactivate Amazon/OAuth credentials
@@ -101,30 +110,31 @@ BEGIN TRY
     PRINT 'OAuth Tokens deactivated: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' records'
     
     -- =================================================================
-    -- Deactivate Online shop/Webshop credentials
+    -- Repoint online shop (JS-Shop) to the developer's STAGING shop
     -- =================================================================
-    PRINT 'Deactivating Online shop credentials...'
-    
-    UPDATE dbo.tShop 
-    SET 
-        cAPIKey = '',
-        cPasswortWeb = '',
-        cBenutzerWeb = CASE 
-            WHEN cBenutzerWeb IS NOT NULL AND cBenutzerWeb NOT LIKE '%_deactivated' 
-            THEN cBenutzerWeb + '_deactivated'
-            ELSE cBenutzerWeb
-        END,
-        cServerWeb = CASE 
-            WHEN cServerWeb IS NOT NULL AND cServerWeb NOT LIKE '%_deactivated' 
-            THEN cServerWeb + '_deactivated'
-            ELSE cServerWeb
-        END
-    WHERE (cAPIKey IS NOT NULL AND LEN(TRIM(cAPIKey)) > 0)
-       OR (cPasswortWeb IS NOT NULL AND LEN(TRIM(cPasswortWeb)) > 0)
-       OR (cBenutzerWeb IS NOT NULL AND LEN(TRIM(cBenutzerWeb)) > 0)
-       OR (cServerWeb IS NOT NULL AND LEN(TRIM(cServerWeb)) > 0);
-    
-    PRINT 'Shop credentials deactivated: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' records'
+    -- Statt den Shop zu deaktivieren, biegen wir den echten JTL-/JS-Webshop
+    -- auf den Staging-Shop des jeweiligen Entwicklers um:
+    --   cServerWeb -> Staging-URL,  cAPIKey -> Staging-Lizenz (Verbindungs-/
+    --   API-Schluessel des Staging-Shops).
+    -- Benutzer (cBenutzerWeb) und Passwort (cPasswortWeb) bleiben ERHALTEN,
+    -- damit die Kollegen nichts neu eingeben muessen. Der Shop bleibt aktiv,
+    -- zeigt aber auf Staging -> keine unerwuenschten Zugriffe/Abgleiche auf
+    -- den Produktivshop.
+    -- Nur der ECHTE Webshop wird angefasst: nTyp = 0 (JTL-Shop) mit einer
+    -- echten http(s)-URL. Andere Plattform-Eintraege in tShop (z.B.
+    -- unicorn2/Check24, cServerWeb = 'unicorn2') bleiben unberuehrt.
+    -- HINWEIS: tWebshopModule wird bewusst NICHT angefasst - das sind
+    -- Plugin-Modul-Lizenzen (Konfigurator, SEO, ...), keine Shop-Lizenz.
+    -- URL/Lizenz kommen per SQLCMD-Variable aus test-environment.config.json.
+    PRINT 'Repointing JS-Shop to staging URL [$(ShopUrl)]...'
+
+    UPDATE dbo.tShop
+    SET cServerWeb = N'$(ShopUrl)',
+        cAPIKey    = N'$(ShopLicense)'
+    WHERE nTyp = 0
+      AND cServerWeb LIKE 'http%';
+
+    PRINT 'JS-Shop repointed (URL + license): ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' records'
 
     
     -- =================================================================
@@ -349,28 +359,10 @@ BEGIN TRY
     ELSE
         PRINT 'dbo.twebversand table not found - skipped'
 
-    -- Clear Webshop Module credentials (tWebshopModule)
-    IF OBJECT_ID('dbo.tWebshopModule') IS NOT NULL
-    BEGIN
-        UPDATE dbo.tWebshopModule
-        SET
-            cAPIKey = CASE 
-                WHEN cAPIKey IS NOT NULL AND cAPIKey NOT LIKE '%_deactivated' 
-                THEN cAPIKey + '_deactivated'
-                ELSE cAPIKey
-            END,
-            cLizenzkey = CASE 
-                WHEN cLizenzkey IS NOT NULL AND cLizenzkey NOT LIKE '%_deactivated' 
-                THEN cLizenzkey + '_deactivated'
-                ELSE cLizenzkey
-            END
-        WHERE (cAPIKey IS NOT NULL AND LEN(TRIM(cAPIKey)) > 0)
-           OR (cLizenzkey IS NOT NULL AND LEN(TRIM(cLizenzkey)) > 0);
-
-        PRINT 'Webshop module credentials cleared: ' + CAST(@@ROWCOUNT AS VARCHAR(10)) + ' records'
-    END
-    ELSE
-        PRINT 'dbo.tWebshopModule table not found - skipped'
+    -- HINWEIS: dbo.tWebshopModule wird bewusst NICHT veraendert. Die dortigen
+    -- cLizenzkey sind PLUGIN-Modul-Lizenzen (Konfigurator, SEO, Auswahlassistent,
+    -- ...), keine Shop-Verbindungslizenz. Die Staging-Lizenz wird oben direkt in
+    -- tShop.cAPIKey (JS-Shop) gesetzt.
 
     -- =================================================================
     -- Deactivate Banking/Payment credentials
@@ -581,7 +573,14 @@ UNION ALL
 
 SELECT 'eBay Login' AS Type, Login AS Value,
        CASE WHEN Passwort = '' THEN 'Password cleared' ELSE 'Password present' END AS Status
-FROM dbo.ebay_user 
+FROM dbo.ebay_user
+WHERE Login IS NOT NULL
+
+UNION ALL
+
+SELECT 'eBay Abgleich' AS Type, Name AS Value,
+       CASE WHEN nGesperrt = 1 THEN 'Locked (sync off)' ELSE 'ACTIVE - sync on!' END AS Status
+FROM dbo.ebay_user
 WHERE Login IS NOT NULL
 
 UNION ALL
@@ -594,16 +593,23 @@ WHERE cClientId IS NOT NULL
 UNION ALL
 
 SELECT 'Shop User' AS Type, cBenutzerWeb AS Value,
-       CASE WHEN cPasswortWeb = '' THEN 'Password cleared' ELSE 'Password present' END AS Status
-FROM dbo.tShop 
+       'Credentials kept (repoint only)' AS Status
+FROM dbo.tShop
 WHERE cBenutzerWeb IS NOT NULL
 
 UNION ALL
 
-SELECT 'Shop Server' AS Type, cServerWeb AS Value,
-       CASE WHEN cPasswortWeb = '' THEN 'Password cleared' ELSE 'Password present' END AS Status
+SELECT 'Shop URL (JS-Shop)' AS Type, cServerWeb AS Value,
+       CASE WHEN cServerWeb = N'$(ShopUrl)' THEN 'Staging (repointed OK)' ELSE 'CHECK - not staging URL!' END AS Status
 FROM dbo.tShop
-WHERE cServerWeb IS NOT NULL
+WHERE nTyp = 0 AND cServerWeb LIKE 'http%'
+
+UNION ALL
+
+SELECT 'Shop License (JS-Shop cAPIKey)' AS Type, cAPIKey AS Value,
+       CASE WHEN cAPIKey = N'$(ShopLicense)' THEN 'Staging (repointed OK)' ELSE 'CHECK - not staging license!' END AS Status
+FROM dbo.tShop
+WHERE nTyp = 0 AND cServerWeb LIKE 'http%'
 
 UNION ALL
 
