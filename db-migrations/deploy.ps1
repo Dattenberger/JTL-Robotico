@@ -73,15 +73,16 @@ $config = Get-Content -Raw -Path $configPath | ConvertFrom-Json
 if (-not $config.environments.PSObject.Properties.Name.Contains($Environment)) {
     throw "Environment '$Environment' not found in targets.config.json"
 }
-$env = $config.environments.$Environment
-$server = $env.server
+# Named $envConfig (not $env) to avoid visual collision with PowerShell's $env: drive.
+$envConfig = $config.environments.$Environment
+$server = $envConfig.server
 
 # --- scope -> grate parameters ---------------------------------------------
 switch ($Scope) {
     'eazybusiness' {
         $sqlFilesDirectory = Join-Path $scriptRoot 'eazybusiness'
         $schema = 'Robotico'
-        $allDbs = @($env.eazybusiness)
+        $allDbs = @($envConfig.eazybusiness)
         if ($Target) {
             if ($allDbs -notcontains $Target) {
                 throw "Target '$Target' is not in the $Environment eazybusiness list: $($allDbs -join ', ')"
@@ -95,7 +96,7 @@ switch ($Scope) {
     'global' {
         $sqlFilesDirectory = Join-Path $scriptRoot 'global'
         $schema = 'ops'
-        $databases = @($env.global)
+        $databases = @($envConfig.global)
     }
 }
 
