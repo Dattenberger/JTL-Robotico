@@ -1,0 +1,140 @@
+{
+  "plan": "docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md",
+  "blocks": [
+    {
+      "id": "B1",
+      "name": "MSSQL-Ops infrastructure (migration foundation, RoboticoOps/reset, diagnostics, docs)",
+      "chunk_ids": ["C1", "C2", "C3", "C4"]
+    }
+  ],
+  "chunks": [
+    {
+      "id": "C1",
+      "name": "Migration foundation (Ebene A) + conventions SSoT + lint harness",
+      "plan_sections": [
+        "§1 Migrationsfundament grate (Ebene A) (L233-278)",
+        "§7 Tests — lint-migrations.ps1 + compare-objects.sql + ported eazybusiness *_Tests (L476-497)"
+      ],
+      "files_expected": [
+        "db-migrations/README.md",
+        "db-migrations/targets.config.json",
+        "db-migrations/deploy.ps1",
+        "db-migrations/eazybusiness/up/*.sql",
+        "db-migrations/eazybusiness/functions/*.sql",
+        "db-migrations/eazybusiness/sprocs/*.sql",
+        "db-migrations/tests/lint-migrations.ps1",
+        "db-migrations/tests/compare-objects.sql",
+        "db-migrations/tests/eazybusiness/*.sql",
+        "docs/runbooks/migrations-baseline.md",
+        "WorkflowProcedures/README.md"
+      ],
+      "depends_on": [],
+      "candidates": {
+        "knowledge_skills": ["knowledge-sql", "knowledge-jtl-sql"],
+        "modules": [
+          "WorkflowProcedures/api/CustomFieldAPI.sql",
+          "WorkflowProcedures/api/StringAndCSVUtilities.sql",
+          "WorkflowProcedures/history/spArticleAppendPriceHistory.sql",
+          "WorkflowProcedures/history/spArticleAppendLabelHistory.sql",
+          "WorkflowProcedures/history/spArticleUpdateAllHistory.sql",
+          "WorkflowProcedures/Duplikaterkennung_Bestellungen.sql",
+          "WorkflowProcedures/Workflowaktion_Gebinde_Erstellen.sql",
+          "WorkflowProcedures/Workflowaktion_Zustandartikel_Lieferant_Setzen.sql",
+          "WorkflowProcedures/PayPal/Add Procudures and Tables.sql",
+          "WorkflowProcedures/PayPal/Workflowaktion.sql",
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/1-migrations-tooling/1-migrations-tooling.md",
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/5-repo-inventar/5-repo-inventar.md",
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md"
+        ]
+      },
+      "context_notes": "FOUNDATION GATE for the whole plan: db-migrations/README.md is the conventions contract (folder semantics up/functions/views/sprocs/permissions; forbidden USE, GO;, multi-object anytime files, hardcoded JTL IDs; naming Schema.Objekt.sql vs NNNN_snake_case.sql; D10 EKL-boundary rules verbatim) that C2/C3 must obey. lint-migrations.ps1 is the executable form of that contract (§7) — build it here so downstream chunks self-check against it (§7 'Lint läuft je Chunk-Self-Check ab Verfügbarkeit'). §7 is authored last in the plan but pulled into this chunk because it is the test stack / foundation harness. Port from WorkflowProcedures/*: strip 'USE eazybusiness', 'GO;'->'GO', prefer CREATE OR ALTER, keep _SetActionDisplayName registration in the same file as its action proc, add '-- Ported from ...' provenance. Object inventory to port lives in research/5 §3 — produce the mapping table in the chunk report. HARD CONSTRAINTS: edits only inside the worktree worktrees/feature/mssql-ops-infrastruktur; NO writes against any SQL server (read-only /opt/mssql-tools*/bin/sqlcmd -S vm-sql-test1.zdbikes.local -E -C only); no real secrets/keys in files (use {{...}} placeholders). deploy.ps1 stays thin; PROD path needs interactive Y/N confirmation (research/1.1 lesson 5); validate deploy.ps1 with a PowerShell parse check only, never a live run."
+    },
+    {
+      "id": "C2",
+      "name": "RoboticoOps DB + global chain (Ebene B) + reset SP/agent-job orchestration",
+      "plan_sections": [
+        "§2 RoboticoOps-DB + globale Kette (Ebene B) (L281-326)",
+        "§3 Reset-SP + Agent-Job-Logik (L330-383)",
+        "§7 Tests — global/validate_structure.sql (L495)"
+      ],
+      "files_expected": [
+        "db-migrations/global/up/*.sql",
+        "db-migrations/global/sprocs/reset.*.sql",
+        "db-migrations/global/runAfterOtherAnyTimeScripts/*.sql",
+        "db-migrations/global/permissions/*.sql",
+        "db-migrations/tests/global/validate_structure.sql"
+      ],
+      "depends_on": ["C1"],
+      "candidates": {
+        "knowledge_skills": ["knowledge-sql", "knowledge-jtl-sql"],
+        "modules": [
+          "Projekte/Testsystem/copy_test_db.sql",
+          "Projekte/Testsystem/invalidate-credentials-for-testing.sql",
+          "Projekte/Testsystem/clear-customer-fields.sql",
+          "Projekte/Testsystem/grant-database-access.sql",
+          "Projekte/Testsystem/register-mandant.sql",
+          "Berechtigungen/JTL-Rollen.sql",
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/2-instanz-survey/2-instanz-survey.md",
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/3-module-signing-agent-job/3-module-signing-agent-job.md",
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/4-jtl-spezifika/4-jtl-spezifika.md"
+        ]
+      },
+      "context_notes": "§2 and §3 are MERGED into one chunk because they are not file-disjoint (§2 declares db-migrations/global/sprocs/reset.StartTestmandantReset/GetResetStatus/ProcessNextResetRequest.sql; §3 fills those exact files plus the reset.internal_* helpers) and because §3 builds directly on the ops.Mandant/ops.Config/ops.ResetRequest tables and signing chain defined in §2. Depends on C1 for the conventions README + lint harness — all files must pass lint-migrations.ps1. Signing model (D6, research/3 Sommarskog): cert RoboticoOpsSigning private key in RoboticoOps, public-only into master via certencoded() (no disk roundtrip); StartTestmandantReset runs WITH EXECUTE AS 'jobstartuser' and is signed; 900_resign_procedures.sql runs everytime to re-add signatures CREATE OR ALTER strips. Job owner sa, no signing in the job. Port reset.internal_* procs from Projekte/Testsystem/* preserving behaviour; SQLCMD vars -> sp_executesql params (payload strings ONLY parameterized, DB/object names ONLY via QUOTENAME — no concatenation of user data into elevated dynamic SQL). Guard every internal proc against @TargetDb='eazybusiness' (triple defense). D9 worker neutralization is NEW (pf_user lock + guarded queue purge; do NOT touch Worker.tTarget — O1). HARD CONSTRAINTS: worktree-only edits; NO writes against any SQL server (read-only sqlcmd only); no secrets in files ({{CertPassword}} token + {{ShopLicense}} placeholders, real values via runbook)."
+    },
+    {
+      "id": "C3",
+      "name": "Read-only probes (§4) + hygiene/cleanup scripts (§6) + their runbooks",
+      "plan_sections": [
+        "§4 Validierung & Probeliste vm-sql-test1 (L387-414)",
+        "§6 Hygiene/Cleanup (L452-472)"
+      ],
+      "files_expected": [
+        "db-migrations/tests/probes/*.sql",
+        "db-migrations/tests/probes/*.md",
+        "docs/runbooks/testmandant-reset-validierung.md",
+        "Berechtigungen/cleanup/*.sql",
+        "docs/runbooks/hygiene-findings.md"
+      ],
+      "depends_on": ["C1"],
+      "candidates": {
+        "knowledge_skills": ["knowledge-jtl-sql", "knowledge-sql"],
+        "modules": [
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/4-jtl-spezifika/4-jtl-spezifika.md",
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/2-instanz-survey/2-instanz-survey.md",
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/5-repo-inventar/5-repo-inventar.md"
+        ]
+      },
+      "context_notes": "§4 (read-only probe scripts + validation runbook) and §6 (hygiene analysis scripts + runbook) are merged: both are read-only diagnostic SQL + runbook material, informationally independent of C2's implementation, and file-disjoint from all other chunks — so this runs in PARALLEL with C2. Depends only on C1 (probes live under db-migrations/tests/ and follow the same conventions; the validation runbook can be written from the plan's reset flow without C2's code being finished). All §4 probe SQL is STRICTLY read-only (SELECT/catalog); the implementing agent MAY run them read-only against vm-sql-test1 via /opt/mssql-tools*/bin/sqlcmd -E -C and record results (answering O1/O2/O4 where possible), but 02_worker_discovery is a manual instruction for Lukas (needs a running worker). §6 cleanup scripts (dana sysadmin, tm2 refresh, premig DB) carry a prominent 'manual execution only, production impact' header and every mutating statement is COMMENTED OUT (D13, lint enforces no uncommented writes). HARD CONSTRAINTS: worktree-only edits; NO writes against any SQL server (read-only sqlcmd allowed); no secrets in files."
+    },
+    {
+      "id": "C4",
+      "name": "Architecture doc, 3 plan-scoped ADRs, rollout runbook, deprecation banners, indexes",
+      "plan_sections": [
+        "§5 Doku, ADRs, Rollout-Runbook, Ablösung (L418-448)"
+      ],
+      "files_expected": [
+        "docs/SQL/MSSQL-OPS-ARCHITECTURE.md",
+        "docs/plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-grate-migration-runner.md",
+        "docs/plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-two-chain-migration-paths.md",
+        "docs/plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md",
+        "docs/runbooks/rollout-mssql-ops.md",
+        "docs/runbooks/README.md",
+        "docs/SQL/NAMING-CONVENTIONS.md",
+        "Projekte/Testsystem/setup-test-environment.ps1",
+        "Projekte/Testsystem/README.md",
+        "docs/plans/README.md"
+      ],
+      "depends_on": ["C1", "C2", "C3"],
+      "candidates": {
+        "knowledge_skills": ["knowledge-adr-format", "knowledge-doc-format"],
+        "modules": [
+          "docs/SQL/NAMING-CONVENTIONS.md",
+          "docs/SQL/JTL-CUSTOM-WORKFLOWS.md",
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/1-migrations-tooling/1-migrations-tooling.md",
+          "docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md"
+        ]
+      },
+      "context_notes": "Documentation chunk, authored LAST so it reflects the as-built code: depends on C1+C2 (ADR adr-module-signing-reset covers D5/D6/D7/D8 = the signing/reset security model built in C2; the architecture doc is a post-implementation snapshot) and on C3 (docs/runbooks/README.md is the index listing C3's testmandant-reset-validierung + hygiene-findings runbooks, and rollout-mssql-ops references the §4 validation runbook). All three ADRs use plan-scoped form: no number, header '# ADR-NNNN: ...' placeholder, Status 'Proposed (plan-scoped — pending promotion)', full knowledge-adr-format sections, bidirectional ## References to this plan; promotion to docs/decisions/NNNN-*.md happens at plan completion (docs/decisions/ does not exist yet — this repo's first ADRs). Load knowledge-adr-format + ~/.claude/templates/adr.md for the ADRs and knowledge-doc-format + ~/.claude/templates/universal.md for the architecture doc/runbooks; all new docs are ENGLISH. NAMING-CONVENTIONS.md is an EDIT (additive only). setup-test-environment.ps1 is an EDIT (top comment banner only, D12 — do not change any functional line). SSoT rule: operating rules live in the architecture doc, not duplicated from the plan. HARD CONSTRAINTS: worktree-only edits; NO writes against any SQL server; no secrets in files."
+    }
+  ]
+}
