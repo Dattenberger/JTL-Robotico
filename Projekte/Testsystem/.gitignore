@@ -1,0 +1,4 @@
+# Lokale Testsystem-Config mit ECHTEN JTL-Connector-/ShopLicense-Keys.
+# Nicht in Git (Secrets) - wird via Google Drive/Insync mit den Kollegen
+# geteilt. Vorlage: test-environment.config.example.json
+test-environment.config.json

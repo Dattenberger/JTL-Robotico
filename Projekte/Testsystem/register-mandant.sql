@@ -1,0 +1,110 @@
+------------------------------------------------------------
+-- register-mandant.sql
+-- Registriert den Test-Mandanten in dbo.tMandant, damit er im
+-- JTL-Login (Mandantenauswahl) erscheint.
+--
+-- Hintergrund: dbo.tMandant ist die JTL-Mandanten-Registry
+-- (kMandant, cName, cDB). JTL liest die Mandantenliste beim Start aus
+-- der verbundenen DB; massgeblich ist die Standard-/Haupt-DB
+-- [eazybusiness]. JTL haelt die Tabelle in ALLEN Mandanten-DBs
+-- konsistent - daher pflegen wir den Eintrag hier ebenfalls in jede
+-- registrierte Mandanten-DB + die neue Ziel-DB.
+--
+-- Idempotent: Schluessel ist cDB (Ziel-DB-Name). Existiert der Eintrag
+-- schon, wird nur cName aktualisiert; sonst neu angelegt.
+--
+-- Aufruf (via SQLCMD-Variablen):
+--   sqlcmd -S <server> -E -b -v TargetDb="eazybusiness_tm4" \
+--          -v MandantName="Testmandant4 (Lukas)" -i register-mandant.sql
+------------------------------------------------------------
+USE master;
+GO
+SET NOCOUNT ON;
+
+DECLARE @TargetDb    sysname       = N'$(TargetDb)';
+DECLARE @MandantName nvarchar(255) = N'$(MandantName)';
+
+-- SAFETY: die Haupt-DB ist bereits als Standard-Mandant registriert und
+-- darf nicht als Test-Mandant eingetragen/ueberschrieben werden.
+IF @TargetDb = N'eazybusiness'
+BEGIN
+    RAISERROR('CRITICAL: TargetDb darf nicht [eazybusiness] sein.', 20, 1) WITH LOG;
+    RETURN;
+END
+
+IF DB_ID(@TargetDb) IS NULL
+BEGIN
+    RAISERROR('Ziel-DB %s existiert nicht.', 16, 1, @TargetDb);
+    RETURN;
+END
+
+IF NULLIF(LTRIM(RTRIM(@MandantName)), N'') IS NULL
+BEGIN
+    RAISERROR('MandantName ist leer.', 16, 1);
+    RETURN;
+END
+
+------------------------------------------------------------
+-- kMandant bestimmen: vorhandenen Eintrag (per cDB) wiederverwenden,
+-- sonst naechste freie Nummer aus der Haupt-Registry (MAX+1).
+------------------------------------------------------------
+DECLARE @k int;
+SELECT @k = kMandant FROM eazybusiness.dbo.tMandant WHERE cDB = @TargetDb;
+IF @k IS NULL
+    SELECT @k = ISNULL(MAX(kMandant), 0) + 1 FROM eazybusiness.dbo.tMandant;
+
+PRINT 'Registriere Mandant: kMandant=' + CAST(@k AS varchar(10))
+    + ', cName=' + @MandantName + ', cDB=' + @TargetDb;
+
+------------------------------------------------------------
+-- Ziel-DBs: alle in der Haupt-Registry gelisteten Mandanten-DBs
+-- (die tatsaechlich existieren) + die neue Ziel-DB.
+------------------------------------------------------------
+DECLARE @dbs TABLE (name sysname PRIMARY KEY);
+
+INSERT INTO @dbs (name)
+SELECT DISTINCT m.cDB
+FROM eazybusiness.dbo.tMandant m
+WHERE m.cDB IS NOT NULL
+  AND DB_ID(m.cDB) IS NOT NULL;
+
+IF NOT EXISTS (SELECT 1 FROM @dbs WHERE name = @TargetDb)
+    INSERT INTO @dbs (name) VALUES (@TargetDb);
+
+------------------------------------------------------------
+-- In jede Ziel-DB den Eintrag upserten (keyed by cDB).
+------------------------------------------------------------
+DECLARE @db sysname, @sql nvarchar(max);
+DECLARE dbcur CURSOR LOCAL FAST_FORWARD FOR SELECT name FROM @dbs;
+OPEN dbcur;
+FETCH NEXT FROM dbcur INTO @db;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @sql = N'
+        IF EXISTS (SELECT 1 FROM ' + QUOTENAME(@db) + N'.dbo.tMandant WHERE cDB = @TargetDb)
+            UPDATE ' + QUOTENAME(@db) + N'.dbo.tMandant
+               SET cName = @MandantName
+             WHERE cDB = @TargetDb;
+        ELSE
+            INSERT INTO ' + QUOTENAME(@db) + N'.dbo.tMandant (kMandant, cName, cDB)
+            VALUES (@k, @MandantName, @TargetDb);';
+    BEGIN TRY
+        EXEC sp_executesql @sql,
+            N'@TargetDb sysname, @MandantName nvarchar(255), @k int',
+            @TargetDb = @TargetDb, @MandantName = @MandantName, @k = @k;
+        PRINT '  [' + @db + '] tMandant gepflegt.';
+    END TRY
+    BEGIN CATCH
+        PRINT '  [' + @db + '] FEHLER: ' + ERROR_MESSAGE();
+    END CATCH
+    FETCH NEXT FROM dbcur INTO @db;
+END
+CLOSE dbcur;
+DEALLOCATE dbcur;
+
+------------------------------------------------------------
+-- Verifikation: Haupt-Registry ausgeben
+------------------------------------------------------------
+PRINT '--- Mandanten-Registry [eazybusiness] ---';
+SELECT kMandant, cName, cDB FROM eazybusiness.dbo.tMandant ORDER BY kMandant;
+GO

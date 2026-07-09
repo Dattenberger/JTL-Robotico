@@ -15,6 +15,11 @@ GO
 DECLARE @SourceDb   sysname       = N'eazybusiness';          -- Quell-DB
 DECLARE @TargetDb   sysname       = N'$(TargetDb)';          -- Ziel-DB via SQLCMD
 DECLARE @BackupFile nvarchar(260) = N'E:\work\eazybusiness_to_test.bak';  -- Pfad zum Backup
+-- Zielordner fuer die Datendateien (.mdf/.ldf) der Test-Mandanten.
+-- Bewusst auf E: (grosses Datenlaufwerk), NICHT auf dem C:-Pfad der Quell-DB:
+-- sonst fuellen die Klone das kleine C: (PROD liegt dort). Ordner muss existieren
+-- und fuer das SQL-Dienstkonto beschreibbar sein (siehe Testsystem-README).
+DECLARE @TargetDataDir nvarchar(260) = N'E:\MSSQL\Data';
 
 ------------------------------------------------------------
 -- 1. Prüfen, ob Quell-DB sowie der User existiert
@@ -85,9 +90,14 @@ IF @DataSourceLogicalName IS NULL OR @LogSourceLogicalName IS NULL
         RETURN;
     END
 
--- Annahme: der DB-Name steckt im Pfad. Falls nicht, hier ggf. hart anpassen.
-SET @DataRestorePhysical = REPLACE(@DataSourcePhysical, @SourceDb, @TargetDb);
-SET @LogRestorePhysical  = REPLACE(@LogSourcePhysical,  @SourceDb, @TargetDb);
+-- Zieldateien landen im dedizierten Datenordner @TargetDataDir (E:), damit die
+-- Klone NICHT das kleine C:-Laufwerk der Quell-DB fuellen. Dateinamen = Ziel-DB.
+SET @DataRestorePhysical = @TargetDataDir + N'\' + @TargetDb + N'.mdf';
+SET @LogRestorePhysical  = @TargetDataDir + N'\' + @TargetDb + N'.ldf';
+
+-- Zielordner sicherstellen (RESTORE legt keine Verzeichnisse an). xp_create_subdir
+-- ist idempotent und erzeugt den Ordner unter dem SQL-Dienstkonto (beschreibbar).
+EXEC master.dbo.xp_create_subdir @TargetDataDir;
 
 PRINT 'Quelldatei (Daten): ' + @DataSourcePhysical;
 PRINT 'Quelldatei (Log):   ' + @LogSourcePhysical;

@@ -1,0 +1,20 @@
+{
+    "_comment": "VORLAGE (versioniert). Zum Einrichten nach 'test-environment.config.json' kopieren und die echten ShopLicense-Keys eintragen. Die echte Datei ist gitignored (Secrets) und wird via Google Drive geteilt. Registry fuer die Testsystem-Erstellung: Pro eazybusiness-Mandant (Wert von -EasyBusinessMandant) die Staging-Shop-Zuordnung. Das Setup-Skript liest Developer/ShopUrl/ShopLicense und biegt im Test-Mandanten tShop.cServerWeb + tShop.cAPIKey darauf um (Zugangsdaten bleiben erhalten). Neuen Mandanten/Entwickler? Einfach hier ergaenzen - keine Skriptaenderung noetig. WICHTIG: Der Key MUSS exakt dem -EasyBusinessMandant-Wert entsprechen; ist kein Eintrag vorhanden, bricht das Skript sicher ab (statt eine falsche/leere URL zu setzen).",
+    "environments": {
+        "tm2": {
+            "Developer": "dana",
+            "ShopUrl": "https://shop-staging-dana.ison-musical.ts.net/",
+            "ShopLicense": "<CONNECTOR_KEY_DANA>"
+        },
+        "tm3": {
+            "Developer": "sanda",
+            "ShopUrl": "https://shop-staging-sanda.ison-musical.ts.net/",
+            "ShopLicense": "<CONNECTOR_KEY_SANDA>"
+        },
+        "tm4": {
+            "Developer": "lukas",
+            "ShopUrl": "https://shop-staging-lukas.ison-musical.ts.net/",
+            "ShopLicense": "<CONNECTOR_KEY_LUKAS>"
+        }
+    }
+}
