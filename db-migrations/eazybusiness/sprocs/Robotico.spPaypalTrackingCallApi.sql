@@ -14,6 +14,8 @@
 CREATE OR ALTER PROCEDURE Robotico.spPaypalTrackingCallApi @kLieferschein AS INT
 AS
 BEGIN
+    SET NOCOUNT ON;
+
     -- Preparation: Auth, URL, DisableSandbox, etc.
     DECLARE @DisableSandbox AS BIT = (SELECT IIF(cValue = 'TRUE', 1, 0)
                                       FROM Robotico.tPaypalSettings

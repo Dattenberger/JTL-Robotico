@@ -11,6 +11,8 @@
 
 CREATE OR ALTER PROCEDURE CustomWorkflows.spPaypalTrackingVersand @kVersand INT AS
 BEGIN
+    SET NOCOUNT ON;
+
     BEGIN
         DECLARE @kLieferschein INT;
         SELECT @kLieferschein = kLieferschein FROM tVersand WHERE kVersand = @kVersand

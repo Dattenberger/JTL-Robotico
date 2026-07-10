@@ -2,8 +2,9 @@
 -- Robotico.spSetArticleCustomFieldValue — public API: write a custom field value
 -- ============================================================================
 -- Writes a value to an article custom field, auto-creating the binding via
--- Robotico.spEnsureArticleCustomField if needed. Returns 0 on success, -1 when
--- the binding could not be ensured.
+-- Robotico.spEnsureArticleCustomField if needed. Returns 0 on success. A missing
+-- custom-field definition surfaces as a thrown error (propagated from
+-- spEnsureArticleCustomField), not as a return code.
 --
 -- Ported from WorkflowProcedures/api/CustomFieldAPI.sql (2026-07-10).
 -- ============================================================================
@@ -19,19 +20,16 @@ BEGIN
 
     DECLARE @kArtikelAttribut INT;
     DECLARE @currentValue NVARCHAR(MAX);
-    DECLARE @returnCode INT;
 
     BEGIN TRY
-        -- Step 1: Ensure binding exists (creates if missing)
-        EXEC @returnCode = Robotico.spEnsureArticleCustomField
+        -- Step 1: Ensure binding exists (creates if missing). A missing field
+        -- definition throws inside the helper and propagates through this TRY.
+        EXEC Robotico.spEnsureArticleCustomField
             @kArtikel = @kArtikel,
             @fieldName = @fieldName,
             @kSprache = @kSprache,
             @kArtikelAttribut = @kArtikelAttribut OUTPUT,
             @currentValue = @currentValue OUTPUT;
-
-        IF @returnCode <> 0
-            RETURN -1;  -- Binding could not be ensured
 
         -- Step 2: Update the value
         UPDATE dbo.tArtikelAttributSprache

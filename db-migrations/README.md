@@ -78,6 +78,39 @@ how ordering dependencies are expressed — see §4.
 The anytime filename **is** the object identity: one file = one object, named
 `Schema.Object.sql`. The lint checks that the filename matches the `CREATE` inside.
 
+**File-header convention.** Every migration file opens with a header comment block
+before the first statement: the object/file identity, a one-line purpose, and — for
+ported or plan-driven objects — an `@see` anchor to the plan section (and the legacy
+source script / research it derives from), per the repo's inline-anchor convention.
+The header is documentation, not lint-enforced, but it is the first thing a maintainer
+reads; keep the identity line in sync with the `CREATE` below it. Two sanctioned
+shapes, chosen by layer:
+
+- **Ebene A (`eazybusiness/`)** — **boxed banner**. The object is a self-contained
+  function/proc, so the header just needs to stand out and state the purpose:
+
+  ```sql
+  -- ============================================================================
+  -- Robotico.fnFindDuplicateOrders — engine: list duplicate orders (iTVF)
+  -- ============================================================================
+  -- <what it does, preconditions, gotchas>
+  ```
+
+- **Ebene B (`global/`)** — **compact header line + `@see`**. Reset-infrastructure
+  files must announce their *chain and runtime role* up front (which chain; whether
+  they are job-only / signed / everytime), which the identity line carries directly;
+  an `@see` plan anchor follows the prose:
+
+  ```sql
+  -- reset.internal_CloneDatabase  (Ebene B / global — pipeline step, job-only)
+  --
+  -- <what it does, security model>
+  -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
+  ```
+
+  The `@see` anchor is expected on every Ebene-B file (the reset chain leans heavily
+  on the plan/research for its security model); on Ebene-A files it is optional.
+
 ---
 
 ## 4. Hard rules (lint-enforced)

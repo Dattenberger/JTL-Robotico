@@ -175,11 +175,48 @@ schemas we own:
 | `ops.*` | this project | registry & state: `ops.Mandant`, `ops.Config`, `ops.ResetRequest`, grate journal |
 | `reset.*` | this project | reset procedures: `reset.StartTestmandantReset`, `reset.GetResetStatus`, `reset.ProcessNextResetRequest`, `reset.internal_*` |
 
-Object naming inside `ops` / `reset` follows the same rules as `Robotico` (sections 2–4),
-with two established local conventions: reset pipeline steps are prefixed
-`internal_` (called only by the job orchestrator, e.g. `reset.internal_CloneDatabase`), and
-column-level secrets (e.g. `ops.Mandant.ShopLicense`) are protected by `DENY` rather than
-renamed. `RoboticoOps` is invisible to the excel_ekl runner.
+### Naming: admin-DB style, **not** the JTL Hungarian convention
+
+`RoboticoOps` sits **outside** `eazybusiness` and never reads alongside `dbo` JTL tables, so
+it deliberately does **not** carry the JTL table/column prefixes of sections 2–4. The reason
+those prefixes exist (§3) — "so `Robotico` objects read like the surrounding `dbo` tables" —
+does not apply here, because there are no surrounding JTL tables. `ops.*` / `reset.*` use a
+plain PascalCase, admin-database style instead:
+
+| Element | Ebene-B convention | Example | Contrast with §2–4 |
+|---|---|---|---|
+| Table | PascalCase, **no `t` prefix**, singular | `ops.Mandant`, `ops.ResetRequest` | not `ops.tMandant` |
+| Column | PascalCase, **no Hungarian prefix** | `MandantKey`, `TargetDb`, `Status`, `StepLog` | not `cName`, `kMandant`, `bIsActive` |
+| Parameter | PascalCase with `@` | `@TargetDb`, `@RequestId` | not `@cTargetDb` |
+| Procedure | PascalCase, **no `sp` prefix** | `reset.StartTestmandantReset`, `reset.GetResetStatus` | not `reset.spStart…` |
+
+Constraints keep the section-2 prefixed style, but **schema-qualified** so the name stays
+globally unambiguous inside the admin DB (`PK_<schema>_<Table>`, not `PK_<Table>`):
+
+| Constraint / index | Convention | Example |
+|---|---|---|
+| Primary key | `PK_<schema>_<Table>` | `PK_ops_Mandant` |
+| Foreign key | `FK_<schema>_<Table>_<Ref>` | `FK_ops_ResetRequest_Mandant` |
+| Unique constraint | `UQ_<schema>_<Table>_<Cols>` | `UQ_ops_Mandant_TargetDb` |
+| Check | `CK_<schema>_<Table>_<Col>` | `CK_ops_Mandant_TargetDb` |
+| Default | `DF_<schema>_<Table>_<Col>` | `DF_ops_Mandant_IsActive` |
+| Standalone (filtered) unique index | `UX_<Table>_<Purpose>` | `UX_ResetRequest_Active` |
+
+> [!NOTE]
+> Standalone unique indexes created with `CREATE UNIQUE INDEX` (as opposed to an inline
+> `UNIQUE` constraint) use the `UX_` prefix to mark them as *unique* indexes, distinct from
+> both the non-unique `IX_` and the constraint-borne `UQ_` of §2. `UX_ResetRequest_Active`
+> — the filtered "at most one active request per `TargetDb`" index on `ops.ResetRequest` —
+> is the sole current example. It is intentionally not schema-qualified because an index name
+> is already scoped to its table.
+
+Two further local conventions:
+- reset pipeline steps are prefixed `internal_` (called only by the job orchestrator, e.g.
+  `reset.internal_CloneDatabase`);
+- column-level secrets (e.g. `ops.Mandant.ShopLicense`) are protected by `DENY` rather than
+  renamed.
+
+`RoboticoOps` is invisible to the excel_ekl runner.
 
 ---
 

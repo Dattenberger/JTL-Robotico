@@ -6,7 +6,9 @@
 -- concurrent-creation race (UNIQUE violation 2627 -> re-query). Internal helper;
 -- public writes go through Robotico.spSetArticleCustomFieldValue.
 --
--- Returns 0 on success, -1 when the custom field definition is not found.
+-- Returns 0 on success. A missing custom-field definition is a deployment/config
+-- error: the proc RAISERRORs (severity 16) which the outer CATCH re-raises via
+-- THROW, so the caller gets a thrown error, never a -1 return code.
 --
 -- Ported from WorkflowProcedures/api/CustomFieldAPI.sql (2026-07-10):
 -- removed the per-file XACT_ABORT/BEGIN TRAN scaffolding (grate --transaction).
@@ -36,8 +38,9 @@ BEGIN
 
         IF @kAttribut IS NULL
         BEGIN
+            -- Severity 16 inside a TRY transfers control to the outer CATCH (which
+            -- THROWs), so execution never returns here — no RETURN follows.
             RAISERROR('Custom field definition not found in JTL: %s', 16, 1, @fieldName);
-            RETURN -1;
         END
 
         -- Step 2: Lookup existing article-attribute binding

@@ -2,8 +2,12 @@
 -- CustomWorkflows.spArticleAppendLabelHistory — JTL action: append label history
 -- ============================================================================
 -- Custom workflow action. Appends a new entry to the 'Vergangene Label' custom
--- field when the article's label set changed since the last entry. Commas are
--- stripped from label names to keep the ', ' separator unambiguous on read-back.
+-- field when the article's label set changed since the last entry. Label names
+-- are comma-stripped (to keep the in-field ', ' separator unambiguous) and then
+-- run through Robotico.fnEscapedCSVSanitize (removes ';', quotes, CR/LF) so they
+-- cannot break the '; ' field separator or the CRLF entry separator on read-back.
+-- Write and read-back aggregate identically (same normalization, same ORDER BY),
+-- so change-detection is stable even for comma-bearing labels.
 --
 -- Ported from WorkflowProcedures/history/spArticleAppendLabelHistory.sql (2026-07-10).
 -- ============================================================================
@@ -35,25 +39,30 @@ BEGIN
     BEGIN TRY
         SET @userName = Robotico.fnEscapedCSVSanitize(@userName, @DEFAULT_USERNAME);
 
-        -- Strip commas from label names: the ', ' separator would otherwise be ambiguous on read-back
-        SELECT @currentLabels = STRING_AGG(LTRIM(RTRIM(REPLACE(l.cName, ',', ''))), @LABEL_SEPARATOR) WITHIN GROUP (ORDER BY l.cName)
-        FROM dbo.tArtikelLabel al
-        INNER JOIN dbo.tLabel l ON al.kLabel = l.kLabel
-        WHERE al.kArtikel = @kArtikel;
+        -- Normalize each label (strip commas that would clash with the ', '
+        -- in-field separator, then sanitise ';'/quotes/CR/LF via the EscapedCSV
+        -- write contract) and order by that normalized form. The read-back below
+        -- re-aggregates the same way (STRING_AGG(t.label) WITHIN GROUP (ORDER BY
+        -- t.label) over a derived table), so identical label sets compare equal.
+        SELECT @currentLabels = STRING_AGG(t.label, @LABEL_SEPARATOR) WITHIN GROUP (ORDER BY t.label)
+        FROM (
+            SELECT Robotico.fnEscapedCSVSanitize(REPLACE(l.cName, ',', ''), NULL) AS label
+            FROM dbo.tArtikelLabel al
+            INNER JOIN dbo.tLabel l ON al.kLabel = l.kLabel
+            WHERE al.kArtikel = @kArtikel
+        ) t;
 
         IF @currentLabels IS NULL
             SET @currentLabels = '';
 
-        DECLARE @returnCode INT;
-        EXEC @returnCode = Robotico.spEnsureArticleCustomField
+        -- A missing 'Vergangene Label' field definition throws inside the helper
+        -- and propagates through this TRY (no return-code path).
+        EXEC Robotico.spEnsureArticleCustomField
             @kArtikel = @kArtikel,
             @fieldName = @FIELD_NAME,
             @kSprache = 0,
             @kArtikelAttribut = @kArtikelAttribut OUTPUT,
             @currentValue = @existingHistory OUTPUT;
-
-        IF @returnCode <> 0
-            RETURN;
 
         IF Robotico.fnStringIsEffectivelyEmpty(@existingHistory) = 0
         BEGIN

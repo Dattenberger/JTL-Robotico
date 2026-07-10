@@ -53,16 +53,14 @@ BEGIN
             RETURN;
         END
 
-        DECLARE @returnCode INT;
-        EXEC @returnCode = Robotico.spEnsureArticleCustomField
+        -- A missing 'Vergangene Preise' field definition throws inside the helper
+        -- and propagates through this TRY (no return-code path).
+        EXEC Robotico.spEnsureArticleCustomField
             @kArtikel = @kArtikel,
             @fieldName = @FIELD_NAME,
             @kSprache = 0,
             @kArtikelAttribut = @kArtikelAttribut OUTPUT,
             @currentValue = @existingHistory OUTPUT;
-
-        IF @returnCode <> 0
-            RETURN;
 
         IF Robotico.fnStringIsEffectivelyEmpty(@existingHistory) = 0
         BEGIN

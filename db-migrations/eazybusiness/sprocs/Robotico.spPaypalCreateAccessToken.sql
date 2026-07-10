@@ -14,6 +14,8 @@
 
 CREATE OR ALTER PROCEDURE Robotico.spPaypalCreateAccessToken AS
 BEGIN
+    SET NOCOUNT ON;
+
     BEGIN TRANSACTION
         DECLARE @DisableSandbox AS BIT = (SELECT IIF(cValue = 'TRUE', 1, 0)
                                           FROM Robotico.tPaypalSettings

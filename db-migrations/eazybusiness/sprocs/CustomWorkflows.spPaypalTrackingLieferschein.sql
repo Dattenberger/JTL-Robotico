@@ -9,6 +9,8 @@
 
 CREATE OR ALTER PROCEDURE CustomWorkflows.spPaypalTrackingLieferschein @kLieferschein INT AS
 BEGIN
+    SET NOCOUNT ON;
+
     BEGIN
         EXECUTE Robotico.spPaypalTrackingCallApi @kLieferschein
     END
