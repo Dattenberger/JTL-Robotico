@@ -44,20 +44,24 @@ Checks (read-only):
 ## Step 1 — Seed a validation mandant in `ops.Mandant`
 
 test1 has only 1 mandant and no `tm*` clone, so the validation uses a dedicated
-throwaway mandant **`tmv`** (validation mandant), cloned from test1's own
-`eazybusiness`, targeting a fresh DB `eazybusiness_tmv`.
+throwaway mandant **`tm9`** (a deliberately high number that won't collide with
+the real `tm1`/`tm2` mandants), cloned from test1's own `eazybusiness`, targeting
+a fresh DB `eazybusiness_tm9`.
 
-Insert one `ops.Mandant` row for `tmv` (`IsActive = 1`, `TargetDb =
-'eazybusiness_tmv'`, `Developer`/`DisplayName`/`LoginName`/`ShopUrl`/`ShopLicense`
+Insert one `ops.Mandant` row for `tm9` (`IsActive = 1`, `TargetDb =
+'eazybusiness_tm9'`, `Developer`/`DisplayName`/`LoginName`/`ShopUrl`/`ShopLicense`
 per the seed template — use the staging shop license, never a prod key committed
 to git; see plan D8). Do this with the same seed mechanism the rollout runbook
 uses; do not hand-edit prod data.
 
 > [!NOTE]
-> `TargetDb` must match `eazybusiness[_]%` and must never equal `eazybusiness`.
-> The reset refuses `eazybusiness` as a target in three independent places
-> (CHECK constraint, Start-SP validation, job re-validation, plan D6) — `tmv`
-> exercises the happy path without tripping them.
+> Two shape constraints gate the seed row. `MandantKey` must match `tm[0-9]%`
+> (`CK_ops_Mandant_MandantKey`) — a non-numeric key like `tmv` is rejected at
+> insert, so use a `tm<digit>` key such as `tm9`. `TargetDb` must match
+> `eazybusiness[_]%` and must never equal `eazybusiness`; the reset refuses
+> `eazybusiness` as a target in three independent places (CHECK constraint,
+> Start-SP validation, job re-validation, plan D6). `tm9` / `eazybusiness_tm9`
+> exercises the happy path without tripping either guard.
 
 ## Step 2 — Enable the SQL-Agent
 
@@ -71,21 +75,21 @@ under the Agent, so start it for the duration of the test:
 
 ```sql
 -- run against RoboticoOps
-EXEC reset.StartTestmandantReset @MandantKey = N'tmv';
+EXEC reset.StartTestmandantReset @MandantKey = N'tm9';
 -- returns: RequestId, Status='queued'
 ```
 
 Then poll status until it reaches `succeeded` or `failed`:
 
 ```sql
-EXEC reset.GetResetStatus @MandantKey = N'tmv';
+EXEC reset.GetResetStatus @MandantKey = N'tm9';
 -- watch Status + StepLog: clone -> post-restore-security -> invalidate-credentials
 --   -> neutralize-worker -> anonymize -> grant-access -> register-mandant -> apply-roles
 ```
 
 ## Step 4 — Verify the outcome
 
-Run each check read-only against the **clone** (`-d eazybusiness_tmv`) unless noted.
+Run each check read-only against the **clone** (`-d eazybusiness_tm9`) unless noted.
 
 ### 4.1 Request status
 
@@ -144,8 +148,8 @@ request (CATCH), so `succeeded` implies all 11 blocks ran.
 
 ### 4.6 Registration + access
 
-`eazybusiness_tmv` appears as a mandant (`dbo.tMandant` upsert) and the configured
-`LoginName` has access (JTL roles applied). The WaWi client can log into `tmv`
+`eazybusiness_tm9` appears as a mandant (`dbo.tMandant` upsert) and the configured
+`LoginName` has access (JTL roles applied). The WaWi client can log into `tm9`
 (manual — this also partly answers O2: note whether the just-registered mandant
 is visible/where the worker would have picked it up, but keep the worker stopped).
 
@@ -156,7 +160,7 @@ Update the plan's Open Questions with what this run showed:
 | Q | Expectation on test1 | How this run confirms it |
 |---|---|---|
 | O1 | `Worker.tTarget` unchanged by reset | 4.3 note — tTarget identical to source |
-| O2 | worker does not auto-service `tmv` while stopped | Step 0 gate + 4.6 observation (needs the manual probe `02_worker_discovery.md` for the running-worker case) |
+| O2 | worker does not auto-service `tm9` while stopped | Step 0 gate + 4.6 observation (needs the manual probe `02_worker_discovery.md` for the running-worker case) |
 | O4 | `pf_user` guard no-ops cleanly when empty | 4.3 — pf_rows may be 0 on test1; step still succeeds |
 
 ## Step 6 — Rollback / cleanup
@@ -165,14 +169,14 @@ The validation mandant is throwaway. After the run:
 
 ```sql
 -- remove the mandant registration from the real test1 eazybusiness:
---   DELETE dbo.tMandant WHERE cDB = 'eazybusiness_tmv';   (manual, reviewed)
+--   DELETE dbo.tMandant WHERE cDB = 'eazybusiness_tm9';   (manual, reviewed)
 -- drop the clone:
---   ALTER DATABASE [eazybusiness_tmv] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
---   DROP DATABASE [eazybusiness_tmv];
+--   ALTER DATABASE [eazybusiness_tm9] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+--   DROP DATABASE [eazybusiness_tm9];
 ```
 
-Optionally clear the `tmv` `ops.ResetRequest` history. Set the `ops.Mandant`
-`tmv` row `IsActive = 0` (or delete it) so it can't be reset again by accident.
+Optionally clear the `tm9` `ops.ResetRequest` history. Set the `ops.Mandant`
+`tm9` row `IsActive = 0` (or delete it) so it can't be reset again by accident.
 Stop the SQL-Agent again if test1 should return to its Stopped/Manual baseline.
 
 ---
@@ -181,7 +185,7 @@ Stop the SQL-Agent again if test1 should return to its Stopped/Manual baseline.
 
 > [!WARNING]
 > **Request stuck in `running`.** If the Agent job dies mid-pipeline, the request
-> stays `running` and the Start-SP refuses a new one for `tmv`. The pipeline
+> stays `running` and the Start-SP refuses a new one for `tm9`. The pipeline
 > reclaims `running` rows older than 4h as `failed` on its next start (plan §3
 > edge cases). To retry sooner, confirm the job is not actually running, then
 > mark the row `failed` by hand and re-trigger.
@@ -189,7 +193,7 @@ Stop the SQL-Agent again if test1 should return to its Stopped/Manual baseline.
 > [!WARNING]
 > **Clone left behind after a failure.** On CATCH the clone DB is left as-is for
 > diagnosis (MULTI_USER ensured). Inspect it, then drop it (Step 6) before
-> re-running — a stale `eazybusiness_tmv` will collide with the next clone.
+> re-running — a stale `eazybusiness_tm9` will collide with the next clone.
 
 > [!CAUTION]
 > **Never run this with the worker running against real accounts.** If test1's

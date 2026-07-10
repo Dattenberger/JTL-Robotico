@@ -5,6 +5,8 @@
 -- tracking number to PayPal via Robotico.spPaypalTrackingCallApi.
 --
 -- Ported from WorkflowProcedures/PayPal/Workflowaktion.sql (2026-07-10).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1, D10 — CustomWorkflows is
+--      an additive shared zone co-inhabited by excel_ekl; only touch our own objects)
 -- ============================================================================
 
 CREATE OR ALTER PROCEDURE CustomWorkflows.spPaypalTrackingLieferschein @kLieferschein INT AS

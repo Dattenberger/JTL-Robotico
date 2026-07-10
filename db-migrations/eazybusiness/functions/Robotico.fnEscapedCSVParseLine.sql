@@ -9,6 +9,8 @@
 -- Robotico.fnEscapedCSVParseLine (D10). Do not change the parameter list.
 --
 -- Ported from WorkflowProcedures/api/StringAndCSVUtilities.sql (2026-07-10).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1, D10 — signature is a
+--      stable API contract with excel_ekl; do not change the parameter list)
 -- ============================================================================
 
 CREATE OR ALTER FUNCTION Robotico.fnEscapedCSVParseLine(

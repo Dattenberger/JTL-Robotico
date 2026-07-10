@@ -19,6 +19,8 @@
 -- Ported from WorkflowProcedures/Duplikaterkennung_Bestellungen.sql (2026-07-10):
 -- removed `USE [eazybusiness]` and the per-file BEGIN TRAN/COMMIT scaffolding
 -- (grate wraps the deploy in --transaction); one object per anytime file.
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1 — Ebene-A port of the
+--      duplicate-order engine)
 -- ============================================================================
 
 CREATE OR ALTER FUNCTION Robotico.fnFindDuplicateOrders

@@ -173,7 +173,7 @@ schemas we own:
 | Schema | Owner | Purpose |
 |---|---|---|
 | `ops.*` | this project | registry & state: `ops.Mandant`, `ops.Config`, `ops.ResetRequest`, grate journal |
-| `reset.*` | this project | reset procedures: `reset.StartTestmandantReset`, `reset.GetResetStatus`, `reset.ProcessNextResetRequest`, `reset.internal_*` |
+| `reset.*` | this project | reset procedures: `reset.StartTestmandantReset`, `reset.GetResetStatus`, `reset.ProcessNextResetRequest`, `reset.EnsureAgentJob`, `reset.internal_*` |
 
 ### Naming: admin-DB style, **not** the JTL Hungarian convention
 
@@ -215,6 +215,26 @@ Two further local conventions:
   `reset.internal_CloneDatabase`);
 - column-level secrets (e.g. `ops.Mandant.ShopLicense`) are protected by `DENY` rather than
   renamed.
+
+### Principals: roles and signing objects
+
+`RoboticoOps` also introduces server- and database-level **principals** that carry no schema
+prefix. They follow admin-DB conventions distinct from §2:
+
+| Element | Convention | Example |
+|---|---|---|
+| Database role | lowercase `snake_case`, `<area>_<capability>` | `ops_reset_executor`, `ops_admin` |
+| Signing certificate | PascalCase, DB name + purpose | `RoboticoOpsSigning` |
+| Certificate login | certificate name + `Login` suffix | `RoboticoOpsSigningLogin` |
+| Impersonation login | lowercase functional name | `jobstartuser` (disabled + `DENY CONNECT SQL`) |
+
+Roles name the **capability, not the person** — membership is data (the AD group is added in
+`permissions/100_grants.sql`, individuals out of band). The certificate / certificate-login
+pair exists solely to counter-sign `reset.StartTestmandantReset` (via `ADD SIGNATURE …
+BY CERTIFICATE RoboticoOpsSigning` in `permissions/900_resign_procedures.sql`) so the
+impersonated `jobstartuser` can cross the `RoboticoOps → msdb` boundary; **do not rename**
+either — the signing step and the `WITH EXECUTE AS 'jobstartuser'` proc headers reference
+them by name.
 
 `RoboticoOps` is invisible to the excel_ekl runner.
 

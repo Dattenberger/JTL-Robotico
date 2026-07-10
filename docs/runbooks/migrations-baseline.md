@@ -32,19 +32,28 @@ made clone inherits the prod journal and needs no separate baseline.
 
 ## Step 2 — Pre-check: do the files match the deployed objects?
 
-For each target database, dump the deployed-object hashes and eyeball them against
-the files. Read-only:
+For each target database, dump the owned-object inventory with a per-object
+definition hash. Read-only:
 
 ```bash
 /opt/mssql-tools*/bin/sqlcmd -S vm-sql2.zdbikes.local -E -C \
     -d eazybusiness -i db-migrations/tests/compare-objects.sql
 ```
 
-Confirm every `Robotico.*` and `CustomWorkflows.sp*` object the files define is
-present. If an object is **missing** in the DB, do **not** baseline that object's
-state blindly — deploy normally instead (grate will create the missing ones). If an
-object's definition **differs**, reconcile the file to the deployed truth first
-(remember: the file is what future clones will get).
+The script lists every object we own (`Robotico.*` plus our `CustomWorkflows`
+action procs) with a `SHA2_256` hash of its module definition — tables appear with
+a `NULL` hash so the inventory is complete. Two ways to read the output:
+
+- **Prod `eazybusiness` (the clone source / truth):** confirm every object the files
+  in `db-migrations/eazybusiness/` define is **present**. There is nothing to diff
+  against — prod *is* the reference — so a missing object is the only red flag.
+- **test1 and any clone you baseline directly:** run the script there too and compare
+  its hash list against prod's. Equal hashes mean the deployed definition matches;
+  a differing hash means the object drifted.
+
+If an object is **missing**, do **not** baseline blindly — deploy normally instead
+(grate will create the missing ones). If a hash **differs**, reconcile the file to
+the deployed truth first (remember: the file is what future clones will get).
 
 ## Step 3 — Lint the files
 

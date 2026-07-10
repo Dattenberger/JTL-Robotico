@@ -227,15 +227,23 @@ matches the files:
 A missing or drifted object means: deploy the Ebene-A chain again (grate re-runs only the
 changed anytime scripts). Never edit an applied `up/` script to "fix" drift — add a new one.
 
-### 6.3 Re-signing after any SP redeploy
+### 6.3 Re-signing after a signed-SP redeploy
 
-`CREATE OR ALTER` on a signed SP **drops its signature**. The everytime
-`permissions/900_resign_procedures.sql` re-applies it within the same grate run (the
-`permissions/` folder runs after `sprocs/`), so a normal `deploy.ps1 -Scope global` is
-always self-healing. **Rule:** never `CREATE OR ALTER` a `reset.*` SP directly in SSMS on
-a live instance — redeploy the `global` chain so the re-signing step runs. If you must
-hotfix, run `900_resign_procedures.sql` immediately afterwards, or the next
-non-privileged caller of `StartTestmandantReset` fails with an opaque permissions error.
+`CREATE OR ALTER` on a signed SP **drops its signature**. Exactly one proc is signed —
+`reset.StartTestmandantReset`, our one `EXECUTE AS` entry point (§2, item 4). The everytime
+`permissions/900_resign_procedures.sql` re-signs it within the same grate run whenever the
+signature is missing (the `permissions/` folder runs after `sprocs/`), so a normal
+`deploy.ps1 -Scope global` is always self-healing. That deploy prompts for the
+`RoboticoOpsSigning` certificate password (or reads `$env:GRATE_CERT_PASSWORD`) and passes
+it to grate as the `{{CertPassword}}` token — the private-key password never touches git.
+
+**Rule:** never `CREATE OR ALTER` `reset.StartTestmandantReset` directly in SSMS on a live
+instance — redeploy the `global` chain so the re-signing step runs. Note that
+`900_resign_procedures.sql` carries the `{{CertPassword}}` grate token and is therefore not
+runnable as raw SQL; if you must hotfix, re-sign by hand with `ADD SIGNATURE TO
+reset.StartTestmandantReset BY CERTIFICATE RoboticoOpsSigning WITH PASSWORD = '<real cert
+password>'`, or the next non-privileged caller of `StartTestmandantReset` fails with an
+opaque permissions error.
 
 ### 6.4 Worker-stopped gate before registering a mandant
 

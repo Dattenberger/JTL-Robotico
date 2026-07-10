@@ -15,6 +15,8 @@
 -- (2026-07-10): removed `USE eazybusiness`; IF EXISTS DROP + CREATE -> CREATE OR
 -- ALTER; registration guarded. The one-off bulk-cleanup block from the original
 -- (commented out there) is intentionally NOT part of the deployed action.
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1, D10 — CustomWorkflows is
+--      an additive shared zone co-inhabited by excel_ekl; only touch our own objects)
 -- ============================================================================
 
 SET ANSI_NULLS ON

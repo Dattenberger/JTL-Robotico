@@ -243,7 +243,16 @@ pwsh db-migrations/deploy.ps1 -Scope eazybusiness -Environment PROD -Target eazy
 Targets (servers, DB lists) are resolved from `targets.config.json` — no secrets there
 (Windows authentication only). `deploy.ps1` requires grate on the `PATH`
 (`dotnet tool install --global grate`) and **prompts for interactive Y/N confirmation on
-`-Environment PROD`**, listing the exact target DBs first.
+`-Environment PROD`**, listing the exact target DBs first (a `-DryRun` against PROD
+changes nothing and therefore skips the confirmation).
+
+> [!NOTE]
+> **Ebene B deploys prompt for the module-signing certificate password.** `-Scope global`
+> applies the `RoboticoOpsSigning` signing chain (`global/up/0011_signing_certificate.sql`,
+> `global/permissions/900_resign_procedures.sql`), whose `{{CertPassword}}` token
+> `deploy.ps1` fills at run time: it reads `$env:GRATE_CERT_PASSWORD` when set, otherwise
+> prompts interactively (secure input). The password is a secret — it never lives in
+> `targets.config.json` or anywhere in git. `-Scope eazybusiness` needs no such token.
 
 > [!CAUTION]
 > This repository never writes to a SQL Server autonomously. PROD deployment is always a

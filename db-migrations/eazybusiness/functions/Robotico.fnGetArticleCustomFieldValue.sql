@@ -11,6 +11,8 @@
 -- Returns: NVARCHAR(MAX) value, or NULL if not found.
 --
 -- Ported from WorkflowProcedures/api/CustomFieldAPI.sql (2026-07-10).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1 — Ebene-A port; public
+--      read side of the Robotico custom-field API)
 -- ============================================================================
 
 CREATE OR ALTER FUNCTION Robotico.fnGetArticleCustomFieldValue

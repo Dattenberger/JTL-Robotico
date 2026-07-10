@@ -10,6 +10,8 @@
 -- so change-detection is stable even for comma-bearing labels.
 --
 -- Ported from WorkflowProcedures/history/spArticleAppendLabelHistory.sql (2026-07-10).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1, D10 — CustomWorkflows is
+--      an additive shared zone co-inhabited by excel_ekl; only touch our own objects)
 -- ============================================================================
 
 CREATE OR ALTER PROCEDURE CustomWorkflows.spArticleAppendLabelHistory

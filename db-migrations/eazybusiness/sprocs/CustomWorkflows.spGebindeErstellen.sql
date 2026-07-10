@@ -8,6 +8,8 @@
 -- Ported from WorkflowProcedures/Workflowaktion_Gebinde_Erstellen.sql (2026-07-10):
 --   removed `USE eazybusiness`; IF EXISTS DROP + CREATE -> CREATE OR ALTER;
 --   registration guarded (module-provided helpers).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1, D10 — CustomWorkflows is
+--      an additive shared zone co-inhabited by excel_ekl; only touch our own objects)
 -- ============================================================================
 
 CREATE OR ALTER PROCEDURE CustomWorkflows.spGebindeErstellen @kArtikel INT AS

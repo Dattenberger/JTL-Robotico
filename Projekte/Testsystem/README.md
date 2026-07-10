@@ -16,7 +16,9 @@ order against a target `eazybusiness_tmN` database:
    sync, repoint the shop to a staging URL/licence
 3. `clear-customer-fields.sql` — anonymize customer data
 4. `grant-database-access.sql` — grant `db_owner` to the developer login
-5. `../../Berechtigungen/JTL-Rollen.sql` — apply the standard JTL reader/writer roles
+5. `register-mandant.sql` — register the clone in `dbo.tMandant` so it appears in the
+   WaWi mandant selection
+6. `../../Berechtigungen/JTL-Rollen.sql` — apply the standard JTL reader/writer roles
 
 It requires the operator to hold **personal admin rights on the production server**, reads
 its config from the git-ignored `test-environment.config.json`, and has no audit trail.

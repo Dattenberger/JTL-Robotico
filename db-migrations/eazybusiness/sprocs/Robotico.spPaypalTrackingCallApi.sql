@@ -9,6 +9,8 @@
 -- Procedures enabled on the server.
 --
 -- Ported from WorkflowProcedures/PayPal/Add Procudures and Tables.sql (2026-07-10).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1 — Ebene-A port; the
+--      PayPal tracking API entry point behind the CustomWorkflows actions)
 -- ============================================================================
 
 CREATE OR ALTER PROCEDURE Robotico.spPaypalTrackingCallApi @kLieferschein AS INT

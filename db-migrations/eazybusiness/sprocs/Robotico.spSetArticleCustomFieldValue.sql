@@ -7,6 +7,8 @@
 -- spEnsureArticleCustomField), not as a return code.
 --
 -- Ported from WorkflowProcedures/api/CustomFieldAPI.sql (2026-07-10).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1 — Ebene-A port; public
+--      write side of the Robotico custom-field API)
 -- ============================================================================
 
 CREATE OR ALTER PROCEDURE Robotico.spSetArticleCustomFieldValue

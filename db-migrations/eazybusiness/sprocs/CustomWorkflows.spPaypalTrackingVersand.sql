@@ -7,6 +7,8 @@
 -- Ported from WorkflowProcedures/PayPal/Workflowaktion.sql (2026-07-10):
 --   GO; -> GO; IF EXISTS DROP + CREATE -> CREATE OR ALTER; double-quoted display
 --   name -> single-quoted; registration guarded (module-provided helper).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1, D10 — CustomWorkflows is
+--      an additive shared zone co-inhabited by excel_ekl; only touch our own objects)
 -- ============================================================================
 
 CREATE OR ALTER PROCEDURE CustomWorkflows.spPaypalTrackingVersand @kVersand INT AS

@@ -6,6 +6,8 @@
 -- run (errors surface as low-severity RAISERROR, not an abort).
 --
 -- Ported from WorkflowProcedures/history/spArticleUpdateAllHistory.sql (2026-07-10).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1, D10 — CustomWorkflows is
+--      an additive shared zone co-inhabited by excel_ekl; only touch our own objects)
 -- ============================================================================
 
 CREATE OR ALTER PROCEDURE CustomWorkflows.spArticleUpdateAllHistory

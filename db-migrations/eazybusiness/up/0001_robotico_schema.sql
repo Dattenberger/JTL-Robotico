@@ -13,6 +13,8 @@
 -- present in WorkflowProcedures/api/CustomFieldAPI.sql,
 -- WorkflowProcedures/api/StringAndCSVUtilities.sql and
 -- WorkflowProcedures/PayPal/Add Procudures and Tables.sql (2026-07-10).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1, D2, D3 — the Robotico
+--      schema is the Ebene-A journal home; the two-chain split versions its contents)
 -- ============================================================================
 
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'Robotico')

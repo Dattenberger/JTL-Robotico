@@ -11,6 +11,8 @@
 --   - removed `use eazybusiness` (grate selects the DB)
 --   - kept only the DDL + settings seed; the PayPal API procedures from that file
 --     moved to their own anytime files (sprocs/Robotico.spPaypal*.sql).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1 — Ebene-A port of the
+--      PayPal table DDL + settings seed)
 -- ============================================================================
 
 -- ---- tPaypalAccessToken ----------------------------------------------------
