@@ -185,3 +185,29 @@ shape: 3 Fable-low lenses (architektur / vollstaendigkeit / einfachheit)
        -> file-disjoint fix clusters (large->Opus-high, small->Fable-low)
        -> single commit -> Fable-low recheck
 ```
+
+### Review result (2026-07-10 ~03:30)
+
+```yaml
+findings: 5 (1 important ARCH-1, 4 nice)   # architektur 3, vollstaendigkeit 1, einfachheit 1
+fixed: 5 / rejected: 0                      # fix commit 53067b0, all clusters small -> Fable-low
+recheck: all resolved, lint green (0 errors, 12 known heuristic warnings)
+notable: ARCH-1 RegisterMandant no longer swallows errors (WARN accumulation + hard THROW for
+  the clone itself); ARCH-2 job existence self-heals via everytime 200_ensure_agent_job.sql;
+  ARCH-3 re-sign set is now catalog-driven (execute_as jobstartuser without signature -> signed);
+  F1 EnsureAgentJob refuses drop/recreate while a reset is queued/running; SCA-1 deploy abort exits 1.
+```
+
+## Session close (2026-07-10 ~03:35)
+
+- Worktree clean, HEAD 5ec7d33. Partial inline anchors of the spend-limit-failed doc
+  workers were verified (comment-only) and committed.
+- NEXT STEPS FOR THE USER (morning):
+  1. Review implementation report (reports/implementation-report.md, 🔴0 🟠8 🟢9) and this state file.
+  2. Manual E2E: TC-M1 (baseline deploy test1) → TC-M2 (global chain test1, needs cert
+     password + SQL Agent started) → TC-M3 (full reset E2E) → TC-M4/TC-M5. Runbooks under docs/runbooks/.
+  3. Decide O3 (premig DB) + O5 (cert password location, suggested ~/.claude-secrets.md).
+  4. Accept plan → Phase 5 closure (ADR promotion to docs/decisions/, archive, EN translations)
+     — deliberately NOT run (needs user acceptance; also budget-conscious after spend-limit hit).
+  5. Missing inline-anchor coverage (tests harness / hygiene-legacy remainder) can be finished
+     by re-running the finalize docs stage after the spend limit is raised.
