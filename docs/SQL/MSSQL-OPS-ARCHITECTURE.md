@@ -162,7 +162,7 @@ sysadmin-context job without holding any server rights. Full rationale:
 | Component | Location | Notes |
 |---|---|---|
 | Ebene-A tree | `db-migrations/eazybusiness/` | ~28 files; journal `Robotico` |
-| Ebene-B tree | `db-migrations/global/` | ~15 files; journal `ops` in RoboticoOps |
+| Ebene-B tree | `db-migrations/global/` | ~20 files; journal `ops` in RoboticoOps |
 | Deploy wrapper | `db-migrations/deploy.ps1` | `-Scope`, `-Environment`, `-Target`, `-Baseline`, `-DryRun` |
 | Target catalogue | `db-migrations/targets.config.json` | servers + DB lists; Windows auth, no secrets |
 | Registry & queue | `db-migrations/global/up/0002_ops_schema_tables.sql` | `ops.Mandant` / `ops.Config` / `ops.ResetRequest` |
