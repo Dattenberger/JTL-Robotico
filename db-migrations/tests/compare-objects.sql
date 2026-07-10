@@ -16,6 +16,9 @@
 -- Ownership boundary (D10): excludes excel_ekl objects (spCMArtikel/spCMArtikelNeu)
 -- and the JTL-module-provided CustomWorkflows infrastructure (underscore helpers,
 -- vCustomAction* views, tWorkflowObjects/tAllowedDatatypes) — those are not ours.
+--
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §7 Test Strategy (tier 2: object compare)
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §D10 (CustomWorkflows ownership boundary)
 -- ============================================================================
 
 SET NOCOUNT ON;

@@ -17,6 +17,11 @@
 -- Run read-only against prod:
 --   /opt/mssql-tools18/bin/sqlcmd -S vm-sql2.zdbikes.local -E -C \
 --       -d master -i Berechtigungen/cleanup/01_dana_sysadmin_review.sql
+--
+-- See: docs/runbooks/hygiene-findings.md — Finding 1 (operator context, review steps)
+--      docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §D13 —
+--      every remediation below is commented out by mandate: hygiene fixes run manually
+--      in a reviewed session, never autonomously.
 
 SET NOCOUNT ON;
 

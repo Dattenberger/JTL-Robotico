@@ -28,6 +28,9 @@
 --   dbo.tEazyShippingVerpackQueue, dbo.tInteropQueue) = 0 rows.
 --   => Every NON-empty queue on test1 is in the reset drain list. COMPLETE. ✅
 --   (Row counts here are sys.partitions estimates — exact enough for coverage.)
+--
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §4 (Validierung & Probeliste)
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §D9 (the queue-drain list this probe verifies for completeness)
 -- ============================================================================
 
 SET NOCOUNT ON;

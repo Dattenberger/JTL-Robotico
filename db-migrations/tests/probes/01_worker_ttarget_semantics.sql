@@ -24,6 +24,9 @@
 --   (Sync.tSyncType exists but is EMPTY on test1). The value→meaning mapping is
 --   JTL-internal (worker source / JTL support), not derivable from the schema.
 --   => O1 stays "needs JTL-side confirmation"; D9 (leave tTarget untouched) holds.
+--
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §4 (Validierung & Probeliste, Open Question O1)
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §D9 (Worker neutralisation leaves Worker.tTarget untouched)
 -- ============================================================================
 
 SET NOCOUNT ON;

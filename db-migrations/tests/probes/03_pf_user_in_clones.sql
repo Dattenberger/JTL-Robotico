@@ -23,6 +23,9 @@
 --      still need a manual run (constraint: this session may only read test1).
 --      O4 note: the reset's pf_user step is IF OBJECT_ID-guarded and no-ops on an
 --      empty table, so it is correct whether or not clones carry pf_user rows.
+--
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §4 (Validierung & Probeliste, Open Question O4)
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §D9 (pf_user neutralisation this probe scopes)
 -- ============================================================================
 
 SET NOCOUNT ON;

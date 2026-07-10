@@ -10,6 +10,7 @@
 # See: Projekte/Testsystem/README.md
 #      docs/runbooks/testmandant-reset-validierung.md
 #      docs/SQL/MSSQL-OPS-ARCHITECTURE.md
+#      docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §D12
 #
 # Do not delete this script until the new reset has run cleanly for real
 # mandants (rollout Phase 7). The logic below is unchanged.

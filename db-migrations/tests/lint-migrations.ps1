@@ -16,6 +16,11 @@
     pwsh db-migrations/tests/lint-migrations.ps1
 .EXAMPLE
     pwsh db-migrations/tests/lint-migrations.ps1 -Path /path/to/db-migrations
+
+.NOTES
+    This lint is tier 1 of the plan's three-tier test strategy (the other two are
+    compare-objects.sql and the eazybusiness/*_Tests.sql suite).
+    @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §7 Test Strategy
 #>
 [CmdletBinding()]
 param(

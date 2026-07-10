@@ -1,5 +1,6 @@
 -- Ported from WorkflowProcedures/Duplikaterkennung_Bestellungen_Tests.sql (2026-07-10) — manual integration test; run against a test mandant, never prod.
 -- No USE statement: run with sqlcmd -d <TargetDb> (e.g. eazybusiness_tm2).
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md §7 Test Strategy (tier 3: ported SQL test files)
 
 -- ============================================================================
 -- Test Suite for Duplicate Order Detection (transaction-based)
