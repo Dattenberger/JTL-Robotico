@@ -23,6 +23,11 @@ BEGIN
         THROW 51071, 'internal_RegisterMandant: DisplayName is empty.', 1;
 
     DECLARE @SourceDb sysname, @refMandant int, @sql nvarchar(max), @k int;
+    -- Per-DB warnings for best-effort updates of the *other* mandant DBs.
+    -- Failures against @TargetDb itself THROW instead — registering the clone
+    -- is this step's core purpose, silently skipping it would mark the reset
+    -- as succeeded while the mandant is invisible in the JTL login.
+    DECLARE @warnings nvarchar(max) = N'';
 
     SELECT @SourceDb   = ConfigValue FROM ops.Config WHERE ConfigKey = N'SourceDb';
     SELECT @refMandant = TRY_CONVERT(int, ConfigValue) FROM ops.Config WHERE ConfigKey = N'ReferenceMandant';
@@ -62,7 +67,16 @@ BEGIN
             EXEC sp_executesql @sql,
                  N'@TargetDb sysname, @DisplayName nvarchar(255), @k int',
                  @TargetDb = @TargetDb, @DisplayName = @DisplayName, @k = @k;
-        END TRY BEGIN CATCH END CATCH
+        END TRY
+        BEGIN CATCH
+            IF @db = @TargetDb
+            BEGIN
+                CLOSE dbcur; DEALLOCATE dbcur;
+                THROW;
+            END
+            SET @warnings = @warnings + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
+                          + N' register: WARN ' + @db + N': ' + ERROR_MESSAGE() + NCHAR(10);
+        END CATCH
         FETCH NEXT FROM dbcur INTO @db;
     END
     CLOSE dbcur; DEALLOCATE dbcur;
@@ -91,14 +105,23 @@ BEGIN
                   AND EXISTS (SELECT 1 FROM ' + QUOTENAME(@sdb) + N'.dbo.tFirma   f WHERE f.kFirma   = bf.kFirma);';
             BEGIN TRY
                 EXEC sp_executesql @sql, N'@k int, @refMandant int', @k = @k, @refMandant = @refMandant;
-            END TRY BEGIN CATCH END CATCH
+            END TRY
+            BEGIN CATCH
+                IF @sdb = @TargetDb
+                BEGIN
+                    CLOSE seedcur; DEALLOCATE seedcur;
+                    THROW;
+                END
+                SET @warnings = @warnings + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
+                              + N' register: WARN ' + @sdb + N': ' + ERROR_MESSAGE() + NCHAR(10);
+            END CATCH
             FETCH NEXT FROM seedcur INTO @sdb;
         END
         CLOSE seedcur; DEALLOCATE seedcur;
     END
 
     UPDATE ops.ResetRequest
-       SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
+       SET StepLog = ISNULL(StepLog, N'') + @warnings + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
                    + N' register: kMandant=' + CAST(@k AS nvarchar(10)) + N' (' + @DisplayName + N')' + NCHAR(10),
            ModifiedAt = SYSUTCDATETIME()
      WHERE RequestId = @RequestId;

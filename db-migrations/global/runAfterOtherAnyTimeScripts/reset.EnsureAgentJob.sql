@@ -22,6 +22,13 @@ BEGIN
 
     DECLARE @jobName sysname = N'RoboticoOps - Testmandant Reset';
 
+    -- Guard: sp_delete_job stops a RUNNING job mid-step. Recreating the job while a
+    -- reset is queued/running would cancel the backup/restore mid-clone and leave the
+    -- request stuck in 'running' until the stale-reclaim in reset.ProcessNextResetRequest.
+    -- Fail the deploy instead; rerun once the active reset has finished.
+    IF EXISTS (SELECT 1 FROM ops.ResetRequest WHERE Status IN (N'queued', N'running'))
+        THROW 50001, N'reset.EnsureAgentJob: a reset request is queued or running. Recreating the agent job now would cancel it mid-clone. Wait until ops.ResetRequest has no queued/running row (check reset.GetResetStatus), then rerun the global deploy.', 1;
+
     IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = @jobName)
         EXEC msdb.dbo.sp_delete_job @job_name = @jobName, @delete_unused_schedule = 1;
 
@@ -47,6 +54,7 @@ BEGIN
 END
 GO
 
--- Apply on every deploy where this file's hash changed.
+-- Apply on every deploy where this file's hash changed. Bare existence is additionally
+-- self-healed on every deploy by permissions/200_ensure_agent_job.sql (everytime).
 EXEC reset.EnsureAgentJob;
 GO

@@ -85,6 +85,13 @@ pwsh db-migrations/deploy.ps1 -Scope global -Environment PROD
 > `vm-sql2.zdbikes.local` and the scope is `RoboticoOps` only. Enter the certificate
 > password when prompted. Confirm the SQL-Agent service is running on prod.
 
+> [!WARNING]
+> Do not run a global deploy while a test-mandant reset is queued or running: if
+> `reset.EnsureAgentJob.sql` changed, its drop/recreate would cancel the running agent
+> job mid-clone. The script guards this itself (it THROWs when `ops.ResetRequest` has a
+> `queued`/`running` row) — if the deploy fails with that message, wait for the reset to
+> finish (check `reset.GetResetStatus`) and rerun.
+
 ## Phase 5 — Seed real keys (never via git)
 
 The Ebene-B seed shipped `ops.Mandant` rows with a `'<SET-VIA-RUNBOOK>'` sentinel for

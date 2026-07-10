@@ -110,7 +110,9 @@ if ($Environment -eq 'PROD' -and -not $DryRun) {
     $answer = Read-Host 'Proceed? (Y/N)'
     if ($answer -notin @('Y', 'y')) {
         Write-Host 'Aborted by user.' -ForegroundColor Red
-        return
+        # Non-zero exit so scripted callers (e.g. `deploy.ps1 ... && next-step`)
+        # can distinguish an operator abort from a successful deploy.
+        exit 1
     }
 }
 
