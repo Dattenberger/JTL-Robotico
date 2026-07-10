@@ -14,7 +14,8 @@
 
 User pre-approved ALL standard choices and is offline overnight:
 - At every decision point choose the recommended/default option and document it here (no blocking AskUserQuestion).
-- Implementation agents: **Opus**. Post-implementation: separate Fable low-effort static-analysis review pass (main loop, after Phase 4.7).
+- Implementation agents: **Opus**.
+- Post-implementation review pass (user directive 2026-07-10, refined): SMALL number of **Fable agents at effort LOW** perform a static code analysis focused on ARCHITECTURE problems + "everything cleanly implemented, nothing over-complicated, no missing features". Findings are then FIXED in a follow-up wave: per finding, choose the executor by size/complexity — **Opus (high effort)** for larger/mechanical rework, **Fable (low)** for small nuanced corrections. Re-verify after fixes.
 - Hard constraints: **no writes against any SQL server** (read-only sqlcmd against vm-sql-test1.zdbikes.local allowed via `/opt/mssql-tools*/bin/sqlcmd -E -C`); no secrets in files; edits only inside the worktree.
 
 ## plan_lifecycle
@@ -78,11 +79,11 @@ language: "new docs/READMEs/runbooks English; SQL comments English for new code;
   blocking: true
 ```
 
-**Phase-2 checks:** briefing emitted (main loop, autonomy mode) ·
-git-state clean · plan-consistency: research/adrs links resolve
-(adrs/*.md are declared as §5 deliverables, not yet existing — expected) ·
-E2E scope: per analysis-agent recommendation (expected: skip runtime E2E,
-static verification instead — no server writes allowed)
+**Phase-2 checks (2026-07-10 00:57, autonomy mode):** briefing emitted in main
+conversation · decisions per mandate: chunk cut ADOPTED (C1 → C2 ∥ C3 → C4),
+doc activation FULL, E2E scope RUN (auto: 6 static/read-only cases; write-E2E
+manual via runbooks) · git-state clean (plan artifacts committed 9592c99) ·
+plan-consistency pass (research links resolve; adrs/*.md are §5 deliverables)
 
 ## End-to-End-Test-Plan
 
@@ -98,10 +99,31 @@ degrade_rule: "TC-5 read-only probes → manual-pending if test1 unreachable (en
 ## Phase-3 Run (plan.workflow.js)
 
 ```yaml
-runId: pending
+runId: wf_50fde12a-9be    # launched 2026-07-10 ~01:00
+planStartCommit: 9592c99
+defaultModel: opus        # user mandate: Opus workers
+maxParallel: 3
+repairCap: 3
 ```
 
-Task table: pending chunks.json.
+**Task table** (1 block, cross-chunk deps direct) — **run complete 2026-07-10 ~02:40, status: complete, 28 agents, 0 errors:**
+
+| Task | Block | Deps | Status |
+|---|---|---|---|
+| C1 (Migration foundation + lint harness) | B1 | — | ✅ cf02f1a + self-fix 86abb31 |
+| C2 (RoboticoOps + reset SP/job) | B1 | C1 | ✅ ff9141c + self-fix 8a7007d |
+| C3 (Probes §4 + Hygiene §6) | B1 | C1 | ✅ 172a280 + self-fix d4878e4 |
+| C4 (Docs, ADRs, rollout, banners) | B1 | C1, C2, C3 | ✅ 66a1969 + self-fix d8f30f0 |
+| AUDIT-B1 | B1 | C1–C4 | ✅ 6 findings → repair wave 1 (54f38fd) fixed 5, skipped 1 (T1, documented nice-to-have) |
+
+**Key deviation (C1, sound):** `CustomWorkflows._CheckAction`/`._SetActionDisplayName` are
+JTL-module VENDOR objects (only ever EXEC'd in repo, never CREATE'd) — NOT ported into our
+chain; documented as module prerequisite, every registration call guarded (IF OBJECT_ID … ELSE PRINT).
+Plus: 3 PayPal API procs (Robotico.spPaypal*) ported that research/5 under-inventoried.
+
+**Probe outcomes (C3):** O1 answered — Worker.tTarget has no DB-side semantics lookup
+(Sync.tSyncType empty), leave untouched confirmed. O4 partial — pf_user 0 rows on test1
+(prod tm* clones need manual run). O2 remains manual (running worker needed).
 
 ## Commits
 
@@ -111,4 +133,37 @@ Task table: pending chunks.json.
 
 ## Escalations & Postponed
 
-(none yet)
+(none — Phase 3 complete without escalations; postponed: [])
+
+## Phase 4 (finalize workflow)
+
+```yaml
+runId: wf_e523c9ab-28a    # launched 2026-07-10 ~02:45, complete ~03:05
+integration: skipped (1 block)
+e2e: { auto: 7 pass (TC-1..TC-6 + TC-R1 regression re-check), fail: 0, manual_pending: 5 (TC-M1..TC-M5) }
+docs: { workers: 15, docs_commit: ca0fd32, flagged: 5 minor, gaps: 1 (tests/README, follow-up default no) }
+postponed_e2e: E2E-1 (runbook -d note) — FIXED inline by orchestrator together with tmv→tm9 drift
+agent_failures: 3 (DOCS-INLINE-tests-harness ×2, DOCS-INLINE-peripheral-hygiene-legacy ×1) — cause: MONTHLY SPEND LIMIT hit
+adr_flag: 3 plan-scoped ADRs need promotion to docs/decisions/ before archival (docs/decisions/ does not exist yet)
+```
+
+**⚠️ Budget note (2026-07-10 ~03:05):** Anthropic monthly spend limit was hit during the
+docs-inline wave — some inline anchors for the tests harness + peripheral hygiene/legacy
+files are MISSING. Remaining phases run budget-conscious: orchestrator does small fixes
+itself; review pass kept to 3 Fable-low agents as mandated; Phase 5 (closure/translations)
+deferred to user acceptance anyway.
+
+### Docs (docs-final, 2026-07-10T02:45:00+02:00)
+
+```yaml
+doc_workers: 11        # 6 augmented, 5 no-change-needed
+inline_groups: 4       # 1 anchored (eazybusiness-ebene-a, +28/-0), 3 no-change-needed
+spec_conversions: 0
+auto_fixes: 0          # no doc relocated / no anchor renamed → no safe link auto-fix
+flagged: 5             # tmv→tm9 drift into plan+e2e artifacts; JTL-CW back-link; index Phase-7 wording; arch↔naming cross-link (opt); README §8 test-table subset
+gaps: 1                # db-migrations/tests/README.md missing (follow-up doc plan default: no)
+adr_flags: 1           # 3 plan-scoped ADRs unpromoted; docs/decisions/ absent; arch doc links draft paths → rewrite at promotion
+knowledge_flags: 0
+substantive: "reset-validation runbook seeded tmv, violating shipped CK_ops_Mandant_MandantKey (tm[0-9]%) — renamed tm9 (would-never-run bug in the doc)"
+report: docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/docs-final-report.md
+```

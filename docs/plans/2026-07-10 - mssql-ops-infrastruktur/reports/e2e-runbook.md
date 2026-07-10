@@ -105,6 +105,9 @@ never automated in this plan.
 - **Steps:**
   1. Preflight #4 green. For each `db-migrations/tests/probes/*.sql`:
      `/opt/mssql-tools18/bin/sqlcmd -S vm-sql-test1.zdbikes.local -E -C -i "<probe>.sql"` (strictly SELECT/catalog).
+     Per-probe `-d` requirement: probe `01_worker_ttarget_semantics.sql` targets a single
+     JTL DB and needs `-d eazybusiness` (without it, default `master` fails with Msg 208);
+     probes `03`/`04` iterate all `eazybusiness*` DBs via a `sys.databases` cursor and need no `-d`.
   2. Confirm the executed command targets `-S vm-sql-test1` (Preflight #5 isolation guard) and that each probe contains no INSERT/UPDATE/DELETE/DDL.
   3. Capture output; record O1 (`nAbgleichstyp` semantics), O4 (`pf_user` presence in clones), queue inventory in the E2E report.
   4. `02_worker_discovery.md` is NOT run here (needs a running worker) → manual (TC-M4).
@@ -144,7 +147,7 @@ never automated in this plan.
 - **Mode:** manual
 - **Knowledge:** knowledge-jtl-sql
 - **Scope:** signed SP → Agent job → clone → neutralization → status (writes, minutes-long)
-- **Steps:** Execute `docs/runbooks/testmandant-reset-validierung.md` end-to-end: seed a `tmv` registry row, `EXEC reset.StartTestmandantReset`, poll `reset.GetResetStatus`, then verify clone content, credential invalidation, D9 worker neutralization (ebay_user/pf_user locked, queues empty), anonymization, grants, and rollback (drop clone).
+- **Steps:** Execute `docs/runbooks/testmandant-reset-validierung.md` end-to-end: seed a `tm9` registry row (the validation-mandant key used by that runbook), `EXEC reset.StartTestmandantReset`, poll `reset.GetResetStatus`, then verify clone content, credential invalidation, D9 worker neutralization (ebay_user/pf_user locked, queues empty), anonymization, grants, and rollback (drop clone).
 - **Expected Result:** Status `succeeded`; clone neutralized per D9; `eazybusiness` never touched; StepLog complete.
 
 ### TC-M4: Worker discovery probe (manual — needs running worker)
@@ -165,9 +168,24 @@ never automated in this plan.
 
 ## Phase-4 Refresh (added by orchestrator)
 
-_Empty until Phase 4 runs. The orchestrator gegen-checks this runbook against the
-block outputs and adds cases for edge-of-the-blade points that emerged during
-implementation._
+Added by the Phase-4 E2E agent (2026-07-10) after reading the block audit +
+repair-wave-1 reports. Repair wave 1 (commit `54f38fd`) fixed three convention/logic
+findings by editing shipped SQL; the case below guards those fixes as a static
+regression so a future re-port cannot silently reintroduce the defects.
+
+### TC-R1: Repair-wave-1 fixes are still in place (static regression)
+
+- **Mode:** auto
+- **Knowledge:** knowledge-sql
+- **Scope:** regression guard for `validated-findings.md` convention-B1-2 / logic-B1-1 / logic-B1-2
+- **Steps:**
+  1. Assert every proc under `db-migrations/{eazybusiness,global}/sprocs/*.sql` contains
+     `SET NOCOUNT ON` (convention-B1-2 — the five PayPal procs were the gap).
+  2. Assert `grep -rniE "returnCode" db-migrations/eazybusiness/sprocs/` returns nothing
+     (logic-B1-1 — the unreachable `RETURN -1` contract and its dead caller guards were removed).
+  3. Assert `CustomWorkflows.spArticleAppendLabelHistory.sql` runs each label through
+     `Robotico.fnEscapedCSVSanitize(...)` on the write side (logic-B1-2 — `;`/CR/LF sanitisation).
+- **Expected Result:** All three assertions hold. Covers the repair-wave-1 delta on top of §1/§6.
 
 ## Acceptance
 
