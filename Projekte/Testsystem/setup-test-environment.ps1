@@ -1,3 +1,20 @@
+# =============================================================================
+# DEPRECATED (plan 2026-07-10 - mssql-ops-infrastruktur, decision D12).
+#
+# This PowerShell reset is kept only as a working FALLBACK. The reset is now
+# server-side, audited, and needs no personal admin rights on production:
+#
+#     EXEC RoboticoOps.reset.StartTestmandantReset @MandantKey = N'tm4';
+#     EXEC RoboticoOps.reset.GetResetStatus        @MandantKey = N'tm4';  -- poll
+#
+# See: Projekte/Testsystem/README.md
+#      docs/runbooks/testmandant-reset-validierung.md
+#      docs/SQL/MSSQL-OPS-ARCHITECTURE.md
+#
+# Do not delete this script until the new reset has run cleanly for real
+# mandants (rollout Phase 7). The logic below is unchanged.
+# =============================================================================
+
 <#
 .SYNOPSIS
     Sets up the JTL test environment by running a sequence of SQL scripts.

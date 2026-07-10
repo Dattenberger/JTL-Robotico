@@ -145,6 +145,65 @@ illustrate the conventions end to end:
 
 ---
 
+## 8. Migration journal schemas (Ebene A / Ebene B)
+
+Objects are deployed with [grate](https://github.com/grate-devs/grate) via
+[`db-migrations/`](../../db-migrations/README.md), which keeps a **journal** of what ran.
+The journal never sits in `dbo` or grate's default `grate` schema — it lives in our own
+schema so it respects the vendor boundary and (for Ebene A) travels with a mandant clone:
+
+| Chain | Deploy folder | Journal schema | Journal lives in |
+|---|---|---|---|
+| **Ebene A** (eazybusiness content) | `db-migrations/eazybusiness/` | `Robotico` | every eazybusiness copy (incl. clones) |
+| **Ebene B** (instance uniques) | `db-migrations/global/` | `ops` | the `RoboticoOps` DB of that instance |
+
+The `Robotico` journal tables (`ScriptsRun`, `ScriptsRunErrors`, `Version`) therefore sit
+**alongside** our own `Robotico.*` objects. Do not create objects named like grate's
+journal tables in `Robotico`.
+
+---
+
+## 9. The `RoboticoOps` admin database (Ebene B)
+
+Instance administration lives in a **separate database**, `RoboticoOps` (collation
+`Latin1_General_CI_AS`, recovery SIMPLE, owner `sa`) — deliberately outside the
+`eazybusiness_*` namespace so it can never be confused with a mandant clone. It carries two
+schemas we own:
+
+| Schema | Owner | Purpose |
+|---|---|---|
+| `ops.*` | this project | registry & state: `ops.Mandant`, `ops.Config`, `ops.ResetRequest`, grate journal |
+| `reset.*` | this project | reset procedures: `reset.StartTestmandantReset`, `reset.GetResetStatus`, `reset.ProcessNextResetRequest`, `reset.internal_*` |
+
+Object naming inside `ops` / `reset` follows the same rules as `Robotico` (sections 2–4),
+with two established local conventions: reset pipeline steps are prefixed
+`internal_` (called only by the job orchestrator, e.g. `reset.internal_CloneDatabase`), and
+column-level secrets (e.g. `ops.Mandant.ShopLicense`) are protected by `DENY` rather than
+renamed. `RoboticoOps` is invisible to the excel_ekl runner.
+
+---
+
+## 10. Shared `CustomWorkflows` zone (excel_ekl boundary, D10)
+
+`CustomWorkflows` is **co-inhabited** by our Ebene-A chain and the excel_ekl migration
+runner (`RoboticoEKL`). Ownership is a hard, additive contract — each side creates or
+alters **only its own named objects**:
+
+- **We own** our `CustomWorkflows.sp*` action procedures. Names/signatures that excel_ekl
+  consumes (`Robotico.fnEscapedCSVParseLine`, `_CheckAction`, `_SetActionDisplayName`,
+  `vCustomAction`) are a backward-compatibility contract — do not change them.
+- **excel_ekl owns** (never touch from here): `spCMArtikel`, `spCMArtikelNeu`, the
+  `RoboticoEKL` schema, and `dbo.tWorkflow` rows whose `cName` starts with `EKL …`.
+- **Never** `DROP SCHEMA CustomWorkflows` or delete a foreign object; schema creation is
+  idempotent (`IF NOT EXISTS`) and compatible on both sides.
+
+The `_CheckAction` / `_SetActionDisplayName` helpers and the `vCustomAction*` views are
+**vendor objects** provided by the JTL "Custom Workflow Actions" module — not created by
+this repo. Full verbatim contract: [`db-migrations/README.md`](../../db-migrations/README.md)
+§5–§6; architecture map: [`MSSQL-OPS-ARCHITECTURE.md`](MSSQL-OPS-ARCHITECTURE.md) §4.
+
+---
+
 ## References
 
 Source documents in the `excel_ekl` repository
