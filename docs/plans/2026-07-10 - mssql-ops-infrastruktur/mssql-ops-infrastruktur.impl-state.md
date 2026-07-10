@@ -167,3 +167,21 @@ knowledge_flags: 0
 substantive: "reset-validation runbook seeded tmv, violating shipped CK_ops_Mandant_MandantKey (tm[0-9]%) — renamed tm9 (would-never-run bug in the doc)"
 report: docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/docs-final-report.md
 ```
+
+## Phase 4.7 Implementation Report
+
+```yaml
+report_file: ./reports/implementation-report.md
+markers: { needs_research: 0, review_recommended: 8, informational: 9 }
+verification_pass: done (source coverage complete, counter fix applied)
+user_decision: pending (autonomy mode: proceeding to review pass; acceptance in the morning)
+```
+
+## Fable-low Static Review (user directive)
+
+```yaml
+runId: wf_b0fed360-d5b    # launched 2026-07-10 ~03:15
+shape: 3 Fable-low lenses (architektur / vollstaendigkeit / einfachheit)
+       -> file-disjoint fix clusters (large->Opus-high, small->Fable-low)
+       -> single commit -> Fable-low recheck
+```
