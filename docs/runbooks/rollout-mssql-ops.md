@@ -45,7 +45,12 @@ Do **not** baseline a mandant clone you can simply re-clone later.
 > [!WARNING]
 > Baseline asserts "file == deployed". If Step 2 of the baseline runbook shows drift,
 > reconcile the files to the deployed truth **before** baselining — a wrong baseline hides
-> a real difference and a future clone would carry the wrong definition.
+> a real difference and a future clone would carry the wrong definition. Note that
+> `--baseline` also journals the **anytime** scripts, so a behind-the-repo estate is
+> masked (a later normal deploy will not re-apply them) — see the baseline runbook's
+> "grate `--baseline` baselines the anytime scripts too" warning and the E2E evidence
+> (`reports/qg2/e2e-docker-report.md` §A2: the prod backup was 7 objects behind). If in
+> doubt, run a normal (non-`-Baseline`) deploy, which reconciles via `CREATE OR ALTER`.
 
 ## Phase 2 — Deploy the global chain on test1
 

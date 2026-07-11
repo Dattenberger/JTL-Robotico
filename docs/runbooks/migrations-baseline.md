@@ -9,6 +9,28 @@ grate migration journal, without re-running the objects that are already deploye
 > only when the files in `db-migrations/eazybusiness/` match what is deployed. Verify
 > that first (Step 2), or you will hide a real drift.
 
+> [!WARNING]
+> **`grate --baseline` baselines the *anytime* scripts too, not only the one-time
+> `up/` scripts.** This is the load-bearing subtlety: once baselined, a later *normal*
+> deploy will **not** re-apply the functions/procs — grate already has their current
+> hash journaled. So if the target DB is **behind** the repo (an anytime object is
+> older, or missing entirely), baseline **silently records it as "applied"** while the
+> DB keeps the stale/absent object. The journal then lies: it says "applied", the DB
+> disagrees, and no later normal run will fix it.
+>
+> **Precondition — one of these must hold before you baseline:**
+> 1. The target's object definitions already **equal** the repo (verify in Step 2 —
+>    every object present *and* hashes match), **or**
+> 2. you skip baseline and run a **normal** (non-`-Baseline`) deploy instead, which
+>    reconciles anytime objects via `CREATE OR ALTER` (and creates missing ones).
+>
+> **E2E evidence (2026-07-11 Docker run, `reports/qg2/e2e-docker-report.md` §A2):** the
+> restored prod backup was **7 objects behind** the repo. A baseline followed by a
+> normal re-run reported *nothing to do* — the 7 objects stayed stale/absent. Only
+> after forcing the anytime scripts to re-apply did `CREATE OR ALTER` reconcile them
+> (all green against the real JTL schema). Had this been a real adoption, the estate
+> would have been left behind silently.
+
 - **Applies to:** the Ebene-A chain (`-Scope eazybusiness`). Ebene B (`RoboticoOps`)
   is greenfield and is never baselined.
 - **Prerequisites:** grate on `PATH` (`dotnet tool install --global grate`); Windows
