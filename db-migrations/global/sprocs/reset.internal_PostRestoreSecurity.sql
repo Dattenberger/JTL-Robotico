@@ -21,8 +21,13 @@ BEGIN
     IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
         THROW 51020, 'internal_PostRestoreSecurity refused: target is not a test-mandant clone.', 1;
 
+    -- Build DDL into a variable before EXEC(): EXEC() rejects a function call (QUOTENAME)
+    -- inside its concatenated argument.
+    DECLARE @ddl nvarchar(max);
+
     -- 1. Owner -> sa (the restored backup carries the old owner SID).
-    EXEC (N'ALTER AUTHORIZATION ON DATABASE::' + QUOTENAME(@TargetDb) + N' TO [sa];');
+    SET @ddl = N'ALTER AUTHORIZATION ON DATABASE::' + QUOTENAME(@TargetDb) + N' TO [sa];';
+    EXEC (@ddl);
 
     -- 2. + 3. Orphan remap and cleanup, inside the target DB.
     DECLARE @exec nvarchar(300) = QUOTENAME(@TargetDb) + N'.sys.sp_executesql';
@@ -79,7 +84,8 @@ BEGIN
     EXEC @exec @batch;
 
     -- 4. TRUSTWORTHY OFF + assert.
-    EXEC (N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET TRUSTWORTHY OFF;');
+    SET @ddl = N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET TRUSTWORTHY OFF;';
+    EXEC (@ddl);
     IF (SELECT is_trustworthy_on FROM sys.databases WHERE name = @TargetDb) = 1
         THROW 51021, 'internal_PostRestoreSecurity: TRUSTWORTHY is still ON after ALTER.', 1;
 

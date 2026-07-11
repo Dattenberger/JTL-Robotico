@@ -42,7 +42,10 @@ BEGIN
 END
 
 ALTER LOGIN [jobstartuser] DISABLE;
-DENY CONNECT SQL TO [jobstartuser];
+-- DENY CONNECT SQL is a SERVER-scope permission, which SQL Server only allows from the
+-- master database — but grate connects with RoboticoOps as the current DB. Run it through
+-- master context. Idempotent: re-denying an already-denied permission is a harmless no-op.
+EXEC master.sys.sp_executesql N'DENY CONNECT SQL TO [jobstartuser];';
 GO
 
 -- --- RoboticoOps database user (EXECUTE AS target) ------------------------------

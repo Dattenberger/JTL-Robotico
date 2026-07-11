@@ -45,7 +45,8 @@ BEGIN
     DECLARE @RequestId int, @MandantKey sysname, @TargetDb sysname, @err nvarchar(max);
     -- Step-loop locals (EXT-1). Declared once here — T-SQL variable scope is the whole
     -- proc, not the block, so they must not be re-declared inside the request loop.
-    DECLARE @stepNo int, @stepProc sysname, @isCritical bit, @stepExec nvarchar(300);
+    DECLARE @stepNo int, @stepProc sysname, @isCritical bit, @stepExec nvarchar(300),
+            @log nvarchar(max), @ddl nvarchar(max);
 
     WHILE (1 = 1)
     BEGIN
@@ -120,8 +121,9 @@ BEGIN
 
                 -- OPS-3: log BEFORE running, so a mid-step failure is attributable — the
                 -- last "starting step" line then has no matching success line from the step.
-                EXEC reset.internal_LogStep @RequestId,
-                     N'starting step ' + CAST(@stepNo AS nvarchar(10)) + N': ' + @stepProc;
+                -- (Message built into a variable — a proc argument cannot be an expression.)
+                SET @log = CONCAT(N'starting step ', @stepNo, N': ', @stepProc);
+                EXEC reset.internal_LogStep @RequestId, @log;
 
                 SET @stepExec = N'reset.' + QUOTENAME(@stepProc);
                 BEGIN TRY
@@ -135,8 +137,8 @@ BEGIN
                         CLOSE stepcur; DEALLOCATE stepcur;
                         THROW;
                     END
-                    EXEC reset.internal_LogStep @RequestId,
-                         N'WARN ' + @stepProc + N': ' + ERROR_MESSAGE();
+                    SET @log = CONCAT(N'WARN ', @stepProc, N': ', ERROR_MESSAGE());
+                    EXEC reset.internal_LogStep @RequestId, @log;
                 END CATCH
 
                 FETCH NEXT FROM stepcur INTO @stepProc, @isCritical;
@@ -153,7 +155,10 @@ BEGIN
             -- Best-effort: make sure a mid-clone SINGLE_USER database is reachable again.
             BEGIN TRY
                 IF DB_ID(@TargetDb) IS NOT NULL
-                    EXEC (N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET MULTI_USER;');
+                BEGIN
+                    SET @ddl = N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET MULTI_USER;';
+                    EXEC (@ddl);
+                END
             END TRY
             BEGIN CATCH
             END CATCH

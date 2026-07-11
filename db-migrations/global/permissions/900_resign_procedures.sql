@@ -24,7 +24,8 @@ DECLARE unsigned_procs CURSOR LOCAL FAST_FORWARD FOR
     SELECT p.object_id,
            QUOTENAME(SCHEMA_NAME(p.schema_id)) + N'.' + QUOTENAME(p.name)
     FROM sys.procedures p
-    WHERE p.execute_as_principal_id = DATABASE_PRINCIPAL_ID(N'jobstartuser')
+    JOIN sys.sql_modules m ON m.object_id = p.object_id   -- execute_as_principal_id lives here, not on sys.procedures
+    WHERE m.execute_as_principal_id = DATABASE_PRINCIPAL_ID(N'jobstartuser')
       AND NOT EXISTS (
             SELECT 1
             FROM sys.crypt_properties cp
@@ -69,7 +70,8 @@ DEALLOCATE unsigned_procs;
 DECLARE @stillUnsigned NVARCHAR(MAX) =
     (SELECT STRING_AGG(QUOTENAME(SCHEMA_NAME(p.schema_id)) + N'.' + QUOTENAME(p.name), N', ')
      FROM sys.procedures p
-     WHERE p.execute_as_principal_id = DATABASE_PRINCIPAL_ID(N'jobstartuser')
+     JOIN sys.sql_modules m ON m.object_id = p.object_id   -- execute_as_principal_id lives here, not on sys.procedures
+     WHERE m.execute_as_principal_id = DATABASE_PRINCIPAL_ID(N'jobstartuser')
        AND NOT EXISTS (
              SELECT 1
              FROM sys.crypt_properties cp

@@ -31,7 +31,7 @@ BEGIN
     -- path round-trips without silent truncation (CQG-11).
     DECLARE @SourceDb sysname, @BackupFile nvarchar(1000), @TargetDataDir nvarchar(1000),
             @moves nvarchar(max) = N'',
-            @sql nvarchar(max);
+            @sql nvarchar(max), @log nvarchar(max);
 
     SELECT @SourceDb      = ConfigValue FROM ops.Config WHERE ConfigKey = N'SourceDb';
     SELECT @BackupFile    = ConfigValue FROM ops.Config WHERE ConfigKey = N'BackupFile';
@@ -64,8 +64,13 @@ BEGIN
         THROW 51013, 'internal_CloneDatabase: source has no ROWS or no LOG file.', 1;
 
     -- Kick out any users so RESTORE ... REPLACE can proceed.
+    -- (EXEC() does not accept a function call in its concatenated argument, so build the
+    -- statement into @sql first, then EXEC(@sql).)
     IF DB_ID(@TargetDb) IS NOT NULL
-        EXEC (N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE;');
+    BEGIN
+        SET @sql = N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE;';
+        EXEC (@sql);
+    END
 
     -- Ensure the data directory exists (RESTORE creates no folders).
     EXEC master.dbo.xp_create_subdir @TargetDataDir;
@@ -83,12 +88,15 @@ BEGIN
              + N', REPLACE, STATS = 10;';
     EXEC sp_executesql @sql, N'@bf nvarchar(1000)', @bf = @BackupFile;
 
-    EXEC (N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET RECOVERY SIMPLE;');
-    EXEC (N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET MULTI_USER;');
+    SET @sql = N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET RECOVERY SIMPLE;';
+    EXEC (@sql);
+    SET @sql = N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET MULTI_USER;';
+    EXEC (@sql);
 
-    -- CONCAT (not '+') so the data-concat lint heuristic stays quiet: this is a log
-    -- message, not dynamic SQL (@SourceDb/@TargetDb are validated identifiers anyway).
-    EXEC reset.internal_LogStep @RequestId,
-         CONCAT(N'clone: backup+restore ', @SourceDb, N' -> ', @TargetDb, N' ok');
+    -- Build the message into a variable first: a proc argument must be a variable/constant,
+    -- not an expression. CONCAT keeps the data-concat lint heuristic quiet (this is a log
+    -- message, not dynamic SQL — @SourceDb/@TargetDb are validated identifiers anyway).
+    SET @log = CONCAT(N'clone: backup+restore ', @SourceDb, N' -> ', @TargetDb, N' ok');
+    EXEC reset.internal_LogStep @RequestId, @log;
 END
 GO

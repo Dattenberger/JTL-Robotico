@@ -37,14 +37,24 @@ BEGIN
 END
 ELSE
 BEGIN
+    -- EXEC() does not accept a function call (QUOTENAME) inside its concatenated argument
+    -- ("Incorrect syntax near 'QUOTENAME'"); build the statement in a variable first.
+    DECLARE @sql nvarchar(400);
+
     IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = @adGroup)
-        EXEC (N'CREATE USER ' + QUOTENAME(@adGroup) + N' FOR LOGIN ' + QUOTENAME(@adGroup) + N';');
+    BEGIN
+        SET @sql = N'CREATE USER ' + QUOTENAME(@adGroup) + N' FOR LOGIN ' + QUOTENAME(@adGroup) + N';';
+        EXEC (@sql);
+    END
 
     IF NOT EXISTS (
         SELECT 1 FROM sys.database_role_members rm
         JOIN sys.database_principals r ON rm.role_principal_id = r.principal_id
         JOIN sys.database_principals m ON rm.member_principal_id = m.principal_id
         WHERE r.name = N'ops_reset_executor' AND m.name = @adGroup)
-        EXEC (N'ALTER ROLE ops_reset_executor ADD MEMBER ' + QUOTENAME(@adGroup) + N';');
+    BEGIN
+        SET @sql = N'ALTER ROLE ops_reset_executor ADD MEMBER ' + QUOTENAME(@adGroup) + N';';
+        EXEC (@sql);
+    END
 END
 GO

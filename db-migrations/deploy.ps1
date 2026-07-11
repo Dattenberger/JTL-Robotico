@@ -92,9 +92,16 @@ function Invoke-Grate {
         [Parameter(Mandatory)] [string]   $SqlDir,
         [Parameter(Mandatory)] [string[]] $CommonArgs   # everything except --sqlfilesdirectory
     )
+    # Out-Host is deliberate: it writes grate's stdout to the console WITHOUT letting it
+    # land in the function's success stream. Without it, '$exit = Invoke-Grate' captures
+    # every grate log line PLUS the exit code into an array, and the caller's
+    # 'if ($exit -ne 0)' then filters that array (non-empty ⇒ truthy) and throws a FALSE
+    # failure even when grate exited 0. Out-Host keeps the return value the scalar exit
+    # code. ($LASTEXITCODE is set by the external grate/docker process; the Out-Host
+    # cmdlet does not overwrite it.)
     switch ($grateRunner.Mode) {
         'native' {
-            & $grateRunner.Path @CommonArgs "--sqlfilesdirectory=$SqlDir"
+            & $grateRunner.Path @CommonArgs "--sqlfilesdirectory=$SqlDir" | Out-Host
             return $LASTEXITCODE
         }
         'docker' {
@@ -104,7 +111,7 @@ function Invoke-Grate {
                 '-v', "${SqlDir}:/db:ro",
                 $grateRunner.Image
             ) + $CommonArgs + '--sqlfilesdirectory=/db'
-            & docker @dockerArgs
+            & docker @dockerArgs | Out-Host
             return $LASTEXITCODE
         }
     }
@@ -238,9 +245,17 @@ foreach ($db in $databases) {
         "--schema=$schema"
         "--environment=$Environment"
         "--version=$version"
-        '--transaction'
         '--silent'
     )
+    # Transaction wrapping is scope-specific. Ebene A (eazybusiness) is single-DB object
+    # DDL — wrapping the run in one transaction lets a failed deploy roll back cleanly.
+    # Ebene B (global) contains statements that CANNOT run inside a user transaction:
+    # ALTER DATABASE SET (RECOVERY/TRUSTWORTHY), ALTER AUTHORIZATION, the cross-DB cert /
+    # msdb writes, and sp_add_job. grate --transaction fails those with error 226
+    # ("… not allowed within a multi-statement transaction"). Every global up/ script is
+    # individually idempotent (IF NOT EXISTS guards, D2), so per-script execution without a
+    # wrapping transaction is the correct — and only workable — model for Ebene B.
+    if ($Scope -eq 'eazybusiness') { $grateArgs += '--transaction' }
     if ($Baseline) { $grateArgs += '--baseline' }
     if ($DryRun) { $grateArgs += '--dryrun' }
     foreach ($t in $userTokens) { $grateArgs += "--usertokens=$t" }

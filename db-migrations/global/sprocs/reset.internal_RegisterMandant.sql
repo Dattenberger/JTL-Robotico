@@ -37,7 +37,8 @@ BEGIN
     IF NULLIF(LTRIM(RTRIM(@DisplayName)), N'') IS NULL
         THROW 51071, 'internal_RegisterMandant: DisplayName is empty.', 1;
 
-    DECLARE @SourceDb sysname, @refMandant int, @sql nvarchar(max), @k int, @warnCount int = 0;
+    DECLARE @SourceDb sysname, @refMandant int, @sql nvarchar(max), @k int, @warnCount int = 0,
+            @log nvarchar(max);
     -- Best-effort updates of the *other* mandant DBs log a per-DB WARN line and carry on;
     -- a failure against @TargetDb itself THROWs instead — registering the clone is this
     -- step's core purpose, silently skipping it would mark the reset succeeded while the
@@ -89,8 +90,8 @@ BEGIN
                 THROW;
             END
             SET @warnCount += 1;
-            EXEC reset.internal_LogStep @RequestId,
-                 N'register: WARN ' + @db + N': ' + ERROR_MESSAGE();
+            SET @log = CONCAT(N'register: WARN ', @db, N': ', ERROR_MESSAGE());
+            EXEC reset.internal_LogStep @RequestId, @log;
         END CATCH
         FETCH NEXT FROM dbcur INTO @db;
     END
@@ -128,18 +129,18 @@ BEGIN
                     THROW;
                 END
                 SET @warnCount += 1;
-                EXEC reset.internal_LogStep @RequestId,
-                     N'register: WARN ' + @sdb + N': ' + ERROR_MESSAGE();
+                SET @log = CONCAT(N'register: WARN ', @sdb, N': ', ERROR_MESSAGE());
+                EXEC reset.internal_LogStep @RequestId, @log;
             END CATCH
             FETCH NEXT FROM seedcur INTO @sdb;
         END
         CLOSE seedcur; DEALLOCATE seedcur;
     END
 
-    EXEC reset.internal_LogStep @RequestId,
-         N'register: kMandant=' + CAST(@k AS nvarchar(10)) + N' (' + @DisplayName + N')'
-         + CASE WHEN @warnCount > 0
-                THEN N'; ' + CAST(@warnCount AS nvarchar(10)) + N' non-target DB WARN(s) — see above'
-                ELSE N'' END;
+    SET @log = CONCAT(N'register: kMandant=', @k, N' (', @DisplayName, N')',
+                      CASE WHEN @warnCount > 0
+                           THEN CONCAT(N'; ', @warnCount, N' non-target DB WARN(s) — see above')
+                           ELSE N'' END);
+    EXEC reset.internal_LogStep @RequestId, @log;
 END
 GO
