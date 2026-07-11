@@ -14,11 +14,18 @@
 --   * The member list mirrors Berechtigungen/JTL-Rollen.sql, which stays the single
 --     source of truth for prod; keep the two in sync when the team changes.
 --
+-- EXT-4 (decision, no code change): the JTL_Reader/JTL_Writer membership stays a code
+-- SSoT here rather than a runtime ops.RoleMember table — a runtime table would give
+-- editability but split the single source of truth that JTL-Rollen.sql owns for prod.
+-- Membership changes rarely; when it does, edit both mirrors and redeploy. See
+-- adrs/adr-reset-step-registry.md §Alternatives.
+--
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see Berechtigungen/JTL-Rollen.sql
 CREATE OR ALTER PROCEDURE reset.internal_ApplyJtlRoles
-    @TargetDb  sysname,
-    @RequestId int
+    @TargetDb   sysname,
+    @RequestId  int,
+    @MandantKey sysname   -- uniform step contract (EXT-2); not used by this step
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -76,10 +83,7 @@ BEGIN
     ';
     EXEC @exec @batch;
 
-    UPDATE ops.ResetRequest
-       SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
-                   + N' roles: JTL_Reader/JTL_Writer ensured + members applied' + NCHAR(10),
-           ModifiedAt = SYSUTCDATETIME()
-     WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId,
+         N'roles: JTL_Reader/JTL_Writer ensured + members applied';
 END
 GO

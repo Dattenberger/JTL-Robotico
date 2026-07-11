@@ -13,8 +13,9 @@
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see Projekte/Testsystem/clear-customer-fields.sql (source of the block mapping)
 CREATE OR ALTER PROCEDURE reset.internal_AnonymizeCustomerData
-    @TargetDb  sysname,
-    @RequestId int
+    @TargetDb   sysname,
+    @RequestId  int,
+    @MandantKey sysname   -- uniform step contract (EXT-2); not used by this step
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -155,7 +156,7 @@ BEGIN
         WHERE kAnsprechpartner IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P1 core-person ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P1 core-person ok';
 
     -- ===== PRIORITY 2: transaction addresses =====================================
     SET @b = N'
@@ -266,7 +267,7 @@ BEGIN
         WHERE kAddress IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P2 tx-addresses ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P2 tx-addresses ok';
 
     -- ===== PRIORITY 3: eBay checkout =============================================
     SET @b = N'
@@ -303,7 +304,7 @@ BEGIN
         WHERE kEbayCheckout IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P3 ebay-checkout ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P3 ebay-checkout ok';
 
     -- ===== PRIORITY 4: Amazon SFP ================================================
     SET @b = N'
@@ -318,7 +319,7 @@ BEGIN
         WHERE kSFPVersand IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P4 amazon-sfp ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P4 amazon-sfp ok';
 
     -- ===== PRIORITY 5: history / logs ============================================
     SET @b = N'
@@ -353,7 +354,7 @@ BEGIN
         UPDATE Kunde.tNotiz SET cNotiz = ''Notiz_'' + CAST(kNotiz AS NVARCHAR(30)) WHERE kNotiz IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P5 history/logs ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P5 history/logs ok';
 
     -- ===== PRIORITY 6: ticket system =============================================
     SET @b = N'
@@ -378,7 +379,7 @@ BEGIN
         WHERE kAusgangskanalEmail IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P6 ticketsystem ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P6 ticketsystem ok';
 
     -- ===== PRIORITY 7: returns ===================================================
     SET @b = N'
@@ -407,7 +408,7 @@ BEGIN
         WHERE kRMRetoureAbholAdresse IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P7 returns ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P7 returns ok';
 
     -- ===== PRIORITY 8: payment data ==============================================
     SET @b = N'
@@ -446,7 +447,7 @@ BEGIN
         WHERE kZahlung IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P8 payment ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P8 payment ok';
 
     -- ===== PRIORITY 9: access / authentication ===================================
     SET @b = N'
@@ -484,7 +485,7 @@ BEGIN
         WHERE kMobileBenutzer IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P9 access/auth ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P9 access/auth ok';
 
     -- ===== PRIORITY 10: suppliers / incoming invoices ============================
     SET @b = N'
@@ -521,7 +522,7 @@ BEGIN
         UPDATE Contact.tContact SET cNumber = ''ContactNr_'' + CAST(kContact AS NVARCHAR(30)) WHERE kContact IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P10 suppliers/invoices ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P10 suppliers/invoices ok';
 
     -- ===== PRIORITY 11: POS ======================================================
     SET @b = N'
@@ -529,6 +530,6 @@ BEGIN
         UPDATE dbo.POS_Benutzer SET cPasswort = ''Pass_'' + CAST(kBenutzer AS NVARCHAR(30)) WHERE kBenutzer IS NOT NULL;
     ';
     EXEC @exec @b;
-    UPDATE ops.ResetRequest SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126) + N' anon.P11 pos ok' + NCHAR(10), ModifiedAt = SYSUTCDATETIME() WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId, N'anon.P11 pos ok';
 END
 GO

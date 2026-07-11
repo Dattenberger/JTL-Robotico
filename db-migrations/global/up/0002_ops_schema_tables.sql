@@ -11,6 +11,9 @@
 --                       the legacy Projekte/Testsystem scripts.
 --   ops.ResetRequest  — request queue + run log (state machine, audit trail).
 --
+-- The reset PIPELINE definition (ops.ResetStep — the ordered reset.internal_* steps)
+-- is a later addition and lives in up/0021_reset_step_registry.sql (EXT-1).
+--
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§2, §3)
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/3-module-signing-agent-job
 

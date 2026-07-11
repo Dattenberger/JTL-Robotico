@@ -6,11 +6,15 @@
 --
 -- Loop: reclaim stale 'running' rows, then repeatedly claim the oldest 'queued'
 -- request (UPDLOCK/READPAST so parallel job starts never grab the same row) and run
--- the reset pipeline. Each internal step appends its own progress to
--- ops.ResetRequest.StepLog (keyed by @RequestId) as it goes, so reset.GetResetStatus
--- shows live progress and the log survives a mid-step failure. A failure marks the
--- request 'failed', leaves the clone as-is for diagnosis, ensures MULTI_USER, and
--- moves on to the next request.
+-- the reset pipeline. The pipeline is DATA-DRIVEN (EXT-1): the ordered, enabled steps
+-- are rows in ops.ResetStep, dispatched by a whitelist-guarded loop (only deployed
+-- reset.internal_* procs may run — see adr-reset-step-registry), each with the uniform
+-- contract (@TargetDb,@RequestId,@MandantKey). Each step appends its own progress to
+-- ops.ResetRequest.StepLog via reset.internal_LogStep (keyed by @RequestId), and the
+-- loop logs a "starting step N" line before each step, so reset.GetResetStatus shows
+-- live progress and a mid-step failure is attributable. A failure marks the request
+-- 'failed', leaves the clone as-is for diagnosis, ensures MULTI_USER, and moves on to
+-- the next request.
 --
 -- NOTE: no explicit user transaction wraps the pipeline — BACKUP/RESTORE cannot run
 -- inside one, and a half-done clone is intentionally kept for diagnosis.
@@ -32,9 +36,10 @@ BEGIN
        AND StartedAt < DATEADD(HOUR, -4, SYSUTCDATETIME());
 
     DECLARE @claimed TABLE (RequestId int, MandantKey sysname, TargetDb sysname);
-    DECLARE @RequestId int, @MandantKey sysname, @TargetDb sysname,
-            @ShopUrl nvarchar(max), @ShopLicense nvarchar(max),
-            @LoginName sysname, @DisplayName nvarchar(255), @err nvarchar(max);
+    DECLARE @RequestId int, @MandantKey sysname, @TargetDb sysname, @err nvarchar(max);
+    -- Step-loop locals (EXT-1). Declared once here — T-SQL variable scope is the whole
+    -- proc, not the block, so they must not be re-declared inside the request loop.
+    DECLARE @stepNo int, @stepProc sysname, @isCritical bit, @stepExec nvarchar(300);
 
     WHILE (1 = 1)
     BEGIN
@@ -60,13 +65,6 @@ BEGIN
         IF @RequestId IS NULL
             BREAK;   -- nothing left to do
 
-        SELECT @ShopUrl     = ShopUrl,
-               @ShopLicense = ShopLicense,
-               @LoginName   = LoginName,
-               @DisplayName = DisplayName
-        FROM ops.Mandant
-        WHERE MandantKey = @MandantKey;
-
         -- Re-validation (defense in depth, D6): never touch prod, honour the registry.
         IF @TargetDb = N'eazybusiness'
            OR @TargetDb NOT LIKE N'eazybusiness[_]%'
@@ -82,15 +80,62 @@ BEGIN
         END
 
         BEGIN TRY
-            EXEC reset.internal_CloneDatabase         @TargetDb = @TargetDb, @RequestId = @RequestId;
-            EXEC reset.internal_PostRestoreSecurity   @TargetDb = @TargetDb, @RequestId = @RequestId;
-            EXEC reset.internal_InvalidateCredentials @TargetDb = @TargetDb, @RequestId = @RequestId,
-                                                      @ShopUrl = @ShopUrl, @ShopLicense = @ShopLicense;
-            EXEC reset.internal_NeutralizeWorker      @TargetDb = @TargetDb, @RequestId = @RequestId;
-            EXEC reset.internal_AnonymizeCustomerData @TargetDb = @TargetDb, @RequestId = @RequestId;
-            EXEC reset.internal_GrantAccess           @TargetDb = @TargetDb, @RequestId = @RequestId, @LoginName = @LoginName;
-            EXEC reset.internal_RegisterMandant       @TargetDb = @TargetDb, @RequestId = @RequestId, @DisplayName = @DisplayName;
-            EXEC reset.internal_ApplyJtlRoles         @TargetDb = @TargetDb, @RequestId = @RequestId;
+            -- Data-driven pipeline (EXT-1): the ordered, enabled steps live in
+            -- ops.ResetStep, not in a hard-coded EXEC list. Adding a preparation step is
+            -- "deploy a new reset.internal_* proc + INSERT one row" — this orchestrator is
+            -- not edited. Each step gets the uniform contract (@TargetDb,@RequestId,
+            -- @MandantKey) and reads any further inputs from ops.Mandant itself (EXT-2).
+            SET @stepNo = 0;
+            DECLARE stepcur CURSOR LOCAL FAST_FORWARD FOR
+                SELECT ProcName, IsCritical
+                FROM ops.ResetStep
+                WHERE IsEnabled = 1
+                ORDER BY StepOrder;
+            OPEN stepcur;
+            FETCH NEXT FROM stepcur INTO @stepProc, @isCritical;
+            WHILE @@FETCH_STATUS = 0
+            BEGIN
+                SET @stepNo += 1;
+
+                -- WHITELIST (D6 narrowing, see adr-reset-step-registry): the step SET is
+                -- data, but the EXECUTABLE set stays exactly the reset.internal_* procs the
+                -- versioned chain deployed. A ProcName that is not a deployed reset.internal_
+                -- proc breaks the run rather than executing anything; the name only ever
+                -- reaches EXEC via QUOTENAME, so table data can neither inject nor run
+                -- arbitrary code.
+                IF NOT EXISTS (SELECT 1 FROM sys.procedures p
+                               WHERE p.schema_id = SCHEMA_ID(N'reset')
+                                 AND p.name = @stepProc
+                                 AND p.name LIKE N'internal[_]%')
+                BEGIN
+                    CLOSE stepcur; DEALLOCATE stepcur;
+                    THROW 51005, 'ops.ResetStep references an unknown reset.internal_ procedure.', 1;
+                END
+
+                -- OPS-3: log BEFORE running, so a mid-step failure is attributable — the
+                -- last "starting step" line then has no matching success line from the step.
+                EXEC reset.internal_LogStep @RequestId,
+                     N'starting step ' + CAST(@stepNo AS nvarchar(10)) + N': ' + @stepProc;
+
+                SET @stepExec = N'reset.' + QUOTENAME(@stepProc);
+                BEGIN TRY
+                    EXEC @stepExec @TargetDb = @TargetDb, @RequestId = @RequestId, @MandantKey = @MandantKey;
+                END TRY
+                BEGIN CATCH
+                    -- Critical step (default): abort the pipeline → outer CATCH quarantines
+                    -- the clone as 'failed'. Non-critical step: log a WARN and carry on.
+                    IF @isCritical = 1
+                    BEGIN
+                        CLOSE stepcur; DEALLOCATE stepcur;
+                        THROW;
+                    END
+                    EXEC reset.internal_LogStep @RequestId,
+                         N'WARN ' + @stepProc + N': ' + ERROR_MESSAGE();
+                END CATCH
+
+                FETCH NEXT FROM stepcur INTO @stepProc, @isCritical;
+            END
+            CLOSE stepcur; DEALLOCATE stepcur;
 
             UPDATE ops.ResetRequest
                SET Status = N'succeeded', FinishedAt = SYSUTCDATETIME(), ModifiedAt = SYSUTCDATETIME()

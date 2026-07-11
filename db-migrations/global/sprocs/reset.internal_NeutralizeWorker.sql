@@ -11,8 +11,9 @@
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 CREATE OR ALTER PROCEDURE reset.internal_NeutralizeWorker
-    @TargetDb  sysname,
-    @RequestId int
+    @TargetDb   sysname,
+    @RequestId  int,
+    @MandantKey sysname   -- uniform step contract (EXT-2); not used by this step
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -42,10 +43,7 @@ BEGIN
     ';
     EXEC @exec @batch;
 
-    UPDATE ops.ResetRequest
-       SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
-                   + N' worker: pf_user locked, queues emptied (Worker.tTarget untouched)' + NCHAR(10),
-           ModifiedAt = SYSUTCDATETIME()
-     WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId,
+         N'worker: pf_user locked, queues emptied (Worker.tTarget untouched)';
 END
 GO

@@ -273,3 +273,64 @@ Run the lint locally before every commit:
 ```powershell
 pwsh db-migrations/tests/lint-migrations.ps1
 ```
+
+---
+
+## 9. Adding a reset step (Ebene B pipeline)
+
+The test-mandant reset pipeline is **data-driven** (`adr-reset-step-registry.md`): the ordered
+steps are rows in `ops.ResetStep`, and `reset.ProcessNextResetRequest` dispatches them in a
+whitelist-guarded loop. Adding a preparation step therefore does **not** edit the orchestrator.
+
+1. **Write the step proc** `db-migrations/global/sprocs/reset.internal_<Name>.sql`. It **must**
+   have the uniform contract — the loop calls every step exactly this way:
+
+   ```sql
+   CREATE OR ALTER PROCEDURE reset.internal_<Name>
+       @TargetDb   sysname,
+       @RequestId  int,
+       @MandantKey sysname
+   AS
+   BEGIN
+       SET NOCOUNT ON;
+
+       -- Guard: never touch prod. Keep a distinct THROW code (51xxx) per step so the
+       -- number identifies the refusing step in an error (kept inline on purpose).
+       IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
+           THROW 510xx, 'internal_<Name> refused: target is not a test-mandant clone.', 1;
+
+       -- Read any further inputs from ops.Mandant yourself (do NOT expect the
+       -- orchestrator to route them):
+       --   DECLARE @Foo ... ; SELECT @Foo = Foo FROM ops.Mandant WHERE MandantKey = @MandantKey;
+
+       -- ... the work, inside the target DB via QUOTENAME(@TargetDb).sys.sp_executesql ...
+
+       -- Append progress through the shared helper (owns the StepLog format):
+       EXEC reset.internal_LogStep @RequestId, N'<name>: <what happened>';
+   END
+   GO
+   ```
+
+   - The message passed to `internal_LogStep` carries **no** leading space and **no** trailing
+     newline (the helper adds both).
+   - Data values go through `sp_executesql` parameters; object/DB names through `QUOTENAME`
+     (rule (g)). Never concatenate user data into an `EXEC` string.
+
+2. **Register it** in `ops.ResetStep` by extending the seed `MERGE` in
+   `db-migrations/global/up/0021_reset_step_registry.sql` — but as a **new** `up/NNNN_…` script
+   (0021 is applied and immutable; see §2 CAUTION). Give it a `StepOrder` that places it in the
+   pipeline, set `IsCritical = 0` only if a failure should warn-and-continue rather than abort.
+
+3. **Extend the structure test** `db-migrations/tests/global/validate_structure.sql`: add
+   `reset.internal_<Name>` to the required-objects list.
+
+That is the whole change — the orchestrator, the signing chain, and the grants are untouched.
+The loop **whitelists** `ProcName` against the deployed `reset.internal_*` procs before running
+it, so a row must name a proc that the chain actually deployed (the executable set stays
+versioned; only order/enablement is data — the D6 narrowing in the ADR).
+
+> [!NOTE]
+> **Role membership is deliberately NOT data (EXT-4).** The JTL_Reader/JTL_Writer member list in
+> `reset.internal_ApplyJtlRoles` stays a code SSoT mirroring `Berechtigungen/JTL-Rollen.sql`
+> (the prod source of truth). Do not move it into a runtime table — that would split the SSoT.
+> Change both mirrors and redeploy. Rationale: `adr-reset-step-registry.md` §Alternatives.

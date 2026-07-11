@@ -4,30 +4,34 @@
 -- shows up in the JTL login and every user has a company: upserts dbo.tMandant
 -- (keyed by cDB) across all mandant DBs, and seeds dbo.tBenutzerFirma for the new
 -- kMandant from the reference mandant. SourceDb + ReferenceMandant come from
--- ops.Config; the display name is passed as a parameter (never concatenated); DB
+-- ops.Config; the display name is read from ops.Mandant by @MandantKey (uniform step
+-- contract, EXT-2) and passed as an sp_executesql parameter (never concatenated); DB
 -- names go through QUOTENAME only.
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see Projekte/Testsystem/register-mandant.sql
 CREATE OR ALTER PROCEDURE reset.internal_RegisterMandant
-    @TargetDb    sysname,
-    @RequestId   int,
-    @DisplayName nvarchar(255)
+    @TargetDb   sysname,
+    @RequestId  int,
+    @MandantKey sysname
 AS
 BEGIN
     SET NOCOUNT ON;
 
     IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
         THROW 51070, 'internal_RegisterMandant refused: target is not a test-mandant clone.', 1;
+
+    -- Each step reads its own inputs from ops.Mandant (EXT-2).
+    DECLARE @DisplayName nvarchar(255);
+    SELECT @DisplayName = DisplayName FROM ops.Mandant WHERE MandantKey = @MandantKey;
     IF NULLIF(LTRIM(RTRIM(@DisplayName)), N'') IS NULL
         THROW 51071, 'internal_RegisterMandant: DisplayName is empty.', 1;
 
     DECLARE @SourceDb sysname, @refMandant int, @sql nvarchar(max), @k int;
-    -- Per-DB warnings for best-effort updates of the *other* mandant DBs.
-    -- Failures against @TargetDb itself THROW instead — registering the clone
-    -- is this step's core purpose, silently skipping it would mark the reset
-    -- as succeeded while the mandant is invisible in the JTL login.
-    DECLARE @warnings nvarchar(max) = N'';
+    -- Best-effort updates of the *other* mandant DBs log a per-DB WARN line and carry on;
+    -- a failure against @TargetDb itself THROWs instead — registering the clone is this
+    -- step's core purpose, silently skipping it would mark the reset succeeded while the
+    -- mandant is invisible in the JTL login.
 
     SELECT @SourceDb   = ConfigValue FROM ops.Config WHERE ConfigKey = N'SourceDb';
     SELECT @refMandant = TRY_CONVERT(int, ConfigValue) FROM ops.Config WHERE ConfigKey = N'ReferenceMandant';
@@ -74,8 +78,8 @@ BEGIN
                 CLOSE dbcur; DEALLOCATE dbcur;
                 THROW;
             END
-            SET @warnings = @warnings + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
-                          + N' register: WARN ' + @db + N': ' + ERROR_MESSAGE() + NCHAR(10);
+            EXEC reset.internal_LogStep @RequestId,
+                 N'register: WARN ' + @db + N': ' + ERROR_MESSAGE();
         END CATCH
         FETCH NEXT FROM dbcur INTO @db;
     END
@@ -112,18 +116,15 @@ BEGIN
                     CLOSE seedcur; DEALLOCATE seedcur;
                     THROW;
                 END
-                SET @warnings = @warnings + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
-                              + N' register: WARN ' + @sdb + N': ' + ERROR_MESSAGE() + NCHAR(10);
+                EXEC reset.internal_LogStep @RequestId,
+                     N'register: WARN ' + @sdb + N': ' + ERROR_MESSAGE();
             END CATCH
             FETCH NEXT FROM seedcur INTO @sdb;
         END
         CLOSE seedcur; DEALLOCATE seedcur;
     END
 
-    UPDATE ops.ResetRequest
-       SET StepLog = ISNULL(StepLog, N'') + @warnings + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
-                   + N' register: kMandant=' + CAST(@k AS nvarchar(10)) + N' (' + @DisplayName + N')' + NCHAR(10),
-           ModifiedAt = SYSUTCDATETIME()
-     WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId,
+         N'register: kMandant=' + CAST(@k AS nvarchar(10)) + N' (' + @DisplayName + N')';
 END
 GO

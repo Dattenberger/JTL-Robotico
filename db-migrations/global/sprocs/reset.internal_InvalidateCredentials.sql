@@ -2,8 +2,9 @@
 --
 -- Ported from Projekte/Testsystem/invalidate-credentials-for-testing.sql (state
 -- e6d7b2b). Clears secrets and repoints the JS-Shop to the developer's staging shop.
--- ShopUrl / ShopLicense come from ops.Mandant (passed as sp_executesql PARAMETERS —
--- never concatenated into SQL, D6) instead of SQLCMD $(...) variables.
+-- ShopUrl / ShopLicense are read from ops.Mandant by @MandantKey (uniform step
+-- contract, EXT-2) and passed on as sp_executesql PARAMETERS — never concatenated into
+-- SQL, D6 — instead of the source's SQLCMD $(...) variables.
 --
 -- Deviations from the source (documented, D4):
 --   * The banking-anonymization blocks (tkontodaten / tinetzahlungsinfo) are NOT
@@ -16,16 +17,21 @@
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 CREATE OR ALTER PROCEDURE reset.internal_InvalidateCredentials
-    @TargetDb    sysname,
-    @RequestId   int,
-    @ShopUrl     nvarchar(max),
-    @ShopLicense nvarchar(max)
+    @TargetDb   sysname,
+    @RequestId  int,
+    @MandantKey sysname
 AS
 BEGIN
     SET NOCOUNT ON;
 
     IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
         THROW 51030, 'internal_InvalidateCredentials refused: target is not a test-mandant clone.', 1;
+
+    -- Each step reads its own inputs from ops.Mandant (EXT-2) — the orchestrator no
+    -- longer routes per-step parameters.
+    DECLARE @ShopUrl nvarchar(max), @ShopLicense nvarchar(max);
+    SELECT @ShopUrl = ShopUrl, @ShopLicense = ShopLicense
+    FROM ops.Mandant WHERE MandantKey = @MandantKey;
 
     DECLARE @exec nvarchar(300) = QUOTENAME(@TargetDb) + N'.sys.sp_executesql';
     DECLARE @batch nvarchar(max) = N'
@@ -145,10 +151,7 @@ BEGIN
          N'@ShopUrl nvarchar(max), @ShopLicense nvarchar(max)',
          @ShopUrl = @ShopUrl, @ShopLicense = @ShopLicense;
 
-    UPDATE ops.ResetRequest
-       SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
-                   + N' credentials: cleared + JS-Shop repointed to staging' + NCHAR(10),
-           ModifiedAt = SYSUTCDATETIME()
-     WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId,
+         N'credentials: cleared + JS-Shop repointed to staging';
 END
 GO

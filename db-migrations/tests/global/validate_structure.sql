@@ -23,9 +23,11 @@ DECLARE @problems TABLE (Check_ nvarchar(200));
         (N'ops.Mandant',        N'U'),
         (N'ops.Config',         N'U'),
         (N'ops.ResetRequest',   N'U'),
+        (N'ops.ResetStep',      N'U'),
         (N'reset.StartTestmandantReset',      N'P'),
         (N'reset.GetResetStatus',             N'P'),
         (N'reset.ProcessNextResetRequest',    N'P'),
+        (N'reset.internal_LogStep',           N'P'),
         (N'reset.internal_CloneDatabase',     N'P'),
         (N'reset.internal_PostRestoreSecurity', N'P'),
         (N'reset.internal_InvalidateCredentials', N'P'),
@@ -53,7 +55,9 @@ WHERE OBJECT_ID(r.name, r.type) IS NULL;
         (N'ops.ResetRequest', N'TargetDb'), (N'ops.ResetRequest', N'Status'),
         (N'ops.ResetRequest', N'RequestedBy'), (N'ops.ResetRequest', N'StepLog'),
         (N'ops.ResetRequest', N'ErrorText'), (N'ops.ResetRequest', N'StartedAt'),
-        (N'ops.ResetRequest', N'FinishedAt')
+        (N'ops.ResetRequest', N'FinishedAt'),
+        (N'ops.ResetStep', N'StepOrder'), (N'ops.ResetStep', N'ProcName'),
+        (N'ops.ResetStep', N'IsEnabled'), (N'ops.ResetStep', N'IsCritical')
     ) v(tbl, col)
 )
 INSERT INTO @problems (Check_)

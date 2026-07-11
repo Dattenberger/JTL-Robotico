@@ -4,7 +4,7 @@ author: Lukas + Claude Code
 status: Accepted
 context: How the MSSQL ops infrastructure fits together — the two migration chains, the RoboticoOps admin DB, the server-side test-mandant reset, the excel_ekl boundary, and the standing operating rules.
 related-plan: ../plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md
-related-adrs: adr-grate-migration-runner, adr-two-chain-migration-paths, adr-module-signing-reset (plan-scoped — pending promotion)
+related-adrs: adr-grate-migration-runner, adr-two-chain-migration-paths, adr-module-signing-reset, adr-reset-step-registry (plan-scoped — pending promotion)
 ---
 
 # MSSQL Ops Architecture
@@ -101,8 +101,10 @@ synchronous reset / Service Broker / pure-certificate signing / least-privilege 
   two schemas:
   - `ops` — registry & state: `ops.Mandant` (config incl. column-protected `ShopLicense`),
     `ops.Config` (paths, source DB, reference mandant), `ops.ResetRequest` (the queue /
-    audit log), and the grate journal.
-  - `reset` — the reset SPs (entry, status, orchestrator, eight `internal_*` steps).
+    audit log), `ops.ResetStep` (the ordered pipeline definition — see §1a.3), and the
+    grate journal.
+  - `reset` — the reset SPs (entry, status, orchestrator, the `internal_*` steps, and the
+    `internal_LogStep` StepLog helper).
 
 ### 1a.3 The reset control path
 
@@ -124,13 +126,15 @@ Colleague (EXECUTE only)                     RoboticoOps (Ebene B)
                                                              ▼
                               reset.ProcessNextResetRequest  [no in-job signing]
                                 1. claim oldest queued → running  (RE-VALIDATE the row)
-                                2. internal_CloneDatabase        (COPY_ONLY backup → restore)
-                                3. internal_PostRestoreSecurity  (owner→sa, orphans, TRUSTWORTHY)
-                                4. internal_InvalidateCredentials
-                                5. internal_NeutralizeWorker     (eBay+Amazon lock, drain queues)
-                                6. internal_AnonymizeCustomerData (11 priority blocks)
-                                7. internal_GrantAccess
-                                8. internal_RegisterMandant  →  internal_ApplyJtlRoles
+                                2. FOR EACH enabled ops.ResetStep row, ORDER BY StepOrder:
+                                     whitelist ProcName (deployed reset.internal_* only)
+                                     → EXEC reset.[<ProcName>] @TargetDb,@RequestId,@MandantKey
+                                     (each step reads its own inputs from ops.Mandant)
+                                   default seeded order (up/0021):
+                                     CloneDatabase → PostRestoreSecurity →
+                                     InvalidateCredentials → NeutralizeWorker →
+                                     AnonymizeCustomerData → GrantAccess →
+                                     RegisterMandant → ApplyJtlRoles
                                 → succeeded / failed + ErrorText + StepLog
 ```
 
@@ -139,6 +143,16 @@ parameter-passing **and** audit mechanism; async avoids the client timeout of a
 minutes-long restore; the signed entry SP lets a non-privileged colleague start a
 sysadmin-context job without holding any server rights. Full rationale:
 `adr-module-signing-reset.md` (plan D5–D8).
+
+The pipeline itself is **data-driven** (`adr-reset-step-registry.md`): the ordered,
+enabled steps are rows in `ops.ResetStep`, not a hard-coded `EXEC` list, so a new
+preparation step is "deploy a `reset.internal_*` proc + `INSERT` one row" without editing
+the orchestrator. The orchestrator whitelists each `ProcName` against the deployed catalog
+before running it (only `reset.internal_*` procs may run, name via `QUOTENAME`), so the
+executable set stays exactly what the versioned chain deployed — only step order/enablement
+is admin-only data. Every step takes the uniform `(@TargetDb,@RequestId,@MandantKey)`
+contract and logs through `reset.internal_LogStep`; the loop writes a "starting step N"
+line before each step so a mid-step failure is attributable in `StepLog`.
 
 ## 2. Properties this architecture guarantees
 
@@ -166,10 +180,11 @@ sysadmin-context job without holding any server rights. Full rationale:
 | Deploy wrapper | `db-migrations/deploy.ps1` | `-Scope`, `-Environment`, `-Target`, `-Baseline`, `-DryRun` |
 | Target catalogue | `db-migrations/targets.config.json` | servers + DB lists; Windows auth, no secrets |
 | Registry & queue | `db-migrations/global/up/0002_ops_schema_tables.sql` | `ops.Mandant` / `ops.Config` / `ops.ResetRequest` |
+| Pipeline registry | `db-migrations/global/up/0021_reset_step_registry.sql` | `ops.ResetStep` — ordered `reset.internal_*` steps + seed (data-driven pipeline, EXT-1) |
 | Signing cert | `db-migrations/global/up/0011_signing_certificate.sql` | private key in RoboticoOps, public in master |
 | Proxy login | `db-migrations/global/up/0010_jobstartuser_login.sql` | DISABLEd, `DENY CONNECT SQL`, msdb SQLAgentOperatorRole |
 | Reset entry / status | `db-migrations/global/sprocs/reset.{StartTestmandantReset,GetResetStatus}.sql` | signed / grant-only |
-| Reset pipeline | `db-migrations/global/sprocs/reset.{ProcessNextResetRequest,internal_*}.sql` | 8 internal steps |
+| Reset pipeline | `db-migrations/global/sprocs/reset.{ProcessNextResetRequest,internal_*}.sql` | whitelist-guarded loop over `ops.ResetStep`; uniform-contract steps; `internal_LogStep` StepLog helper |
 | Agent-job wrapper | `db-migrations/global/runAfterOtherAnyTimeScripts/reset.EnsureAgentJob.sql` | idempotent job (re)install, owner `sa` |
 | Re-signing | `db-migrations/global/permissions/900_resign_procedures.sql` | everytime; heals dropped signatures |
 | Lint | `db-migrations/tests/lint-migrations.ps1` | rules (a)–(g), the executable contract |
@@ -284,7 +299,8 @@ interactive Y/N confirmation and lists the exact target DBs first.
 - **ADRs (plan-scoped — pending promotion):**
   [`adr-grate-migration-runner`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-grate-migration-runner.md),
   [`adr-two-chain-migration-paths`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-two-chain-migration-paths.md),
-  [`adr-module-signing-reset`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md)
+  [`adr-module-signing-reset`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md),
+  [`adr-reset-step-registry`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md)
 - **Migration contract:** [`db-migrations/README.md`](../../db-migrations/README.md)
 - **Naming / ownership:** [`NAMING-CONVENTIONS.md`](NAMING-CONVENTIONS.md)
 - **Custom-action prerequisite:** [`JTL-CUSTOM-WORKFLOWS.md`](JTL-CUSTOM-WORKFLOWS.md)

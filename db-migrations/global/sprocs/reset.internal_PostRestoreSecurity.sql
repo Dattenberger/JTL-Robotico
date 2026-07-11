@@ -11,8 +11,9 @@
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/3-module-signing-agent-job
 CREATE OR ALTER PROCEDURE reset.internal_PostRestoreSecurity
-    @TargetDb  sysname,
-    @RequestId int
+    @TargetDb   sysname,
+    @RequestId  int,
+    @MandantKey sysname   -- uniform step contract (EXT-2); not used by this step
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -82,10 +83,7 @@ BEGIN
     IF (SELECT is_trustworthy_on FROM sys.databases WHERE name = @TargetDb) = 1
         THROW 51021, 'internal_PostRestoreSecurity: TRUSTWORTHY is still ON after ALTER.', 1;
 
-    UPDATE ops.ResetRequest
-       SET StepLog = ISNULL(StepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
-                   + N' security: owner=sa, orphans remapped/cleaned, TRUSTWORTHY OFF' + NCHAR(10),
-           ModifiedAt = SYSUTCDATETIME()
-     WHERE RequestId = @RequestId;
+    EXEC reset.internal_LogStep @RequestId,
+         N'security: owner=sa, orphans remapped/cleaned, TRUSTWORTHY OFF';
 END
 GO
