@@ -211,3 +211,29 @@ notable: ARCH-1 RegisterMandant no longer swallows errors (WARN accumulation + h
      — deliberately NOT run (needs user acceptance; also budget-conscious after spend-limit hit).
   5. Missing inline-anchor coverage (tests harness / hygiene-legacy remainder) can be finished
      by re-running the finalize docs stage after the spend limit is raised.
+
+## QG2 round — implemented-code quality gate + Docker E2E (2026-07-11)
+
+```yaml
+finder_round: 5 agents (Opus: code-global, code-eazy · Fable: parity, extensibility, consumer-ops)
+consolidator: Opus — 39 accepted, 1 merged (CQG-6->EXT-3), 0 rejected (reports/qg2/consolidated-findings.md)
+fix_round: sequential resumes of the originating agents (NO main-loop self-implementation)
+  slot1_extensibility: 5f5447a   # ops.ResetStep registry, uniform step contract, internal_LogStep, ADR adr-reset-step-registry
+  slot2_global:        565098f   # CQG robustness fixes, ops.Config knobs (StaleRunningHours, AgentJobName)
+  slot3_consumer_ops:  d9e83fa   # ListMandants, CancelResetRequest (2nd signed proc), PurgeOldRequests, OPS-6 dedup
+  slot4_parity:        0009268   # real shared dev login seed (TODO verify on VM-SQL2), CONTEXT_INFO reset, repoint rowcount
+  slot5_eazy:          707b1e0   # CQE-1..13 + deploy.ps1 password hardening
+docker_phase:
+  harness:             2b4c5d5   # db-migrations/tests/docker/ (SQL 2022, Agent on, port 14330, gitignored .env.local)
+  deploy_fixes:        ece0eed   # EXEC()+QUOTENAME class, DENY via master, 900 sys.sql_modules, --transaction scope, exit-code bug
+  e2e_result:          dd3632a   # 47 PASS / 0 FAIL / 1 SKIP — reports/qg2/e2e-docker-report.md
+  runbook_note:        (this commit)  # --baseline masks anytime drift
+e2e_highlights: baseline adoption on real prod-schema DB; one-time-vs-anytime + hash-redeploy via
+  committed fixtures; full reset as rights-less consumer via signed SP -> agent job -> registry
+  pipeline, 3x succeeded, 25/25 parity assertions vs legacy scripts, source DB untouched,
+  signature survival after re-deploy.
+container: robotico-e2e-mssql left RUNNING (localhost,14330) for inspection —
+  teardown: pwsh db-migrations/tests/docker/teardown.ps1 (add -PurgeSecrets to drop .env.local)
+open_for_user: PAR-1 login name verify on VM-SQL2 (TODO in up/0020); TC-M1..M5 on vm-sql-test1
+  remain the staging rehearsal before prod rollout (runbooks updated); plan acceptance -> Phase 5 closure.
+```
