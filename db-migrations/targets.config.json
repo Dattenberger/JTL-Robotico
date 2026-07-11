@@ -1,5 +1,5 @@
 {
-  "$comment": "Target catalog for deploy.ps1. Windows-authentication only — NO secrets in this file. 'eazybusiness' lists the Ebene-A target DBs per environment (mandant clones are regular Ebene-A targets, D11). 'global' is the single Ebene-B DB (RoboticoOps).",
+  "$comment": "Target catalog for deploy.ps1. NO secrets in this file. Real environments (TEST/PROD) use Windows authentication (auth omitted = integrated). The E2E environment targets the disposable Docker container (db-migrations/tests/docker) with SQL auth; the password is NOT here — it is read at deploy time from the env var named by 'sqlPasswordEnv'. 'eazybusiness' lists the Ebene-A target DBs per environment (mandant clones are regular Ebene-A targets, D11). 'global' is the single Ebene-B DB (RoboticoOps).",
   "environments": {
     "TEST": {
       "server": "vm-sql-test1.zdbikes.local",
@@ -9,6 +9,15 @@
     "PROD": {
       "server": "vm-sql2.zdbikes.local",
       "eazybusiness": ["eazybusiness", "eazybusiness_tm2", "eazybusiness_tm3", "eazybusiness_tm4"],
+      "global": "RoboticoOps"
+    },
+    "E2E": {
+      "$comment": "Ephemeral local Docker container (SQL Server 2022). auth=sql: sa + password from env var MSSQL_SA_PASSWORD (generated into tests/docker/.env.local). Never a real server.",
+      "server": "localhost,14330",
+      "auth": "sql",
+      "sqlUser": "sa",
+      "sqlPasswordEnv": "MSSQL_SA_PASSWORD",
+      "eazybusiness": ["eazybusiness"],
       "global": "RoboticoOps"
     }
   }

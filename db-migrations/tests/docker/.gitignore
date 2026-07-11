@@ -1,0 +1,3 @@
+# Generated secrets for the ephemeral E2E container — NEVER commit real passwords.
+# setup.ps1 writes this from .env.example on first run.
+.env.local

@@ -16,7 +16,9 @@
     eazybusiness (Ebene A) | global (Ebene B).
 
 .PARAMETER Environment
-    TEST | PROD. Selects the server + DB list from targets.config.json.
+    TEST | PROD | E2E. Selects the server + DB list from targets.config.json.
+    E2E targets the disposable local Docker container (db-migrations/tests/docker)
+    with SQL authentication — never a real server. See that folder's README.
 
 .PARAMETER Target
     Optional single target database (must be one of the environment's eazybusiness list).
@@ -43,7 +45,7 @@ param(
     [string] $Scope,
 
     [Parameter(Mandatory = $true)]
-    [ValidateSet('TEST', 'PROD')]
+    [ValidateSet('TEST', 'PROD', 'E2E')]
     [string] $Environment,
 
     [Parameter(Mandatory = $false)]
@@ -59,8 +61,53 @@ Set-StrictMode -Version Latest
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # --- grate availability -----------------------------------------------------
-if (-not (Get-Command grate -ErrorAction SilentlyContinue)) {
-    throw "grate is not on PATH. Install it with: dotnet tool install --global grate"
+# Two runner shapes, auto-detected (see tests/docker/README §grate path):
+#   native  — a `grate` binary on PATH (dotnet global tool). The normal path on
+#             an operator workstation for TEST/PROD deploys.
+#   docker  — no grate/dotnet available: run grate from its official image
+#             (erikbra/grate) via `docker run`. Used for the E2E container path
+#             on machines without the .NET SDK. Set GRATE_DOCKER_IMAGE to pin a
+#             different tag (default below).
+$grateRunner = $null
+$nativeGrate = Get-Command grate -ErrorAction SilentlyContinue
+if ($nativeGrate) {
+    $grateRunner = @{ Mode = 'native'; Path = $nativeGrate.Source }
+}
+elseif (Get-Command docker -ErrorAction SilentlyContinue) {
+    $grateImage = if ($env:GRATE_DOCKER_IMAGE) { $env:GRATE_DOCKER_IMAGE } else { 'erikbra/grate:1.6.0' }
+    $grateRunner = @{ Mode = 'docker'; Image = $grateImage }
+    Write-Host "grate not on PATH — using Docker image '$grateImage'." -ForegroundColor DarkGray
+}
+else {
+    throw "No grate available: neither a 'grate' binary on PATH (dotnet tool install --global grate) nor docker to run erikbra/grate."
+}
+
+# Runs grate with a fixed argument list. The docker runner overrides the image's
+# baked env-var entrypoint with the grate binary directly (so --schema /
+# --usertokens etc. are honoured), mounts the SQL folder read-only at /db, and
+# uses the host network so a 'localhost,PORT' connection string reaches the
+# published container port exactly as the host sqlcmd does.
+function Invoke-Grate {
+    param(
+        [Parameter(Mandatory)] [string]   $SqlDir,
+        [Parameter(Mandatory)] [string[]] $CommonArgs   # everything except --sqlfilesdirectory
+    )
+    switch ($grateRunner.Mode) {
+        'native' {
+            & $grateRunner.Path @CommonArgs "--sqlfilesdirectory=$SqlDir"
+            return $LASTEXITCODE
+        }
+        'docker' {
+            $dockerArgs = @(
+                'run', '--rm', '--network', 'host',
+                '--entrypoint', '/app/grate',
+                '-v', "${SqlDir}:/db:ro",
+                $grateRunner.Image
+            ) + $CommonArgs + '--sqlfilesdirectory=/db'
+            & docker @dockerArgs
+            return $LASTEXITCODE
+        }
+    }
 }
 
 # --- config resolution ------------------------------------------------------
@@ -76,6 +123,30 @@ if (-not $config.environments.PSObject.Properties.Name.Contains($Environment)) {
 # Named $envConfig (not $env) to avoid visual collision with PowerShell's $env: drive.
 $envConfig = $config.environments.$Environment
 $server = $envConfig.server
+
+# --- authentication ---------------------------------------------------------
+# Default = integrated (Windows auth) for real environments; NO secrets in the
+# config. auth='sql' (E2E container only) reads the password at deploy time from
+# the env var named by sqlPasswordEnv — the password never lives in the config.
+$authMode = if ($envConfig.PSObject.Properties.Name -contains 'auth') { $envConfig.auth } else { 'integrated' }
+$authFragment = 'Trusted_Connection=True'
+if ($authMode -eq 'sql') {
+    $sqlUser = $envConfig.sqlUser
+    $passwordEnvName = $envConfig.sqlPasswordEnv
+    $sqlPassword = [Environment]::GetEnvironmentVariable($passwordEnvName)
+    if ([string]::IsNullOrEmpty($sqlPassword)) {
+        throw "Environment '$Environment' uses SQL auth but env var '$passwordEnvName' is empty. For the E2E container, run tests/docker/setup.ps1 and load .env.local (e.g. export MSSQL_SA_PASSWORD=... from that file)."
+    }
+    # Connection-string values are semicolon-delimited; a stray ';' in the
+    # password would corrupt the string. Reject it with a clear message.
+    if ($sqlPassword.Contains(';')) {
+        throw "The '$passwordEnvName' password must not contain a semicolon (';') — it would break the connection string."
+    }
+    $authFragment = "User ID=$sqlUser;Password=$sqlPassword"
+}
+elseif ($authMode -ne 'integrated') {
+    throw "Unknown auth mode '$authMode' for environment '$Environment' (expected 'integrated' or 'sql')."
+}
 
 # --- scope -> grate parameters ---------------------------------------------
 switch ($Scope) {
@@ -158,11 +229,12 @@ if ([string]::IsNullOrEmpty($version)) { $version = 'unknown' }
 
 # --- deploy loop ------------------------------------------------------------
 foreach ($db in $databases) {
-    $connectionString = "Server=$server;Database=$db;Trusted_Connection=True;TrustServerCertificate=True"
+    $connectionString = "Server=$server;Database=$db;$authFragment;TrustServerCertificate=True"
 
+    # --sqlfilesdirectory is supplied by Invoke-Grate (the docker runner maps it
+    # to the in-container mount point), so it is NOT part of the common args.
     $grateArgs = @(
         "--connectionstring=$connectionString"
-        "--sqlfilesdirectory=$sqlFilesDirectory"
         "--schema=$schema"
         "--environment=$Environment"
         "--version=$version"
@@ -174,10 +246,10 @@ foreach ($db in $databases) {
     foreach ($t in $userTokens) { $grateArgs += "--usertokens=$t" }
 
     Write-Host ''
-    Write-Host "==> grate: scope=$Scope db=$db schema=$schema env=$Environment" -ForegroundColor Cyan
-    & grate @grateArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "grate failed for database '$db' (exit $LASTEXITCODE). Stopping — no further targets deployed."
+    Write-Host "==> grate: scope=$Scope db=$db schema=$schema env=$Environment runner=$($grateRunner.Mode)" -ForegroundColor Cyan
+    $exit = Invoke-Grate -SqlDir $sqlFilesDirectory -CommonArgs $grateArgs
+    if ($exit -ne 0) {
+        throw "grate failed for database '$db' (exit $exit). Stopping — no further targets deployed."
     }
 }
 
