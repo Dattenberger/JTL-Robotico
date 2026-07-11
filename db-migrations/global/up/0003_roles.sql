@@ -25,7 +25,12 @@ IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'ops_admin' A
 -- ops_admin maintains the registry tables.
 GRANT SELECT, INSERT, UPDATE, DELETE ON ops.Mandant TO ops_admin;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ops.Config  TO ops_admin;
-GRANT SELECT ON ops.ResetRequest TO ops_admin;
+-- ResetRequest is written by the reset pipeline, not hand-maintained, so ops_admin gets
+-- SELECT + UPDATE (not INSERT/DELETE): UPDATE lets an admin hand-fix a stuck row (the
+-- recovery path the runbook documents — OPS-2) without raw sysadmin. Bulk deletion goes
+-- exclusively through reset.PurgeOldRequests (ownership-chained), so no direct DELETE is
+-- granted — the audit trail cannot be casually erased.
+GRANT SELECT, UPDATE ON ops.ResetRequest TO ops_admin;
 
 -- Reset operators must never see license keys. GetResetStatus already omits the
 -- column; this column-level DENY is defense in depth in case someone grants the

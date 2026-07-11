@@ -277,6 +277,7 @@ changes nothing and therefore skips the confirmation).
 > | `ReferenceMandant` | `1` | kMandant used as the `tBenutzerFirma` seed template |
 > | `StaleRunningHours` | `4` | Age after which `ProcessNextResetRequest` reclaims a still-`running` request as `failed` |
 > | `AgentJobName` | `RoboticoOps - Testmandant Reset` | SQL Agent job name; single-sourced for `StartTestmandantReset` / `EnsureAgentJob` / `200_ensure_agent_job` |
+> | `NotifyOperator` | *(empty)* | Optional SQL-Agent operator emailed when the reset job **fails** (OPS-4). Empty ⇒ failures are pull-only (poll `GetResetStatus`). Requires Database Mail + an existing operator; wired by `reset.EnsureAgentJob` |
 
 > [!CAUTION]
 > This repository never writes to a SQL Server autonomously. PROD deployment is always a

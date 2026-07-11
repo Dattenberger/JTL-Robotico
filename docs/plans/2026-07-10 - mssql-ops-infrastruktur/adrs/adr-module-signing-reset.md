@@ -221,3 +221,28 @@ parameter-and-audit mechanism for a parameterless agent job. "The SP is the inte
 applied uniformly to both starting and reading, so `RoboticoOps` never becomes a browsable
 surface. Column-DENY is sufficient in an admin-only context and is retrofittable to
 encryption if the threat model changes.
+
+### 2026-07-11 — Second signed entry point: `reset.CancelResetRequest` (QG2 / OPS-2)
+
+**Trigger:** The QG2 consumer/ops review found a stuck-`running` request unrecoverable by
+a colleague: the stale-reclaim only fires on the next job start, and the runbook's manual
+`UPDATE` needed raw sysadmin (`ops_admin` had `SELECT`-only on `ops.ResetRequest`).
+
+**Before:** Exactly one signed SP (`reset.StartTestmandantReset`). Recovery from a dead job
+required either the `StaleRunningHours` wait or a sysadmin hand-edit.
+
+**After:** A **second** signed `EXECUTE AS 'jobstartuser'` entry point,
+`reset.CancelResetRequest`, cancels a `queued` request and force-reclaims a `running` one —
+but only after reading `msdb.dbo.sysjobactivity` to confirm the reset job is **not**
+actually executing, so a live clone is never yanked. That msdb read is the same cross-DB
+boundary D6 already authorises, so the SP reuses the identical recipe. `ops_admin` also
+gains `UPDATE` on `ops.ResetRequest` for a manual hand-fix without sysadmin. So D6's "one
+entry SP" is now **two**; the signed set is no longer hard-coded — `permissions/900` derives
+it from the catalog (every `EXECUTE AS 'jobstartuser'` proc), so this SP is signed
+automatically and `validate_structure.sql` asserts the whole set is signed.
+
+**Reasoning:** Recovery is part of a serviceable self-service reset (the quality bar: a
+non-expert must be able to unblock a mandant at 9am). Reusing the existing signing recipe —
+rather than inventing a new privilege path — keeps the security model single-shaped and the
+D6 defence-in-depth intact (the msdb-activity gate replaces "trust the caller" with "trust
+the engine's job state").

@@ -31,7 +31,8 @@ USING (VALUES
     (N'SourceDb',          N'eazybusiness',                     N'Clone source database'),
     (N'ReferenceMandant',  N'1',                                N'kMandant used as tBenutzerFirma seed template in register-mandant'),
     (N'StaleRunningHours', N'4',                                N'Age (hours) after which reset.ProcessNextResetRequest reclaims a still-running request as failed (CQG-7)'),
-    (N'AgentJobName',      N'RoboticoOps - Testmandant Reset',  N'SQL Agent job name; single-sourced for Start/EnsureAgentJob/200_ensure_agent_job (CQG-8)')
+    (N'AgentJobName',      N'RoboticoOps - Testmandant Reset',  N'SQL Agent job name; single-sourced for Start/EnsureAgentJob/200_ensure_agent_job (CQG-8)'),
+    (N'NotifyOperator',    N'',                                 N'Optional SQL-Agent operator emailed on reset-job failure (OPS-4). Empty = silent/pull-only. Requires Database Mail + an existing operator; wired by reset.EnsureAgentJob.')
 ) AS src (ConfigKey, ConfigValue, Notes)
     ON tgt.ConfigKey = src.ConfigKey
 WHEN NOT MATCHED BY TARGET THEN

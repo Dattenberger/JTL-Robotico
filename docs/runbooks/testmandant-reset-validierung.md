@@ -77,15 +77,25 @@ under the Agent, so start it for the duration of the test:
 -- run against RoboticoOps
 EXEC reset.StartTestmandantReset @MandantKey = N'tm9';
 -- returns: RequestId, Status='queued'
+-- Idempotent (OPS-6): calling it again while tm9 is still queued/running returns the
+-- SAME in-flight RequestId + its Status instead of erroring — safe to re-run.
 ```
 
 Then poll status until it reaches `succeeded` or `failed`:
 
 ```sql
 EXEC reset.GetResetStatus @MandantKey = N'tm9';
--- watch Status + StepLog: clone -> post-restore-security -> invalidate-credentials
---   -> neutralize-worker -> anonymize -> grant-access -> register-mandant -> apply-roles
+-- watch Status + StepLog. Before each step the orchestrator writes a
+-- "starting step N: internal_<Name>" line (OPS-3), so live progress and — on a
+-- failure — the exact step that broke are visible. Default order:
+--   clone -> post-restore-security -> invalidate-credentials -> neutralize-worker
+--   -> anonymize -> grant-access -> register-mandant -> apply-roles
 ```
+
+To discover which mandant keys exist without `ops_admin` rights (e.g. on prod), a
+colleague can run `EXEC reset.ListMandants;` (OPS-1) — it lists `MandantKey`,
+`DisplayName`, `Developer`, `TargetDb`, `IsActive` and the last reset's status, and
+deliberately shows no shop license/URL.
 
 ## Step 4 — Verify the outcome
 
@@ -175,8 +185,11 @@ The validation mandant is throwaway. After the run:
 --   DROP DATABASE [eazybusiness_tm9];
 ```
 
-Optionally clear the `tm9` `ops.ResetRequest` history. Set the `ops.Mandant`
-`tm9` row `IsActive = 0` (or delete it) so it can't be reset again by accident.
+Optionally clear the `tm9` `ops.ResetRequest` history. For routine retention (not this
+throwaway run) an admin can trim the audit log with `EXEC reset.PurgeOldRequests
+@KeepPerMandant = 20;` — it keeps the newest N rows per mandant and never deletes a
+`queued`/`running` row (OPS-5; run with `@WhatIf = 1` first to preview the count). Set the
+`ops.Mandant` `tm9` row `IsActive = 0` (or delete it) so it can't be reset again by accident.
 Stop the SQL-Agent again if test1 should return to its Stopped/Manual baseline.
 
 ---
@@ -185,10 +198,21 @@ Stop the SQL-Agent again if test1 should return to its Stopped/Manual baseline.
 
 > [!WARNING]
 > **Request stuck in `running`.** If the Agent job dies mid-pipeline, the request
-> stays `running` and the Start-SP refuses a new one for `tm9`. The pipeline
-> reclaims `running` rows older than 4h as `failed` on its next start (plan §3
-> edge cases). To retry sooner, confirm the job is not actually running, then
-> mark the row `failed` by hand and re-trigger.
+> stays `running` and the Start-SP returns that in-flight request instead of queuing a
+> new one for `tm9`. The pipeline auto-reclaims `running` rows older than
+> `ops.Config('StaleRunningHours')` (default 4h) as `failed` on its next start. To
+> recover **sooner** without server rights (OPS-2), a colleague runs:
+>
+> ```sql
+> EXEC reset.CancelResetRequest @RequestId = <id>;   -- id from GetResetStatus
+> ```
+>
+> It cancels a `queued` request outright, and force-reclaims a `running` one to
+> `failed` **only** when the reset job is not actually executing (it checks msdb job
+> activity first), so a genuinely-running clone is never yanked. If the job *is* still
+> running it refuses with a clear message. After a successful cancel, re-trigger. An
+> `ops_admin` can alternatively hand-fix the row (it now has `UPDATE` on
+> `ops.ResetRequest`); no raw sysadmin is required.
 
 > [!WARNING]
 > **Clone left behind after a failure.** On CATCH the clone DB is left as-is for

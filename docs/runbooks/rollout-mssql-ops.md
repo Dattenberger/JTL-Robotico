@@ -142,5 +142,8 @@ of this rollout — they are handled separately and manually:
 - **Ebene B on prod (Phase 4):** if the global deploy misbehaves, the objects are
   idempotent and inspectable; a failed reset never touches prod `eazybusiness` (it only
   writes the clone). The old PowerShell reset remains available until Phase 7.
-- **A stuck reset:** a `running` row older than 4h is auto-reclaimed as `failed` on the
-  job's next start; inspect with `GetResetStatus`.
+- **A stuck reset:** a `running` row older than `ops.Config('StaleRunningHours')` (default
+  4h) is auto-reclaimed as `failed` on the job's next start; inspect with `GetResetStatus`.
+  To recover sooner without server rights, a colleague runs
+  `EXEC reset.CancelResetRequest @RequestId = <id>;` — it cancels a `queued` request and
+  force-reclaims a `running` one only when the job is not actually executing (OPS-2).

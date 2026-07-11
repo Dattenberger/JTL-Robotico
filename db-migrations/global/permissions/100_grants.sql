@@ -4,7 +4,10 @@
 -- the JTL Windows AD group. Runs every deploy (permissions are grate's last stage),
 -- after sprocs, so the procedures exist.
 --
---   * EXECUTE on reset.StartTestmandantReset + reset.GetResetStatus -> ops_reset_executor.
+--   * EXECUTE on the four colleague-facing reset SPs (start / status / discover / cancel)
+--     -> ops_reset_executor.
+--   * EXECUTE on reset.PurgeOldRequests (audit retention) -> ops_admin only, so a reset
+--     operator can never erase the audit trail (OPS-5).
 --   * The AD group ZDBIKES\sql-jtl-users becomes a RoboticoOps user (guarded — a
 --     missing login is a PRINT warning, not a failure) and joins ops_reset_executor.
 --
@@ -12,10 +15,19 @@
 
 SET NOCOUNT ON;
 
+-- Colleague self-service surface (trigger / poll / discover / recover) -> ops_reset_executor.
 IF OBJECT_ID(N'reset.StartTestmandantReset') IS NOT NULL
     GRANT EXECUTE ON OBJECT::reset.StartTestmandantReset TO ops_reset_executor;
 IF OBJECT_ID(N'reset.GetResetStatus') IS NOT NULL
     GRANT EXECUTE ON OBJECT::reset.GetResetStatus TO ops_reset_executor;
+IF OBJECT_ID(N'reset.ListMandants') IS NOT NULL
+    GRANT EXECUTE ON OBJECT::reset.ListMandants TO ops_reset_executor;
+IF OBJECT_ID(N'reset.CancelResetRequest') IS NOT NULL
+    GRANT EXECUTE ON OBJECT::reset.CancelResetRequest TO ops_reset_executor;
+
+-- Audit-retention purge is admin-only (never an operator right).
+IF OBJECT_ID(N'reset.PurgeOldRequests') IS NOT NULL
+    GRANT EXECUTE ON OBJECT::reset.PurgeOldRequests TO ops_admin;
 
 DECLARE @adGroup sysname = N'ZDBIKES\sql-jtl-users';
 

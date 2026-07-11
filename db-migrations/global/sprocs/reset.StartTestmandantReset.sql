@@ -26,6 +26,8 @@ BEGIN
     DECLARE @TargetDb sysname,
             @RequestId int,
             @rc int,
+            @existingId int,
+            @existingStatus nvarchar(20),
             @lockRes nvarchar(255) = N'reset:' + @MandantKey,
             @caller sysname = ORIGINAL_LOGIN(),
             -- Job name is a single-sourced ops.Config knob (CQG-8): the same literal is
@@ -54,9 +56,22 @@ BEGIN
         IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
             THROW 51003, 'Refusing: target database is not a test-mandant clone.', 1;
 
-        IF EXISTS (SELECT 1 FROM ops.ResetRequest
-                   WHERE TargetDb = @TargetDb AND Status IN (N'queued', N'running'))
-            THROW 51004, 'A reset for this mandant is already queued or running.', 1;
+        -- OPS-6: a reset already in flight for this mandant is NOT an error. Return the
+        -- existing request (same {RequestId, Status} shape as the success path) so a
+        -- caller who submitted twice transparently keeps polling GetResetStatus for the
+        -- SAME RequestId instead of getting an exception. Release the applock first, since
+        -- this early RETURN bypasses the normal release at the end of the TRY.
+        SELECT TOP (1) @existingId = RequestId, @existingStatus = Status
+        FROM ops.ResetRequest
+        WHERE TargetDb = @TargetDb AND Status IN (N'queued', N'running')
+        ORDER BY RequestId DESC;
+
+        IF @existingId IS NOT NULL
+        BEGIN
+            EXEC sp_releaseapplock @Resource = @lockRes, @LockOwner = 'Session';
+            SELECT @existingId AS RequestId, @existingStatus AS Status;
+            RETURN;
+        END
 
         INSERT ops.ResetRequest (MandantKey, TargetDb, Status, RequestedBy, RequestedAt, ModifiedAt)
         VALUES (@MandantKey, @TargetDb, N'queued', @caller, SYSUTCDATETIME(), SYSUTCDATETIME());

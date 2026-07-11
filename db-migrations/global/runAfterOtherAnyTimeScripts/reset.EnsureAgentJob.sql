@@ -5,6 +5,13 @@
 -- the job, research/3 §3), one step "EXEC reset.ProcessNextResetRequest", enabled,
 -- NO schedule (on-demand only, kicked by reset.StartTestmandantReset -> sp_start_job).
 --
+-- OPS-4: failure notification is OPTIONAL and config-gated. A failed/stale-reclaimed
+-- reset is otherwise pull-only (nobody is told unless they poll reset.GetResetStatus).
+-- If the admin seeds ops.Config('NotifyOperator') with an existing SQL-Agent operator
+-- (requires Database Mail), this wires an on-failure email; otherwise the job stays
+-- silent so an instance without Database Mail still deploys cleanly. The runbook
+-- documents the pull-only fallback.
+--
 -- Runs after all sprocs (this folder is grate's last anytime stage), so
 -- reset.ProcessNextResetRequest already exists. Idempotent: drop-if-exists then add.
 --
@@ -34,6 +41,18 @@ BEGIN
     IF EXISTS (SELECT 1 FROM ops.ResetRequest WHERE Status IN (N'queued', N'running'))
         THROW 50001, N'reset.EnsureAgentJob: a reset request is queued or running. Recreating the agent job now would cancel it mid-clone. Wait until ops.ResetRequest has no queued/running row (check reset.GetResetStatus), then rerun the global deploy.', 1;
 
+    -- OPS-4: resolve the optional failure-notification operator. Only wire the email if
+    -- the configured operator actually exists in msdb — passing an unknown operator name
+    -- to sp_add_job would fail the deploy, so a missing/blank config stays silent.
+    DECLARE @notifyOperator sysname =
+        NULLIF((SELECT ConfigValue FROM ops.Config WHERE ConfigKey = N'NotifyOperator'), N'');
+    DECLARE @notifyLevel int = 0;   -- 0 = never email
+    IF @notifyOperator IS NOT NULL
+       AND EXISTS (SELECT 1 FROM msdb.dbo.sysoperators WHERE name = @notifyOperator)
+        SET @notifyLevel = 2;       -- 2 = email on failure
+    ELSE
+        SET @notifyOperator = NULL; -- do not pass an operator name msdb does not know
+
     IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = @jobName)
         EXEC msdb.dbo.sp_delete_job @job_name = @jobName, @delete_unused_schedule = 1;
 
@@ -43,6 +62,8 @@ BEGIN
          @enabled = 1,
          @owner_login_name = N'sa',
          @description = N'On-demand test-mandant reset. Started by reset.StartTestmandantReset via sp_start_job.',
+         @notify_level_email = @notifyLevel,
+         @notify_email_operator_name = @notifyOperator,
          @job_id = @jobId OUTPUT;
 
     EXEC msdb.dbo.sp_add_jobstep

@@ -160,10 +160,11 @@ line before each step so a mid-step failure is attributable in `StepLog`.
    post-clone baseline is needed.
 2. **Vendor isolation** — the migration journal never sits in `dbo` or `RoboticoEKL`;
    the chains touch only their own named objects.
-3. **Self-service reset** — a colleague needs only EXECUTE on two SPs; `RoboticoOps` is
-   otherwise invisible to them.
-4. **CU survivability** — signing is confined to our one entry SP; no msdb
-   countersignatures exist to be dropped by a cumulative update.
+3. **Self-service reset** — a colleague needs only EXECUTE on four SPs (start / poll /
+   discover / cancel); `RoboticoOps` is otherwise invisible to them.
+4. **CU survivability** — signing is confined to our two `EXECUTE AS` entry SPs
+   (`StartTestmandantReset` + `CancelResetRequest`); no msdb countersignatures exist to
+   be dropped by a cumulative update.
 5. **Full audit** — every reset is a durable `ops.ResetRequest` row (who/when/status/
    error/step-log).
 6. **No secrets in git** — licence keys are seeded by placeholder + runbook UPDATE.
@@ -183,7 +184,8 @@ line before each step so a mid-step failure is attributable in `StepLog`.
 | Pipeline registry | `db-migrations/global/up/0021_reset_step_registry.sql` | `ops.ResetStep` — ordered `reset.internal_*` steps + seed (data-driven pipeline, EXT-1) |
 | Signing cert | `db-migrations/global/up/0011_signing_certificate.sql` | private key in RoboticoOps, public in master |
 | Proxy login | `db-migrations/global/up/0010_jobstartuser_login.sql` | DISABLEd, `DENY CONNECT SQL`, msdb SQLAgentOperatorRole |
-| Reset entry / status | `db-migrations/global/sprocs/reset.{StartTestmandantReset,GetResetStatus}.sql` | signed / grant-only |
+| Reset colleague SPs | `db-migrations/global/sprocs/reset.{StartTestmandantReset,GetResetStatus,ListMandants,CancelResetRequest}.sql` | self-service surface (EXECUTE → `ops_reset_executor`). Start + Cancel are signed `EXECUTE AS jobstartuser` (cross into msdb); Status + List are grant-only |
+| Reset admin SP | `db-migrations/global/sprocs/reset.PurgeOldRequests.sql` | audit-log retention (keep-last-N per mandant); EXECUTE → `ops_admin` only |
 | Reset pipeline | `db-migrations/global/sprocs/reset.{ProcessNextResetRequest,internal_*}.sql` | whitelist-guarded loop over `ops.ResetStep`; uniform-contract steps; `internal_LogStep` StepLog helper |
 | Agent-job wrapper | `db-migrations/global/runAfterOtherAnyTimeScripts/reset.EnsureAgentJob.sql` | idempotent job (re)install, owner `sa` |
 | Re-signing | `db-migrations/global/permissions/900_resign_procedures.sql` | everytime; heals dropped signatures |
@@ -244,21 +246,23 @@ changed anytime scripts). Never edit an applied `up/` script to "fix" drift — 
 
 ### 6.3 Re-signing after a signed-SP redeploy
 
-`CREATE OR ALTER` on a signed SP **drops its signature**. Exactly one proc is signed —
-`reset.StartTestmandantReset`, our one `EXECUTE AS` entry point (§2, item 4). The everytime
-`permissions/900_resign_procedures.sql` re-signs it within the same grate run whenever the
-signature is missing (the `permissions/` folder runs after `sprocs/`), so a normal
+`CREATE OR ALTER` on a signed SP **drops its signature**. Two procs are signed —
+`reset.StartTestmandantReset` and `reset.CancelResetRequest`, our two `EXECUTE AS`
+entry points that cross into msdb (§2, item 4). The everytime
+`permissions/900_resign_procedures.sql` re-signs **every** unsigned
+`EXECUTE AS 'jobstartuser'` proc within the same grate run (it derives the set from the
+catalog, so a new EXECUTE-AS entry point is signed automatically), so a normal
 `deploy.ps1 -Scope global` is always self-healing. That deploy prompts for the
 `RoboticoOpsSigning` certificate password (or reads `$env:GRATE_CERT_PASSWORD`) and passes
 it to grate as the `{{CertPassword}}` token — the private-key password never touches git.
 
-**Rule:** never `CREATE OR ALTER` `reset.StartTestmandantReset` directly in SSMS on a live
+**Rule:** never `CREATE OR ALTER` a signed reset entry point
+(`reset.StartTestmandantReset`, `reset.CancelResetRequest`) directly in SSMS on a live
 instance — redeploy the `global` chain so the re-signing step runs. Note that
 `900_resign_procedures.sql` carries the `{{CertPassword}}` grate token and is therefore not
 runnable as raw SQL; if you must hotfix, re-sign by hand with `ADD SIGNATURE TO
-reset.StartTestmandantReset BY CERTIFICATE RoboticoOpsSigning WITH PASSWORD = '<real cert
-password>'`, or the next non-privileged caller of `StartTestmandantReset` fails with an
-opaque permissions error.
+<proc> BY CERTIFICATE RoboticoOpsSigning WITH PASSWORD = '<real cert password>'` for each
+affected proc, or the next non-privileged caller fails with an opaque permissions error.
 
 ### 6.4 Worker-stopped gate before registering a mandant
 

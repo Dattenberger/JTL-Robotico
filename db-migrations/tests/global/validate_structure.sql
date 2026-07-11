@@ -26,6 +26,9 @@ DECLARE @problems TABLE (Check_ nvarchar(200));
         (N'ops.ResetStep',      N'U'),
         (N'reset.StartTestmandantReset',      N'P'),
         (N'reset.GetResetStatus',             N'P'),
+        (N'reset.ListMandants',               N'P'),
+        (N'reset.CancelResetRequest',         N'P'),
+        (N'reset.PurgeOldRequests',           N'P'),
         (N'reset.ProcessNextResetRequest',    N'P'),
         (N'reset.internal_LogStep',           N'P'),
         (N'reset.internal_CloneDatabase',     N'P'),
@@ -65,17 +68,29 @@ SELECT N'MISSING COLUMN: ' + c.tbl + N'.' + c.col
 FROM cols c
 WHERE OBJECT_ID(c.tbl, N'U') IS NULL OR COL_LENGTH(c.tbl, c.col) IS NULL;
 
--- --- the signed proc must actually be signed by RoboticoOpsSigning ---------------
+-- --- the signature-required procs must actually be signed by RoboticoOpsSigning ---
+-- Signed set = the EXECUTE-AS-'jobstartuser' entry points that cross into msdb:
+-- reset.StartTestmandantReset (sp_start_job) and reset.CancelResetRequest (job-activity
+-- read). A named check here catches the case where someone drops a proc's EXECUTE AS
+-- clause — the generic assertion below only sees procs that STILL declare EXECUTE AS.
+;WITH signed_required (name) AS (
+    SELECT v.name FROM (VALUES
+        (N'reset.StartTestmandantReset'),
+        (N'reset.CancelResetRequest')
+    ) v(name)
+)
 INSERT INTO @problems (Check_)
-SELECT N'UNSIGNED: reset.StartTestmandantReset is not signed by RoboticoOpsSigning'
-WHERE OBJECT_ID(N'reset.StartTestmandantReset') IS NOT NULL
+SELECT N'UNSIGNED: ' + s.name + N' is not signed by RoboticoOpsSigning'
+FROM signed_required s
+WHERE OBJECT_ID(s.name) IS NOT NULL
   AND NOT EXISTS (
         SELECT 1 FROM sys.crypt_properties cp
         JOIN sys.certificates c ON cp.thumbprint = c.thumbprint
-        WHERE cp.major_id = OBJECT_ID(N'reset.StartTestmandantReset')
+        WHERE cp.major_id = OBJECT_ID(s.name)
           AND c.name = N'RoboticoOpsSigning');
 
--- --- the EXECUTE-AS set must equal the signed set (exactly StartTestmandantReset) -
+-- --- every EXECUTE-AS reset proc must be signed (the signed set = the EXECUTE-AS set:
+-- --- currently StartTestmandantReset + CancelResetRequest) -----------------------
 INSERT INTO @problems (Check_)
 SELECT N'EXECUTE-AS proc without signature: ' + OBJECT_SCHEMA_NAME(m.object_id) + N'.' + OBJECT_NAME(m.object_id)
 FROM sys.sql_modules m
