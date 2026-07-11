@@ -27,7 +27,11 @@ BEGIN
     DECLARE @b nvarchar(max);
 
     -- ===== PRIORITY 1: core person data ==========================================
+    -- The trigger-bypass CONTEXT_INFO must be cleared even if a statement inside this
+    -- batch throws (PAR-3): otherwise the bypass token leaks into the session. Mirror
+    -- the legacy clear-customer-fields.sql CATCH that reset it to 0x0.
     SET @b = N'
+        BEGIN TRY
         DECLARE @h varbinary(128);
         SELECT @h = HASHBYTES(''SHA1'', ''Kunde.spKundeUpdate'');
         SET CONTEXT_INFO @h;
@@ -154,6 +158,11 @@ BEGIN
             cMobil = ''Mobil_'' + CAST(kAnsprechpartner AS NVARCHAR(30)),
             cAbteilung = ''Abt_'' + CAST(kAnsprechpartner AS NVARCHAR(30))
         WHERE kAnsprechpartner IS NOT NULL;
+        END TRY
+        BEGIN CATCH
+            SET CONTEXT_INFO 0x0;   -- never leave the trigger-bypass token set (PAR-3)
+            THROW;
+        END CATCH
     ';
     EXEC @exec @b;
     EXEC reset.internal_LogStep @RequestId, N'anon.P1 core-person ok';

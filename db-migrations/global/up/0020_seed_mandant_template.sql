@@ -39,11 +39,24 @@ WHEN NOT MATCHED BY TARGET THEN
     INSERT (ConfigKey, ConfigValue, Notes) VALUES (src.ConfigKey, src.ConfigValue, src.Notes);
 
 -- --- ops.Mandant (template rows) -------------------------------------------------
+-- LoginName is seeded with the REAL shared developer login
+-- 'dbuser_dev_dana_for_development' — the legacy setup-test-environment.ps1 default
+-- (and the login used by grant-database-access.sql). Seeding the actually-existing
+-- login instead of a per-mandant placeholder makes the DEFAULT reset deliver the
+-- legacy result out-of-the-box: the developer is db_owner on the fresh clone (PAR-1).
+-- Without this, internal_GrantAccess would skip a non-existent 'dbuser_dev_tmN' login
+-- (D4) and the reset would report 'succeeded' with nobody able to open the mandant.
+-- A per-mandant login can still be set later via the runbook.
+--
+-- TODO(verify login on target server): this login lives on PROD (VM-SQL2); it is NOT
+-- present on the bare vm-sql-test1 instance, so it could not be confirmed read-only
+-- during QG2. Confirm the exact name on the deploy target before the first real reset:
+--   sqlcmd -S VM-SQL2 -E -C -Q "SELECT name FROM sys.server_principals WHERE name LIKE 'dbuser_dev%'"
 MERGE ops.Mandant AS tgt
 USING (VALUES
-    (N'tm2', N'eazybusiness_tm2', N'Testmandant 2', N'(confirm in runbook)', N'dbuser_dev_tm2', N'https://tm2.staging.local', N'<SET-VIA-RUNBOOK>'),
-    (N'tm3', N'eazybusiness_tm3', N'Testmandant 3', N'(confirm in runbook)', N'dbuser_dev_tm3', N'https://tm3.staging.local', N'<SET-VIA-RUNBOOK>'),
-    (N'tm4', N'eazybusiness_tm4', N'Testmandant 4', N'(confirm in runbook)', N'dbuser_dev_tm4', N'https://tm4.staging.local', N'<SET-VIA-RUNBOOK>')
+    (N'tm2', N'eazybusiness_tm2', N'Testmandant 2', N'(confirm in runbook)', N'dbuser_dev_dana_for_development', N'https://tm2.staging.local', N'<SET-VIA-RUNBOOK>'),
+    (N'tm3', N'eazybusiness_tm3', N'Testmandant 3', N'(confirm in runbook)', N'dbuser_dev_dana_for_development', N'https://tm3.staging.local', N'<SET-VIA-RUNBOOK>'),
+    (N'tm4', N'eazybusiness_tm4', N'Testmandant 4', N'(confirm in runbook)', N'dbuser_dev_dana_for_development', N'https://tm4.staging.local', N'<SET-VIA-RUNBOOK>')
 ) AS src (MandantKey, TargetDb, DisplayName, Developer, LoginName, ShopUrl, ShopLicense)
     ON tgt.MandantKey = src.MandantKey
 WHEN NOT MATCHED BY TARGET THEN

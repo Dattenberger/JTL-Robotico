@@ -48,6 +48,12 @@ Where each legacy script now lives (ported into the Ebene-B reset pipeline):
 | — (new, D9) | `reset.internal_NeutralizeWorker.sql` (eBay+Amazon lock, drain queues) |
 | `test-environment.config.json` | `ops.Mandant` / `ops.Config` (column-protected licence) |
 
+> [!NOTE]
+> `revoke-database-access.sql` and `grant-database-access-partial.sql` are **deliberate
+> non-ports**: they are standalone helper scripts (dev deprovisioning / granular PROD
+> read access) that were never part of the setup pipeline, so they have no equivalent in
+> the new reset. Keep using them by hand where needed.
+
 ## Read next
 
 - **Architecture:** [`../../docs/SQL/MSSQL-OPS-ARCHITECTURE.md`](../../docs/SQL/MSSQL-OPS-ARCHITECTURE.md)

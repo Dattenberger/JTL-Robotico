@@ -33,6 +33,9 @@ BEGIN
     SELECT @ShopUrl = ShopUrl, @ShopLicense = ShopLicense
     FROM ops.Mandant WHERE MandantKey = @MandantKey;
 
+    -- Rows hit by the JS-Shop repoint; 0 => no matching shop row (PAR-4).
+    DECLARE @ShopRepointRows int;
+
     DECLARE @exec nvarchar(300) = QUOTENAME(@TargetDb) + N'.sys.sp_executesql';
     DECLARE @batch nvarchar(max) = N'
         -- SMTP / e-mail
@@ -67,6 +70,7 @@ BEGIN
         UPDATE dbo.tShop
         SET cServerWeb = @ShopUrl, cAPIKey = @ShopLicense
         WHERE nTyp = 0 AND cServerWeb LIKE ''http%'';
+        SET @ShopRepointRows = @@ROWCOUNT;   -- captured immediately (PAR-4)
 
         -- PayPal (Robotico schema, guarded)
         IF OBJECT_ID(''Robotico.tPaypalAccessToken'') IS NOT NULL
@@ -148,10 +152,19 @@ BEGIN
             WHERE tOauthConfig_cId IS NOT NULL AND LEN(TRIM(tOauthConfig_cId)) > 0;
     ';
     EXEC @exec @batch,
-         N'@ShopUrl nvarchar(max), @ShopLicense nvarchar(max)',
-         @ShopUrl = @ShopUrl, @ShopLicense = @ShopLicense;
+         N'@ShopUrl nvarchar(max), @ShopLicense nvarchar(max), @ShopRepointRows int OUTPUT',
+         @ShopUrl = @ShopUrl, @ShopLicense = @ShopLicense, @ShopRepointRows = @ShopRepointRows OUTPUT;
 
-    EXEC reset.internal_LogStep @RequestId,
-         N'credentials: cleared + JS-Shop repointed to staging';
+    -- No THROW: 0 matching shop rows is legitimate for some clones, but must be
+    -- visible in GetResetStatus so a silently un-repointed shop is not mistaken for
+    -- a staging repoint (PAR-4).
+    IF ISNULL(@ShopRepointRows, 0) = 0
+        EXEC reset.internal_LogStep @RequestId,
+             N'WARN shop-repoint: no matching JS-Shop row (nTyp=0 + http URL) — shop NOT repointed to staging';
+
+    DECLARE @credMsg nvarchar(200) =
+        N'credentials: cleared + JS-Shop repointed to staging ('
+        + CAST(ISNULL(@ShopRepointRows, 0) AS nvarchar(10)) + N' row(s))';
+    EXEC reset.internal_LogStep @RequestId, @credMsg;
 END
 GO

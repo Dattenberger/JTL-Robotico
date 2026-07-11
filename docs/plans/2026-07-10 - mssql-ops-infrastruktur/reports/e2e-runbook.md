@@ -187,6 +187,36 @@ regression so a future re-port cannot silently reintroduce the defects.
      `Robotico.fnEscapedCSVSanitize(...)` on the write side (logic-B1-2 — `;`/CR/LF sanitisation).
 - **Expected Result:** All three assertions hold. Covers the repair-wave-1 delta on top of §1/§6.
 
+## QG2 Parity Refresh (added by orchestrator)
+
+QG2 slot-4 (PARITY) accepted findings PAR-1..4. PAR-2/PAR-3 are static (doc / code
+shape); the two runtime-provable gaps get parity assertions on the full-reset E2E
+(run against a restored throwaway clone, after `reset.ProcessNextResetRequest`
+completes for the mandant under test).
+
+### TC-R2: QG2 parity assertions #4 (shop-repoint) and #7 (developer access)
+
+- **Mode:** manual (part of the full Docker/real-clone reset E2E; not a static case)
+- **Knowledge:** knowledge-sql
+- **Scope:** runtime equivalence to the legacy PowerShell reset for PAR-4 and PAR-1
+- **Steps / assertions:**
+  4. **Shop-repoint rowcount (PAR-4).** Query `ops.ResetRequest.StepLog` for the request:
+     it contains exactly one of
+     `credentials: … JS-Shop repointed to staging (N row(s))` with `N > 0`
+     **or** `WARN shop-repoint: no matching JS-Shop row`. When `N > 0`, assert every
+     `dbo.tShop` row with `nTyp = 0 AND cServerWeb LIKE 'http%'` now has
+     `cServerWeb = ops.Mandant.ShopUrl` and `cAPIKey = ops.Mandant.ShopLicense`, and that
+     `Check24`/`unicorn2` rows are unchanged. A `WARN` line with a live JS-Shop present is
+     a **failure** (repoint silently missed).
+  7. **Developer access (PAR-1).** The `ops.Mandant.LoginName` for the mandant **exists**
+     as a `sys.server_principals` row **and** is a member of `db_owner` in the clone
+     (`sys.database_role_members` in `<TargetDb>`). Equivalently, the StepLog shows
+     `access: <login> is db_owner on <TargetDb>` and **no** `WARN access-skipped:` line.
+     A `WARN access-skipped` line means the seeded login is missing on the target server —
+     fix the `0020` seed / runbook before sign-off.
+- **Expected Result:** Both assertions hold; the clone matches the legacy result
+  (developer is db_owner, shop points at staging).
+
 ## Acceptance
 
 - All `mode: auto` cases (TC-1…TC-6) pass; TC-5 may be marked manual-pending if

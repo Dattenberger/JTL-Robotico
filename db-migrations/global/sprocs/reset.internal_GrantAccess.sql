@@ -30,7 +30,10 @@ BEGIN
 
     IF @LoginName IS NULL OR NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @LoginName)
     BEGIN
-        SET @note = N'access: login ' + ISNULL(@LoginName, N'(none)') + N' not found on server — skipped';
+        -- WARN prefix so a skipped grant is obvious in reset.GetResetStatus (PAR-1):
+        -- the reset still 'succeeds', but no developer has db_owner on the clone.
+        SET @note = N'WARN access-skipped: login ' + ISNULL(@LoginName, N'(none)')
+                  + N' not found on server — developer has NO db_owner on ' + @TargetDb;
     END
     ELSE
     BEGIN
