@@ -26,10 +26,12 @@ SET NOCOUNT ON;
 -- --- ops.Config ------------------------------------------------------------------
 MERGE ops.Config AS tgt
 USING (VALUES
-    (N'BackupFile',       N'E:\work\eazybusiness_to_test.bak', N'COPY_ONLY backup staging path (single path -> resets serialize)'),
-    (N'TargetDataDir',    N'E:\MSSQL\Data',                    N'Data dir for clone .mdf/.ldf (E: — never the small C: that holds PROD)'),
-    (N'SourceDb',         N'eazybusiness',                     N'Clone source database'),
-    (N'ReferenceMandant', N'1',                                N'kMandant used as tBenutzerFirma seed template in register-mandant')
+    (N'BackupFile',        N'E:\work\eazybusiness_to_test.bak', N'COPY_ONLY backup staging path (single path -> resets serialize)'),
+    (N'TargetDataDir',     N'E:\MSSQL\Data',                    N'Data dir for clone .mdf/.ldf (E: — never the small C: that holds PROD)'),
+    (N'SourceDb',          N'eazybusiness',                     N'Clone source database'),
+    (N'ReferenceMandant',  N'1',                                N'kMandant used as tBenutzerFirma seed template in register-mandant'),
+    (N'StaleRunningHours', N'4',                                N'Age (hours) after which reset.ProcessNextResetRequest reclaims a still-running request as failed (CQG-7)'),
+    (N'AgentJobName',      N'RoboticoOps - Testmandant Reset',  N'SQL Agent job name; single-sourced for Start/EnsureAgentJob/200_ensure_agent_job (CQG-8)')
 ) AS src (ConfigKey, ConfigValue, Notes)
     ON tgt.ConfigKey = src.ConfigKey
 WHEN NOT MATCHED BY TARGET THEN

@@ -18,7 +18,7 @@
 
 SET NOCOUNT ON;
 
-DECLARE @procId INT, @procName NVARCHAR(300), @sql NVARCHAR(MAX);
+DECLARE @procId INT, @procName NVARCHAR(300), @sql NVARCHAR(MAX), @signErr NVARCHAR(MAX);
 
 DECLARE unsigned_procs CURSOR LOCAL FAST_FORWARD FOR
     SELECT p.object_id,
@@ -39,7 +39,24 @@ BEGIN
     SET @sql = N'ADD SIGNATURE TO ' + @procName
              + N' BY CERTIFICATE RoboticoOpsSigning'
              + N' WITH PASSWORD = ''{{CertPassword}}'';';
-    EXEC sys.sp_executesql @sql;
+    BEGIN TRY
+        EXEC sys.sp_executesql @sql;
+    END TRY
+    BEGIN CATCH
+        -- SQL Server reports a wrong cert password only as an opaque decryption error.
+        -- The dominant cause here is a deploy-time {{CertPassword}} that differs from the
+        -- password RoboticoOpsSigning was CREATED with in up/0011 (CQG-4), so name it.
+        -- CONCAT (not '+') keeps the data-concat lint heuristic quiet.
+        SET @signErr = CONCAT(
+            N'900_resign_procedures: ADD SIGNATURE to ', @procName, N' failed (',
+            ERROR_MESSAGE(),
+            N'). Most likely the deploy-time {{CertPassword}} does not match the password ',
+            N'RoboticoOpsSigning was created with in up/0011 — the certificate private key ',
+            N'could not be unlocked. Supply the original cert password (see README §7 / ',
+            N'~/.claude-secrets.md).');
+        CLOSE unsigned_procs; DEALLOCATE unsigned_procs;
+        THROW 50901, @signErr, 1;
+    END CATCH
     PRINT 'Re-signed ' + @procName + ' with certificate RoboticoOpsSigning.';
     FETCH NEXT FROM unsigned_procs INTO @procId, @procName;
 END

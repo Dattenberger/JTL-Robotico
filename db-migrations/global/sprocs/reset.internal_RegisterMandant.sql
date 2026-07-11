@@ -8,6 +8,16 @@
 -- contract, EXT-2) and passed as an sp_executesql parameter (never concatenated); DB
 -- names go through QUOTENAME only.
 --
+-- BLAST RADIUS (CQG-5): by JTL's shared-registry design a mandant must be known to
+-- EVERY mandant DB, so this step upserts the clone's dbo.tMandant row into every
+-- registered mandant DB — INCLUDING the production `eazybusiness` DB (kMandant=1 →
+-- cDB='eazybusiness'). That prod write is intended (it is how the clone appears in the
+-- JTL login) and is NOT the destructive kind guarded against elsewhere; the @TargetDb
+-- guard validates the CLONE, not the set of DBs written. A write against @TargetDb
+-- itself is fatal (THROW); a failure against any OTHER mandant DB is non-fatal by
+-- design — it is logged as a WARN and counted into the summary line so a partial
+-- registration is visible in reset.GetResetStatus rather than hidden behind 'succeeded'.
+--
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see Projekte/Testsystem/register-mandant.sql
 CREATE OR ALTER PROCEDURE reset.internal_RegisterMandant
@@ -27,7 +37,7 @@ BEGIN
     IF NULLIF(LTRIM(RTRIM(@DisplayName)), N'') IS NULL
         THROW 51071, 'internal_RegisterMandant: DisplayName is empty.', 1;
 
-    DECLARE @SourceDb sysname, @refMandant int, @sql nvarchar(max), @k int;
+    DECLARE @SourceDb sysname, @refMandant int, @sql nvarchar(max), @k int, @warnCount int = 0;
     -- Best-effort updates of the *other* mandant DBs log a per-DB WARN line and carry on;
     -- a failure against @TargetDb itself THROWs instead — registering the clone is this
     -- step's core purpose, silently skipping it would mark the reset succeeded while the
@@ -78,6 +88,7 @@ BEGIN
                 CLOSE dbcur; DEALLOCATE dbcur;
                 THROW;
             END
+            SET @warnCount += 1;
             EXEC reset.internal_LogStep @RequestId,
                  N'register: WARN ' + @db + N': ' + ERROR_MESSAGE();
         END CATCH
@@ -116,6 +127,7 @@ BEGIN
                     CLOSE seedcur; DEALLOCATE seedcur;
                     THROW;
                 END
+                SET @warnCount += 1;
                 EXEC reset.internal_LogStep @RequestId,
                      N'register: WARN ' + @sdb + N': ' + ERROR_MESSAGE();
             END CATCH
@@ -125,6 +137,9 @@ BEGIN
     END
 
     EXEC reset.internal_LogStep @RequestId,
-         N'register: kMandant=' + CAST(@k AS nvarchar(10)) + N' (' + @DisplayName + N')';
+         N'register: kMandant=' + CAST(@k AS nvarchar(10)) + N' (' + @DisplayName + N')'
+         + CASE WHEN @warnCount > 0
+                THEN N'; ' + CAST(@warnCount AS nvarchar(10)) + N' non-target DB WARN(s) — see above'
+                ELSE N'' END;
 END
 GO

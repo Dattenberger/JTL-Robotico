@@ -16,6 +16,19 @@
 -- The password never lives in git: {{CertPassword}} is a grate token supplied at
 -- deploy time (deploy.ps1 -Scope global -> prompt or $env:GRATE_CERT_PASSWORD).
 --
+-- PASSWORD CONSTRAINTS (CQG-3 / CQG-4):
+--   * No single quote. grate substitutes {{CertPassword}} textually INTO a single-quoted
+--     SQL literal (here and in permissions/900_resign_procedures). A password containing
+--     a ' would break out of the literal — a syntax error at best. deploy.ps1 rejects it
+--     up front (@see db-migrations/deploy.ps1, slot 5); keep the char-set safe if signing
+--     is ever done by hand.
+--   * Set once, immutable. This is a one-time up/ script: the private-key password is
+--     fixed at the FIRST global deploy. The everytime permissions/900_resign_procedures
+--     must unlock that same key with the SAME {{CertPassword}} on every later deploy — a
+--     different value there fails re-signing with an opaque private-key error. To rotate
+--     the password you must DROP and recreate the certificate (new up/ script) and
+--     re-sign. See README §7 and 900's TRY/CATCH message.
+--
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§2)
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/research/3-module-signing-agent-job
 

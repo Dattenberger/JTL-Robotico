@@ -26,6 +26,12 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
+    -- Stale-reclaim window is an ops.Config knob (CQG-7), not a hard-coded literal, so
+    -- ops can tune it without a code+re-sign deploy. ISNULL/TRY_CONVERT fall back to 4h
+    -- if the key is missing or non-numeric.
+    DECLARE @staleHours int =
+        ISNULL((SELECT TRY_CONVERT(int, ConfigValue) FROM ops.Config WHERE ConfigKey = N'StaleRunningHours'), 4);
+
     -- Reclaim requests whose job died hard (else the mandant stays blocked forever).
     UPDATE ops.ResetRequest
        SET Status     = N'failed',
@@ -33,7 +39,7 @@ BEGIN
            FinishedAt = SYSUTCDATETIME(),
            ModifiedAt = SYSUTCDATETIME()
      WHERE Status = N'running'
-       AND StartedAt < DATEADD(HOUR, -4, SYSUTCDATETIME());
+       AND StartedAt < DATEADD(HOUR, - @staleHours, SYSUTCDATETIME());
 
     DECLARE @claimed TABLE (RequestId int, MandantKey sysname, TargetDb sysname);
     DECLARE @RequestId int, @MandantKey sysname, @TargetDb sysname, @err nvarchar(max);

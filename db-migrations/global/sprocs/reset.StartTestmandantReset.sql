@@ -21,12 +21,19 @@ WITH EXECUTE AS 'jobstartuser'
 AS
 BEGIN
     SET NOCOUNT ON;
+    SET XACT_ABORT ON;   -- CQG-12: consistent hardening with the other reset procs.
 
     DECLARE @TargetDb sysname,
             @RequestId int,
             @rc int,
             @lockRes nvarchar(255) = N'reset:' + @MandantKey,
-            @caller sysname = ORIGINAL_LOGIN();
+            @caller sysname = ORIGINAL_LOGIN(),
+            -- Job name is a single-sourced ops.Config knob (CQG-8): the same literal is
+            -- read here, in reset.EnsureAgentJob, and in permissions/200_ensure_agent_job.
+            -- The ISNULL keeps a pre-config instance working with the built-in default.
+            @jobName sysname = ISNULL(
+                (SELECT ConfigValue FROM ops.Config WHERE ConfigKey = N'AgentJobName'),
+                N'RoboticoOps - Testmandant Reset');
 
     -- Short exclusive applock dedups concurrent submissions for the same mandant
     -- (the filtered unique index on ops.ResetRequest is the declarative backstop).
@@ -56,12 +63,25 @@ BEGIN
         SET @RequestId = CAST(SCOPE_IDENTITY() AS int);
 
         -- Start the job. Error 22022 = "job already running": harmless — the request
-        -- stays queued and the running job's while-loop picks it up.
+        -- stays queued and the running job's while-loop picks it up. Any OTHER start
+        -- failure (job missing, or an msdb permission error from a dropped signature)
+        -- must NOT leave the row silently 'queued': the filtered unique index would then
+        -- block the caller from resubmitting while the next successful start executes the
+        -- reset they believed had failed. So mark the row 'failed' before re-throwing (CQG-1).
         BEGIN TRY
-            EXEC msdb.dbo.sp_start_job @job_name = N'RoboticoOps - Testmandant Reset';
+            EXEC msdb.dbo.sp_start_job @job_name = @jobName;
         END TRY
         BEGIN CATCH
-            IF ERROR_NUMBER() <> 22022 THROW;
+            IF ERROR_NUMBER() <> 22022
+            BEGIN
+                UPDATE ops.ResetRequest
+                   SET Status     = N'failed',
+                       ErrorText  = N'sp_start_job failed: ' + ERROR_MESSAGE(),
+                       FinishedAt = SYSUTCDATETIME(),
+                       ModifiedAt = SYSUTCDATETIME()
+                 WHERE RequestId = @RequestId;
+                THROW;
+            END
         END CATCH
 
         EXEC sp_releaseapplock @Resource = @lockRes, @LockOwner = 'Session';

@@ -20,7 +20,12 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    DECLARE @jobName sysname = N'RoboticoOps - Testmandant Reset';
+    -- Single-sourced job name (CQG-8): the same ops.Config knob is read here, in
+    -- reset.StartTestmandantReset (sp_start_job) and in permissions/200_ensure_agent_job
+    -- (existence check). ISNULL keeps a pre-config instance on the built-in default.
+    DECLARE @jobName sysname = ISNULL(
+        (SELECT ConfigValue FROM ops.Config WHERE ConfigKey = N'AgentJobName'),
+        N'RoboticoOps - Testmandant Reset');
 
     -- Guard: sp_delete_job stops a RUNNING job mid-step. Recreating the job while a
     -- reset is queued/running would cancel the backup/restore mid-clone and leave the

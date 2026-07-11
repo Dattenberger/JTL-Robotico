@@ -253,6 +253,30 @@ changes nothing and therefore skips the confirmation).
 > `deploy.ps1` fills at run time: it reads `$env:GRATE_CERT_PASSWORD` when set, otherwise
 > prompts interactively (secure input). The password is a secret — it never lives in
 > `targets.config.json` or anywhere in git. `-Scope eazybusiness` needs no such token.
+>
+> Two constraints on the cert password (the token is substituted **textually** into a
+> single-quoted SQL literal, so grate cannot escape it):
+> - **No single quote (`'`).** A quote breaks out of the literal in `0011`/`900`;
+>   `deploy.ps1` rejects such a password before invoking grate.
+> - **Set once, immutable.** `0011` is a one-time script — the private-key password is
+>   fixed at the first global deploy, and the everytime `900_resign_procedures` must unlock
+>   that same key with the identical password on every later deploy. A mismatch fails
+>   re-signing with an explicit "does not match up/0011" error (900's TRY/CATCH). Rotating
+>   the password means dropping+recreating the certificate via a new `up/` script.
+
+> [!NOTE]
+> **`ops.Config` runtime knobs (Ebene B).** A few reset behaviours are data, not code —
+> tune them by `UPDATE ops.Config` (admin-only), no redeploy needed. Seeded by
+> `global/up/0020_seed_mandant_template.sql`:
+>
+> | ConfigKey | Default | Meaning |
+> |---|---|---|
+> | `BackupFile` | `E:\work\eazybusiness_to_test.bak` | COPY_ONLY backup staging path (single path ⇒ resets serialize) |
+> | `TargetDataDir` | `E:\MSSQL\Data` | Data dir for clone `.mdf`/`.ldf` |
+> | `SourceDb` | `eazybusiness` | Clone source database |
+> | `ReferenceMandant` | `1` | kMandant used as the `tBenutzerFirma` seed template |
+> | `StaleRunningHours` | `4` | Age after which `ProcessNextResetRequest` reclaims a still-`running` request as `failed` |
+> | `AgentJobName` | `RoboticoOps - Testmandant Reset` | SQL Agent job name; single-sourced for `StartTestmandantReset` / `EnsureAgentJob` / `200_ensure_agent_job` |
 
 > [!CAUTION]
 > This repository never writes to a SQL Server autonomously. PROD deployment is always a
