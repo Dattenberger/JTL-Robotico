@@ -8,6 +8,10 @@
 -- Dependency: uses Robotico.fnStringCountLines (must be deployed first — grate
 -- deploys functions/ alphabetically; both live in this folder).
 --
+-- Prerequisite: the 3-argument STRING_SPLIT(@str, CHAR(10), 1) — the enable_ordinal
+-- form — requires SQL Server 2022+ (16.x). CREATE succeeds on older engines, but the
+-- function FAILS at runtime there. See README §8 (verify each target's compat level).
+--
 -- Ported from WorkflowProcedures/api/StringAndCSVUtilities.sql (2026-07-10).
 -- ============================================================================
 

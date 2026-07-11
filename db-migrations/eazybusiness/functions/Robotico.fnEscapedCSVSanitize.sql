@@ -16,6 +16,7 @@ CREATE OR ALTER FUNCTION Robotico.fnEscapedCSVSanitize(
     @defaultValue NVARCHAR(100) = NULL
 )
 RETURNS NVARCHAR(MAX)
+WITH SCHEMABINDING   -- pure (no table refs): marks it deterministic + inlineable (Froid)
 AS
 BEGIN
     DECLARE @cleaned NVARCHAR(MAX);

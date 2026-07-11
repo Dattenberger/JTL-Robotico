@@ -94,6 +94,9 @@ switch ($Scope) {
         }
     }
     'global' {
+        if ($Target) {
+            Write-Warning "-Target '$Target' is ignored for -Scope global (there is exactly one global DB: $($envConfig.global))."
+        }
         $sqlFilesDirectory = Join-Path $scriptRoot 'global'
         $schema = 'ops'
         $databases = @($envConfig.global)
@@ -118,13 +121,33 @@ if ($Environment -eq 'PROD' -and -not $DryRun) {
 
 # --- cert password token (Ebene B signing chain) ----------------------------
 # {{CertPassword}} tokens live in global/up/0011 + global/permissions/900. Never in git.
+# The SQL side (0011/900) documents the single-quote + immutability constraints (CQG-3);
+# this block enforces the single-quote rule before grate ever sees the value.
+# @see db-migrations/global/up/0011_signing_certificate.sql
+# @see db-migrations/global/permissions/900_resign_procedures.sql
+# GOTCHA — process-argument exposure: grate accepts the password ONLY as a --usertokens
+#   CLI argument (built below), so it is briefly visible in the host's process table while
+#   grate runs. Run global deploys on a single-operator / least-privilege host, and NEVER
+#   print or log $grateArgs. See README §7.
 $userTokens = @()
 if ($Scope -eq 'global') {
     $certPassword = $env:GRATE_CERT_PASSWORD
     if ([string]::IsNullOrEmpty($certPassword)) {
         $secure = Read-Host 'RoboticoOpsSigning certificate password' -AsSecureString
-        $certPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+        # Free the unmanaged plaintext buffer promptly (ZeroFreeBSTR) once copied out.
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        try {
+            $certPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        }
+        finally {
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    }
+    # The token is substituted TEXTUALLY into a single-quoted SQL literal in 0011/900 —
+    # grate cannot escape it, so a single quote would break out of the literal. Reject it
+    # here with a clear message rather than producing a broken deploy.
+    if ($certPassword.Contains("'")) {
+        throw "The RoboticoOpsSigning certificate password must not contain a single quote ('): it is substituted textually into a single-quoted SQL literal in global/up/0011 + global/permissions/900."
     }
     $userTokens += "CertPassword=$certPassword"
 }

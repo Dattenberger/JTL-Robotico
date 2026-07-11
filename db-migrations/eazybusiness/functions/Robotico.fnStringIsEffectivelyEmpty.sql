@@ -9,6 +9,7 @@
 
 CREATE OR ALTER FUNCTION Robotico.fnStringIsEffectivelyEmpty(@str NVARCHAR(MAX))
 RETURNS BIT
+WITH SCHEMABINDING   -- pure (no table refs): marks it deterministic + inlineable (Froid)
 AS
 BEGIN
     RETURN CASE

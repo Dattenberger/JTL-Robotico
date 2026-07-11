@@ -9,6 +9,7 @@
 
 CREATE OR ALTER FUNCTION Robotico.fnStringCountLines(@str NVARCHAR(MAX))
 RETURNS INT
+WITH SCHEMABINDING   -- pure (no table refs): marks it deterministic + inlineable (Froid)
 AS
 BEGIN
     IF @str IS NULL OR LEN(@str) = 0

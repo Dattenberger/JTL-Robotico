@@ -9,6 +9,7 @@
 
 CREATE OR ALTER FUNCTION Robotico.fnStringStripWhitespace(@str NVARCHAR(MAX))
 RETURNS NVARCHAR(MAX)
+WITH SCHEMABINDING   -- pure (no table refs): marks it deterministic + inlineable (Froid)
 AS
 BEGIN
     IF @str IS NULL

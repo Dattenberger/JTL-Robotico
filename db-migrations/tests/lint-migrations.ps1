@@ -179,6 +179,29 @@ foreach ($f in $sqlFiles) {
 }
 
 # --------------------------------------------------------------------------
+# up/ numbering: the 4-digit prefix must be unique per chain. grate runs
+# one-time scripts in filename order and tracks them by hash, so a duplicate
+# NNNN is an ordering hazard the per-file shape check (rule e) cannot catch.
+# --------------------------------------------------------------------------
+foreach ($d in $chainDirs) {
+    $upDir = Join-Path $d 'up'
+    if (-not (Test-Path $upDir)) { continue }
+    $seenPrefixes = @{}
+    foreach ($f in (Get-ChildItem -Path $upDir -Filter '*.sql' -File | Sort-Object Name)) {
+        if ($f.BaseName -match '^([0-9]{4})_') {
+            $prefix = $Matches[1]
+            $rel = $f.FullName.Substring($repoRoot.Length).TrimStart('/', '\')
+            if ($seenPrefixes.ContainsKey($prefix)) {
+                Add-Error $rel 'e' "duplicate up/ number prefix '$prefix' (already used by '$($seenPrefixes[$prefix])')"
+            }
+            else {
+                $seenPrefixes[$prefix] = $rel
+            }
+        }
+    }
+}
+
+# --------------------------------------------------------------------------
 # (f) §6 cleanup scripts: no un-commented writing statement
 # --------------------------------------------------------------------------
 $cleanupDir = Join-Path $repoRoot 'Berechtigungen/cleanup'

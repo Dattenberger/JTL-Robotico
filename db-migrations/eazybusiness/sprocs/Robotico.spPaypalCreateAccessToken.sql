@@ -12,7 +12,9 @@
 -- Ported from WorkflowProcedures/PayPal/Add Procudures and Tables.sql (2026-07-10).
 -- ============================================================================
 
-CREATE OR ALTER PROCEDURE Robotico.spPaypalCreateAccessToken AS
+CREATE OR ALTER PROCEDURE Robotico.spPaypalCreateAccessToken
+    @debug BIT = 0   -- 1 = PRINT diagnostics (never prints the credentials)
+AS
 BEGIN
     SET NOCOUNT ON;
 
@@ -67,13 +69,17 @@ BEGIN
 
             EXEC sp_OADestroy @HttpObject
 
-            PRINT 'RESULTS FOR spPaypalCreateAccessToken'
-            PRINT 'URL ' + @URL;
-            PRINT 'URL ' + @URL;
-            PRINT 'Status ' + @ResponseStatus + ' ' + @ResponseStatusText;
-            PRINT '@Auth ' + @Auth;
-            PRINT '@ResponseText ' + @ResponseText;
-            PRINT 'END RESULTS FOR spPaypalCreateAccessToken'
+            -- @Auth is deliberately NEVER printed: it is 'Basic ' + base64(clientId:secret),
+            -- a reversible credential. @ResponseText carries the fresh bearer token, so it
+            -- only prints under @debug. Both would otherwise leak into deploy/exec logs.
+            IF @debug = 1
+            BEGIN
+                PRINT 'RESULTS FOR spPaypalCreateAccessToken'
+                PRINT 'URL ' + @URL;
+                PRINT 'Status ' + @ResponseStatus + ' ' + @ResponseStatusText;
+                PRINT '@ResponseText ' + @ResponseText;
+                PRINT 'END RESULTS FOR spPaypalCreateAccessToken'
+            END
         END
 
         INSERT INTO Robotico.tPaypalTrackingLog (cQuelle, bProduction, kInputKey, cBescheibung1, cBescheibung2, dErstellt)
@@ -83,13 +89,14 @@ BEGIN
         DELETE FROM Robotico.tPaypalAccessToken WHERE bProduction = @IsProduction
 
         INSERT INTO Robotico.tPaypalAccessToken
-        SELECT scope         as [cScope],
-               access_token  as cAccessToken,
-               token_type    as cTokenType,
-               app_id        as cAppID,
-               expires_in    as nExpiresIn,
-               getutcdate()  as dAuthDate,
-               @IsProduction as bProduction
+            (cScope, cAccessToken, cTokenType, cAppID, nExpiresInSeconds, dTokenCreated, bProduction)
+        SELECT scope,
+               access_token,
+               token_type,
+               app_id,
+               expires_in,
+               GETUTCDATE(),
+               @IsProduction
         FROM OPENJSON(@ResponseText)
                       WITH (
                           scope NVARCHAR(MAX) '$.scope',

@@ -242,10 +242,10 @@ BEGIN TRY
         @fieldName = 'NonExistentFieldDefinitionInJTL',
         @newValue = 'Test';
 
-    IF @returnCode = -1
-    BEGIN PRINT '  + Error code -1 for non-existing field'; SET @t6_passed += 1; END
-    ELSE
-        PRINT '  x Unexpected return code: ' + CAST(@returnCode AS NVARCHAR(10));
+    -- The proc THROWs on a missing field definition (the legacy -1 return path was
+    -- dropped in the port). Reaching this line means no error was raised — that is the
+    -- failure. The real assertion is in the CATCH block below (checks the thrown message).
+    PRINT '  x Expected a thrown error for a non-existing field definition; none occurred';
 
     ROLLBACK TRANSACTION;
 END TRY

@@ -10,6 +10,7 @@
 
 CREATE OR ALTER FUNCTION Robotico.fnStringParseGermanDecimal(@value NVARCHAR(100))
 RETURNS DECIMAL(25,13)
+WITH SCHEMABINDING   -- pure (no table refs): marks it deterministic + inlineable (Froid)
 AS
 BEGIN
     RETURN

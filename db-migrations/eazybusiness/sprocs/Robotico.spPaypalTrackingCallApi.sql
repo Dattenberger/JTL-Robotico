@@ -13,7 +13,9 @@
 --      PayPal tracking API entry point behind the CustomWorkflows actions)
 -- ============================================================================
 
-CREATE OR ALTER PROCEDURE Robotico.spPaypalTrackingCallApi @kLieferschein AS INT
+CREATE OR ALTER PROCEDURE Robotico.spPaypalTrackingCallApi
+    @kLieferschein INT,
+    @debug         BIT = 0   -- 1 = PRINT diagnostics
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -67,6 +69,20 @@ BEGIN
         WHERE tL.kLieferschein = @kLieferschein
           AND tZ.cName LIKE '%paypal%'
 
+        -- Serviceability: a shipment whose Versandart matches no carrier pattern gets
+        -- cPaypalCarrier = NULL and is dropped below — PayPal is then never told about
+        -- it. Log those rows first (they have a tracking number but no carrier mapping)
+        -- so a silently unreported shipment is auditable in tPaypalTrackingLog.
+        INSERT INTO Robotico.tPaypalTrackingLog (cQuelle, bProduction, kInputKey, cBescheibung1, cBescheibung2, dErstellt)
+        SELECT 'spPaypalTrackingCallApi/unmapped-carrier', @DisableSandbox, @kLieferschein,
+               'Unmapped carrier — shipment dropped from PayPal batch',
+               'Versandart: ' + ISNULL(cVersandartName, '(null)')
+                   + ' | Sendungsnr: ' + ISNULL(cSendungsnummer, '(null)'),
+               GETUTCDATE()
+        FROM @tRawDataForApi
+        WHERE cPaypalCarrier IS NULL
+          AND cSendungsnummer IS NOT NULL;
+
         DELETE
         FROM @tRawDataForApi
         WHERE cBestellnr IS NULL
@@ -112,12 +128,15 @@ BEGIN
         DELETE FROM [Robotico].[tPaypalTrackingLog] WHERE dErstellt < DATEADD(day, -30, GETDATE())
     COMMIT TRAN
 
-    PRINT 'RESULTS FOR spPaypalTrackingCallApi'
-    PRINT 'URL ' + @URL;
-    PRINT '@request ' + @request;
-    PRINT 'Status ' + @ResponseStatus + ' ' + @ResponseStatusText;
-    PRINT '@ResponseText ' + @ResponseText;
-    PRINT 'END RESULTS FOR spPaypalTrackingCallApi'
+    IF @debug = 1
+    BEGIN
+        PRINT 'RESULTS FOR spPaypalTrackingCallApi'
+        PRINT 'URL ' + @URL;
+        PRINT '@request ' + @request;
+        PRINT 'Status ' + @ResponseStatus + ' ' + @ResponseStatusText;
+        PRINT '@ResponseText ' + @ResponseText;
+        PRINT 'END RESULTS FOR spPaypalTrackingCallApi'
+    END
 
 END
 GO

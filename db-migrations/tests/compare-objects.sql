@@ -2,12 +2,15 @@
 -- compare-objects.sql — file <-> deployed-object comparison (read-only)
 -- ============================================================================
 -- Lists this business's own objects (schema Robotico + our CustomWorkflows.sp*
--- actions) with a hash of their definition, so a deployed database can be
--- compared against what db-migrations/eazybusiness/ would produce. Two uses:
---   1. Baseline pre-check — before `deploy.ps1 -Baseline`, confirm the file
---      contents match the currently deployed objects (baseline assumes equality).
---   2. Post-update smoke — after a JTL update, spot which of our objects a JTL
---      update may have dropped/overwritten.
+-- actions) with a SHA2_256 hash of their engine-stored definition, so two
+-- DATABASES can be compared object-by-object. This is a DB<->DB drift tool: the
+-- hash is over OBJECT_DEFINITION (engine-normalized text), which never byte-matches
+-- a file's raw CREATE OR ALTER source — do NOT expect a file<->DB match. Two uses:
+--   1. Baseline pre-check — run this against BOTH the DB to adopt and a known-good
+--      reference DB, then diff the two outputs; equal hashes confirm they carry the
+--      same object definitions before `deploy.ps1 -Baseline` (which assumes equality).
+--   2. Post-update smoke — after a JTL update, diff the DB against a pre-update
+--      capture to spot which of our objects a JTL update dropped/overwritten.
 --
 -- STRICTLY READ-ONLY. Run per eazybusiness database:
 --   /opt/mssql-tools*/bin/sqlcmd -S vm-sql-test1.zdbikes.local -E -C \

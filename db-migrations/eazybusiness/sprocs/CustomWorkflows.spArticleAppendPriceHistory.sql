@@ -22,7 +22,10 @@ BEGIN
     -- Configuration constants
     DECLARE @FIELD_NAME NVARCHAR(255) = 'Vergangene Preise';
     DECLARE @DEFAULT_USERNAME NVARCHAR(100) = '[Unbekannt]';
-    DECLARE @VAT_RATE DECIMAL(5,4) = 0.19;
+    -- Fallback only: the article's ACTUAL domestic rate is resolved below; this
+    -- constant is used solely when that resolution yields nothing.
+    DECLARE @VAT_RATE_FALLBACK DECIMAL(6,4) = 0.19;
+    DECLARE @vatRate DECIMAL(6,4);
     DECLARE @MAX_ENTRIES INT = 1000;
     DECLARE @TRIM_BUFFER INT = 10;
     DECLARE @PRICE_THRESHOLD DECIMAL(10,4) = 0.001;
@@ -54,6 +57,22 @@ BEGIN
             RAISERROR('Article not found: %d', 16, 1, @kArtikel);
             RETURN;
         END
+
+        -- Resolve the article's ACTUAL domestic VAT rate (README §4: resolve by name,
+        -- don't hard-code). Reduced-rate articles (7%) otherwise get a wrong gross value
+        -- in the history. The gross is display-only — change-detection compares net +
+        -- buffer, not gross — so an unresolvable rate degrades gracefully to the 19%
+        -- fallback rather than failing the workflow. "Inland" is JTL's domestic tax zone.
+        SELECT TOP (1) @vatRate = ss.fSteuersatz / 100.0
+        FROM dbo.tArtikel a
+        JOIN dbo.tSteuersatz ss ON ss.kSteuerklasse = a.kSteuerklasse
+        JOIN dbo.tSteuerzone sz ON sz.kSteuerzone   = ss.kSteuerzone
+        WHERE a.kArtikel = @kArtikel
+          AND sz.cName   = N'Inland'
+        ORDER BY sz.kSteuerzone;
+
+        IF @vatRate IS NULL
+            SET @vatRate = @VAT_RATE_FALLBACK;
 
         -- A missing 'Vergangene Preise' field definition throws inside the helper
         -- and propagates through this TRY (no return-code path).
@@ -88,7 +107,7 @@ BEGIN
 
         IF @hasChanged = 1
         BEGIN
-            SET @vkBrutto = @currentVkNetto * (1 + @VAT_RATE);
+            SET @vkBrutto = @currentVkNetto * (1 + @vatRate);
 
             SET @newEntry = CONCAT_WS('; ',
                 FORMAT(GETDATE(), 'dd.MM.yyyy HH:mm:ss', 'de-DE'),

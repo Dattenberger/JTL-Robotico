@@ -66,9 +66,17 @@ BEGIN
             -- 5. Insert into tGebinde (always with the original data)
             -- IMPORTANT: tGebinde.cName is nvarchar(255) but JTL uses it as a
             -- foreign key onto tEinheit.kEinheit! The value must be the unit ID.
-            -- Currently: 81 = "Stk." (piece).
+            -- The "Stk." (piece) unit ID is NOT stable across mandant clones, so it is
+            -- resolved by name here instead of hard-coded (README §4: never hard-code
+            -- JTL IDs; a missing prerequisite is a hard FAIL). dbo.tEinheit carries no
+            -- name column — the localized name lives in dbo.tEinheitSprache.
+            DECLARE @kEinheitStk INT =
+                (SELECT MIN(kEinheit) FROM dbo.tEinheitSprache WHERE cName = N'Stk.');
+            IF @kEinheitStk IS NULL
+                THROW 50000, 'Unit "Stk." not found in dbo.tEinheitSprache — cannot create Gebinde.', 1;
+
             INSERT INTO dbo.tGebinde (kArtikel, cUPC, cEAN, cName, fAnzahl)
-            VALUES (@kArtikel, @cHAN, @cGTIN, '81', 1);
+            VALUES (@kArtikel, @cHAN, @cGTIN, CAST(@kEinheitStk AS NVARCHAR(255)), 1);
 
             -- 6. Update depending on case
             IF @bKeineLieferantenAngepasst = 1

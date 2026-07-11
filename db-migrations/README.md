@@ -254,6 +254,14 @@ changes nothing and therefore skips the confirmation).
 > prompts interactively (secure input). The password is a secret — it never lives in
 > `targets.config.json` or anywhere in git. `-Scope eazybusiness` needs no such token.
 >
+> **Runtime exposure.** grate accepts the token only as a `--usertokens=CertPassword=…`
+> **command-line argument**, so during a `-Scope global` deploy the password is briefly
+> visible in the host's process table (`ps`, `Get-CimInstance Win32_Process`) to any local
+> user. Run global deploys only on a single-operator / least-privilege host, and never echo
+> `$grateArgs` from `deploy.ps1` (a `# @see` gotcha marks that line). When it reads the
+> password interactively, `deploy.ps1` frees the unmanaged plaintext buffer (`ZeroFreeBSTR`)
+> immediately after copying it out.
+>
 > Two constraints on the cert password (the token is substituted **textually** into a
 > single-quoted SQL literal, so grate cannot escape it):
 > - **No single quote (`'`).** A quote breaks out of the literal in `0011`/`900`;
@@ -290,7 +298,7 @@ changes nothing and therefore skips the confirmation).
 | File | Kind | Checks |
 |---|---|---|
 | `tests/lint-migrations.ps1` | static lint | rules (a)–(g) above; exit ≠ 0 on any violation |
-| `tests/compare-objects.sql` | read-only integration | file ↔ deployed-object hash comparison (baseline pre-check, post-update smoke) |
+| `tests/compare-objects.sql` | read-only integration | **DB↔DB** object-hash drift (run against two databases, diff the outputs — baseline pre-check, post-update smoke). Not a file↔DB compare: it hashes `OBJECT_DEFINITION` (engine-normalized text), which never byte-matches a file's raw source. |
 | `tests/eazybusiness/*.sql` | manual integration | ported `*_Tests.sql` — run against a **test mandant**, never prod |
 
 Run the lint locally before every commit:
@@ -298,6 +306,16 @@ Run the lint locally before every commit:
 ```powershell
 pwsh db-migrations/tests/lint-migrations.ps1
 ```
+
+> [!IMPORTANT]
+> **Engine floor for the Ebene-A string/CSV API: SQL Server 2022+.**
+> `Robotico.fnEscapedCSVParseLine` and `Robotico.fnStringTrimToMaxLines` use the
+> 3-argument `STRING_SPLIT(…, 1)` (`enable_ordinal`), introduced in SQL Server 2022 (16.x).
+> Their consumers (the history procs, `fnEscapedCSVGetField`, the duplicate-order flow)
+> inherit that floor. `CREATE` succeeds on older engines, but the functions **fail at
+> runtime** there — and Ebene-A objects travel with mandant clones, which can carry a lower
+> database compatibility level than their host. Before relying on these on a new target,
+> verify its engine version / compat level.
 
 ---
 
