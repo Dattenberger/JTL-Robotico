@@ -126,8 +126,12 @@ pipeline step, and a non-null `FinishedAt`. No `ErrorText`.
 
 ```sql
 SELECT DB_NAME() AS db,
-       (SELECT nVersion FROM dbo.tVersion) AS jtl_version;  -- expect 2.0.5.0
+       (SELECT cVersion FROM dbo.tVersion) AS jtl_version;  -- expect 2.0.5.0
 ```
+
+> [!NOTE]
+> The JTL version column is **`cVersion`** (`nvarchar`, e.g. `2.0.5.0`) — verified
+> against the live test1 schema on 2026-07-13. There is no `nVersion` column.
 
 ### 4.3 Worker neutralisation (D9)
 

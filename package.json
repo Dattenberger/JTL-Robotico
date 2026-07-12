@@ -20,7 +20,11 @@
     "db:e2e:copy-logins": "pwsh db-migrations/tests/docker/copy-logins.ps1",
 
     "db:mandant:create": "pwsh db-migrations/mandant.ps1 -Create",
-    "db:mandant:list": "pwsh db-migrations/mandant.ps1 -List"
+    "db:mandant:list": "pwsh db-migrations/mandant.ps1 -List",
+
+    "db:validate": "pwsh db-migrations/tests/validate-rollout.ps1",
+    "db:validate:test": "pwsh db-migrations/tests/validate-rollout.ps1 -Environment TEST",
+    "db:validate:e2e": "pwsh db-migrations/tests/validate-rollout.ps1 -Environment E2E"
   },
   "dependencies": {
     "@openai/codex": "^0.16.0"
