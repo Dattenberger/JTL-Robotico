@@ -17,7 +17,10 @@
     "db:e2e:down": "pwsh db-migrations/tests/docker/teardown.ps1",
     "db:e2e:down:full": "pwsh db-migrations/tests/docker/teardown.ps1 -PurgeSecrets",
     "db:e2e:validate": "pwsh db-migrations/tests/docker/validate.ps1",
-    "db:e2e:copy-logins": "pwsh db-migrations/tests/docker/copy-logins.ps1"
+    "db:e2e:copy-logins": "pwsh db-migrations/tests/docker/copy-logins.ps1",
+
+    "db:mandant:create": "pwsh db-migrations/mandant.ps1 -Create",
+    "db:mandant:list": "pwsh db-migrations/mandant.ps1 -List"
   },
   "dependencies": {
     "@openai/codex": "^0.16.0"

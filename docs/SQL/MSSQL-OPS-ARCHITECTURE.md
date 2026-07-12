@@ -185,7 +185,7 @@ line before each step so a mid-step failure is attributable in `StepLog`.
 | Signing cert | `db-migrations/global/up/0011_signing_certificate.sql` | private key in RoboticoOps, public in master |
 | Proxy login | `db-migrations/global/up/0010_jobstartuser_login.sql` | DISABLEd, `DENY CONNECT SQL`, msdb SQLAgentOperatorRole |
 | Reset colleague SPs | `db-migrations/global/sprocs/reset.{StartTestmandantReset,GetResetStatus,ListMandants,CancelResetRequest}.sql` | self-service surface (EXECUTE → `ops_reset_executor`). Start + Cancel are signed `EXECUTE AS jobstartuser` (cross into msdb); Status + List are grant-only |
-| Reset admin SP | `db-migrations/global/sprocs/reset.PurgeOldRequests.sql` | audit-log retention (keep-last-N per mandant); EXECUTE → `ops_admin` only |
+| Reset admin SPs | `db-migrations/global/sprocs/reset.{PurgeOldRequests,CreateTestmandant}.sql` | EXECUTE → `ops_admin` only. `PurgeOldRequests` = audit-log retention (keep-last-N per mandant). `CreateTestmandant` = one-call mandant creation: registers `ops.Mandant` (no silent upsert — existing key THROWs) then EXECs `StartTestmandantReset`, whose first reset **builds** the clone DB (`internal_CloneDatabase` RESTOREs it). Not signed; delegates the msdb crossing to the signed `Start` |
 | Reset pipeline | `db-migrations/global/sprocs/reset.{ProcessNextResetRequest,internal_*}.sql` | whitelist-guarded loop over `ops.ResetStep`; uniform-contract steps; `internal_LogStep` StepLog helper |
 | Agent-job wrapper | `db-migrations/global/runAfterOtherAnyTimeScripts/reset.EnsureAgentJob.sql` | idempotent job (re)install, owner `sa` |
 | Re-signing | `db-migrations/global/permissions/900_resign_procedures.sql` | everytime; heals dropped signatures |

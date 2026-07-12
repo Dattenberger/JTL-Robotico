@@ -48,11 +48,27 @@ throwaway mandant **`tm9`** (a deliberately high number that won't collide with
 the real `tm1`/`tm2` mandants), cloned from test1's own `eazybusiness`, targeting
 a fresh DB `eazybusiness_tm9`.
 
-Insert one `ops.Mandant` row for `tm9` (`IsActive = 1`, `TargetDb =
+**Preferred — one call via `reset.CreateTestmandant` (admin):** register the mandant AND
+kick its first reset (which builds the clone) in a single step, instead of a manual
+`INSERT` + separate `StartTestmandantReset`:
+
+```sql
+-- run against RoboticoOps, as an ops_admin member
+EXEC reset.CreateTestmandant @MandantKey = N'tm9', @DisplayName = N'Reset validation';
+-- registers ops.Mandant (LoginName / ShopLicense default to the 0020 template + sentinel;
+-- pass @LoginName / @ShopUrl / @ShopLicense to override) and returns {RequestId, Status}.
+-- Steps 2–3 (Agent + trigger) are then already done — skip to Step 4 (watch progress).
+```
+
+or via the wrapper: `npm run db:mandant:create -- -Environment TEST -MandantKey tm9 -DisplayName "Reset validation"`.
+An existing key is a hard error (no silent upsert); corrections go through an admin `UPDATE`.
+
+**Manual alternative** (if you only want to register without resetting, e.g. to inspect the
+row first): insert one `ops.Mandant` row for `tm9` (`IsActive = 1`, `TargetDb =
 'eazybusiness_tm9'`, `Developer`/`DisplayName`/`LoginName`/`ShopUrl`/`ShopLicense`
 per the seed template — use the staging shop license, never a prod key committed
-to git; see plan D8). Do this with the same seed mechanism the rollout runbook
-uses; do not hand-edit prod data.
+to git; see plan D8), or call `CreateTestmandant … @StartReset = 0`. Do this with the same
+seed mechanism the rollout runbook uses; do not hand-edit prod data.
 
 > [!NOTE]
 > Two shape constraints gate the seed row. `MandantKey` must match `tm[0-9]%`

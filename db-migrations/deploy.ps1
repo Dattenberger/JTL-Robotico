@@ -117,54 +117,25 @@ function Invoke-Grate {
     }
 }
 
-# --- config resolution ------------------------------------------------------
+# --- config + auth resolution (shared with mandant.ps1) ---------------------
+# NB: named $resolvedTarget, NOT $target — the latter collides (case-insensitively) with the
+# [string] $Target parameter above and would coerce the object to its string form.
+. (Join-Path $scriptRoot 'lib' 'targets.ps1')
 $configPath = Join-Path $scriptRoot 'targets.config.json'
-if (-not (Test-Path $configPath)) {
-    throw "Missing config: $configPath"
-}
-$config = Get-Content -Raw -Path $configPath | ConvertFrom-Json
-
-if (-not $config.environments.PSObject.Properties.Name.Contains($Environment)) {
-    throw "Environment '$Environment' not found in targets.config.json"
-}
-# Named $envConfig (not $env) to avoid visual collision with PowerShell's $env: drive.
-$envConfig = $config.environments.$Environment
-$server = $envConfig.server
-
-# --- authentication ---------------------------------------------------------
-# Default = integrated (Windows auth) for real environments; NO secrets in the
-# config. auth='sql' (E2E container only) reads the password at deploy time from
-# the env var named by sqlPasswordEnv — the password never lives in the config.
-$authMode = if ($envConfig.PSObject.Properties.Name -contains 'auth') { $envConfig.auth } else { 'integrated' }
-$authFragment = 'Trusted_Connection=True'
-# Declared up front (StrictMode) so the cert-existence safety probe can reference them
-# in the integrated case too, where the sql branch below never sets them.
-$sqlUser = $null
-$sqlPassword = $null
-if ($authMode -eq 'sql') {
-    $sqlUser = $envConfig.sqlUser
-    $passwordEnvName = $envConfig.sqlPasswordEnv
-    $sqlPassword = [Environment]::GetEnvironmentVariable($passwordEnvName)
-    if ([string]::IsNullOrEmpty($sqlPassword)) {
-        throw "Environment '$Environment' uses SQL auth but env var '$passwordEnvName' is empty. For the E2E container, run tests/docker/setup.ps1 and load .env.local (e.g. export MSSQL_SA_PASSWORD=... from that file)."
-    }
-    # Connection-string values are semicolon-delimited; a stray ';' in the
-    # password would corrupt the string. Reject it with a clear message.
-    if ($sqlPassword.Contains(';')) {
-        throw "The '$passwordEnvName' password must not contain a semicolon (';') — it would break the connection string."
-    }
-    $authFragment = "User ID=$sqlUser;Password=$sqlPassword"
-}
-elseif ($authMode -ne 'integrated') {
-    throw "Unknown auth mode '$authMode' for environment '$Environment' (expected 'integrated' or 'sql')."
-}
+$resolvedTarget = Get-RoboticoTarget -Environment $Environment -ConfigPath $configPath
+$server = $resolvedTarget.Server
+$authMode = $resolvedTarget.AuthMode
+$sqlUser = $resolvedTarget.SqlUser
+$sqlPassword = $resolvedTarget.SqlPassword
+# grate connection-string auth fragment: SQL auth for the E2E container, else Windows auth.
+$authFragment = if ($authMode -eq 'sql') { "User ID=$sqlUser;Password=$sqlPassword" } else { 'Trusted_Connection=True' }
 
 # --- scope -> grate parameters ---------------------------------------------
 switch ($Scope) {
     'eazybusiness' {
         $sqlFilesDirectory = Join-Path $scriptRoot 'eazybusiness'
         $schema = 'Robotico'
-        $allDbs = @($envConfig.eazybusiness)
+        $allDbs = @($resolvedTarget.Eazybusiness)
         if ($Target) {
             if ($allDbs -notcontains $Target) {
                 throw "Target '$Target' is not in the $Environment eazybusiness list: $($allDbs -join ', ')"
@@ -177,11 +148,11 @@ switch ($Scope) {
     }
     'global' {
         if ($Target) {
-            Write-Warning "-Target '$Target' is ignored for -Scope global (there is exactly one global DB: $($envConfig.global))."
+            Write-Warning "-Target '$Target' is ignored for -Scope global (there is exactly one global DB: $($resolvedTarget.GlobalDb))."
         }
         $sqlFilesDirectory = Join-Path $scriptRoot 'global'
         $schema = 'ops'
-        $databases = @($envConfig.global)
+        $databases = @($resolvedTarget.GlobalDb)
     }
 }
 

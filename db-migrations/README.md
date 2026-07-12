@@ -255,6 +255,8 @@ The repo-root `package.json` exposes the whole infrastructure surface via `npm r
 | `npm run db:e2e:up` / `:down` / `:down:full` | container `setup.ps1` / `teardown.ps1` / teardown `-PurgeSecrets` |
 | `npm run db:e2e:validate` | `validate_structure.sql` against the container's RoboticoOps |
 | `npm run db:e2e:copy-logins` | copy real server logins into the container (see below) |
+| `npm run db:mandant:create -- -Environment … -MandantKey tmN -DisplayName "…"` | create a new test mandant (registers + kicks the first reset, which **builds** the clone). Admin-only |
+| `npm run db:mandant:list -- -Environment …` | list mandants (wraps `reset.ListMandants`) |
 
 Add `-- -DryRun` to any deploy variant for a no-op run (e.g. `npm run db:deploy:test -- -DryRun`).
 The two `Deploy Test Environment:*` legacy entries are kept as the D12 PowerShell fallback.

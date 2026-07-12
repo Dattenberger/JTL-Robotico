@@ -29,6 +29,14 @@ IF OBJECT_ID(N'reset.CancelResetRequest') IS NOT NULL
 IF OBJECT_ID(N'reset.PurgeOldRequests') IS NOT NULL
     GRANT EXECUTE ON OBJECT::reset.PurgeOldRequests TO ops_admin;
 
+-- Test-mandant CREATION is admin-only — it defines a new database on the instance (the first
+-- reset RESTOREs the clone). reset.CreateTestmandant also EXECs reset.StartTestmandantReset,
+-- so ops_admin needs EXECUTE on BOTH (explicit, independent of EXECUTE ownership-chaining).
+IF OBJECT_ID(N'reset.CreateTestmandant') IS NOT NULL
+    GRANT EXECUTE ON OBJECT::reset.CreateTestmandant TO ops_admin;
+IF OBJECT_ID(N'reset.StartTestmandantReset') IS NOT NULL
+    GRANT EXECUTE ON OBJECT::reset.StartTestmandantReset TO ops_admin;
+
 DECLARE @adGroup sysname = N'ZDBIKES\sql-jtl-users';
 
 IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @adGroup)

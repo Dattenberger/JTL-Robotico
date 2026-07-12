@@ -28,6 +28,7 @@ DECLARE @problems TABLE (Check_ nvarchar(200));
         (N'reset.GetResetStatus',             N'P'),
         (N'reset.ListMandants',               N'P'),
         (N'reset.CancelResetRequest',         N'P'),
+        (N'reset.CreateTestmandant',          N'P'),
         (N'reset.PurgeOldRequests',           N'P'),
         (N'reset.ProcessNextResetRequest',    N'P'),
         (N'reset.internal_LogStep',           N'P'),
