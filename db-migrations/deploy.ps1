@@ -137,6 +137,10 @@ $server = $envConfig.server
 # the env var named by sqlPasswordEnv — the password never lives in the config.
 $authMode = if ($envConfig.PSObject.Properties.Name -contains 'auth') { $envConfig.auth } else { 'integrated' }
 $authFragment = 'Trusted_Connection=True'
+# Declared up front (StrictMode) so the cert-existence safety probe can reference them
+# in the integrated case too, where the sql branch below never sets them.
+$sqlUser = $null
+$sqlPassword = $null
 if ($authMode -eq 'sql') {
     $sqlUser = $envConfig.sqlUser
     $passwordEnvName = $envConfig.sqlPasswordEnv
@@ -207,26 +211,156 @@ if ($Environment -eq 'PROD' -and -not $DryRun) {
 #   CLI argument (built below), so it is briefly visible in the host's process table while
 #   grate runs. Run global deploys on a single-operator / least-privilege host, and NEVER
 #   print or log $grateArgs. See README §7.
+#
+# Password resolution order (global scope only):
+#   1. $env:GRATE_CERT_PASSWORD           — explicit session override.
+#   2. persisted per-environment store    — survives sessions (Windows: a User env var
+#      GRATE_CERT_PASSWORD_<ENV>; Linux/macOS: ~/.robotico-ops/grate-cert.env, chmod 600).
+#   3. auto-generate + persist            — first-run convenience, HARD-GUARDED: only when
+#      the target instance has NO RoboticoOpsSigning certificate yet. If the cert already
+#      exists but no password is known, ABORT — never generate a fresh one (it would not
+#      match the immutable private key from up/0011, and every re-sign would fail; CQG-4).
+
+# Per-environment key so TEST / PROD / E2E each keep their own cert password.
+function Get-CertStoreKey { param([string] $Environment) "GRATE_CERT_PASSWORD_$Environment" }
+
+# Linux/macOS persisted store file (KEY=VALUE lines).
+function Get-CertStoreFile { Join-Path (Join-Path $HOME '.robotico-ops') 'grate-cert.env' }
+
+function Read-PersistedCertPassword {
+    param([string] $Environment)
+    $key = Get-CertStoreKey $Environment
+    if ($env:OS -eq 'Windows_NT') {
+        return [Environment]::GetEnvironmentVariable($key, 'User')
+    }
+    $file = Get-CertStoreFile
+    if (-not (Test-Path $file)) { return $null }
+    foreach ($line in (Get-Content -Path $file)) {
+        if ($line -match "^\s*$([regex]::Escape($key))\s*=\s*(.*)$") { return $Matches[1] }
+    }
+    return $null
+}
+
+function Save-PersistedCertPassword {
+    param([string] $Environment, [string] $Password)
+    $key = Get-CertStoreKey $Environment
+    if ($env:OS -eq 'Windows_NT') {
+        [Environment]::SetEnvironmentVariable($key, $Password, 'User')
+        return "user environment variable $key (persisted for this Windows account)"
+    }
+    $file = Get-CertStoreFile
+    $dir = Split-Path -Parent $file
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        & chmod 700 $dir 2>$null
+    }
+    $existing = if (Test-Path $file) {
+        @(Get-Content -Path $file | Where-Object { $_ -notmatch "^\s*$([regex]::Escape($key))\s*=" })
+    }
+    else { @() }
+    Set-Content -Path $file -Value ($existing + "$key=$Password") -Encoding utf8
+    & chmod 600 $file 2>$null
+    return $file
+}
+
+# 100 chars, [A-Za-z0-9] only (alphanumeric ⇒ no single-quote / connection-string / shell
+# escaping hazard), CSPRNG, guaranteed >=1 upper / lower / digit (SQL password complexity).
+function New-CertPassword {
+    $upper = ([char[]](65..90))
+    $lower = ([char[]](97..122))
+    $digit = ([char[]](48..57))
+    $all = $upper + $lower + $digit
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $pick = { param($set) $b = [byte[]]::new(1); $rng.GetBytes($b); $set[$b[0] % $set.Length] }
+        $chars = @((& $pick $upper), (& $pick $lower), (& $pick $digit))
+        while ($chars.Count -lt 100) { $chars += (& $pick $all) }
+        for ($i = $chars.Count - 1; $i -gt 0; $i--) {
+            $b4 = [byte[]]::new(4); $rng.GetBytes($b4)
+            $j = [int]([System.BitConverter]::ToUInt32($b4, 0) % ($i + 1))
+            $t = $chars[$i]; $chars[$i] = $chars[$j]; $chars[$j] = $t
+        }
+        return (-join $chars)
+    }
+    finally { $rng.Dispose() }
+}
+
+# Safety probe for tier 3. Returns $true (cert present), $false (absent — safe to generate),
+# or $null (unknown: no sqlcmd, or server unreachable). Connects to master so it works even
+# before the global DB exists (a greenfield instance has neither DB nor cert).
+function Test-SigningCertExists {
+    param([string] $Server, [string] $GlobalDb, [string] $AuthMode, [string] $SqlUser, [string] $SqlPassword)
+    $cmd = Get-Command sqlcmd -ErrorAction SilentlyContinue
+    if (-not $cmd) { return $null }
+    $q = "SET NOCOUNT ON; IF DB_ID('$GlobalDb') IS NULL SELECT 0 ELSE " +
+         "SELECT COUNT(*) FROM [$GlobalDb].sys.certificates WHERE name='RoboticoOpsSigning';"
+    $a = @('-S', $Server, '-C', '-h', '-1', '-W', '-b', '-Q', $q)
+    if ($AuthMode -eq 'sql') { $a += @('-U', $SqlUser, '-P', $SqlPassword) } else { $a += '-E' }
+    $out = & $cmd.Source @a 2>&1
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $n = ($out | Where-Object { $_ -match '^\s*\d+\s*$' } | Select-Object -First 1)
+    if ($null -eq $n) { return $null }
+    return ([int]($n.Trim()) -gt 0)
+}
+
 $userTokens = @()
 if ($Scope -eq 'global') {
+    $globalDb = $databases[0]
+
+    # Tier 1: session override.
     $certPassword = $env:GRATE_CERT_PASSWORD
+    $certSource = 'session env $GRATE_CERT_PASSWORD'
+
+    # Tier 2: persisted per-environment store.
     if ([string]::IsNullOrEmpty($certPassword)) {
-        $secure = Read-Host 'RoboticoOpsSigning certificate password' -AsSecureString
-        # Free the unmanaged plaintext buffer promptly (ZeroFreeBSTR) once copied out.
-        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-        try {
-            $certPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-        }
-        finally {
-            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        $certPassword = Read-PersistedCertPassword -Environment $Environment
+        if (-not [string]::IsNullOrEmpty($certPassword)) {
+            $certSource = "persisted store ($(Get-CertStoreKey $Environment))"
         }
     }
+
+    # Tier 3: auto-generate — guarded by the cert-absence safety invariant.
+    if ([string]::IsNullOrEmpty($certPassword)) {
+        $certExists = Test-SigningCertExists -Server $server -GlobalDb $globalDb `
+            -AuthMode $authMode -SqlUser $sqlUser -SqlPassword $sqlPassword
+
+        if ($certExists -eq $true) {
+            throw ("Certificate RoboticoOpsSigning already exists on $server / $globalDb, but no " +
+                   "password is known (not in `$env:GRATE_CERT_PASSWORD nor the persisted store " +
+                   "'$(Get-CertStoreKey $Environment)'). Refusing to auto-generate: a new password " +
+                   "would NOT match the immutable private key from up/0011 and every re-sign would " +
+                   "fail. Obtain the original password (password manager / ~/.claude-secrets.md) and " +
+                   "set it via `$env:GRATE_CERT_PASSWORD or the persisted store.")
+        }
+        if ($null -eq $certExists) {
+            throw ("Cannot verify whether RoboticoOpsSigning already exists on $server / $globalDb " +
+                   "(sqlcmd missing or server unreachable). Refusing to auto-generate a cert password " +
+                   "blind — set `$env:GRATE_CERT_PASSWORD explicitly, or run where sqlcmd can reach the " +
+                   "target so the safety check can confirm the certificate is absent.")
+        }
+
+        # $certExists -eq $false → greenfield instance, safe to mint a fresh password.
+        $certPassword = New-CertPassword
+        $savedTo = Save-PersistedCertPassword -Environment $Environment -Password $certPassword
+        $certSource = "auto-generated (first run) + persisted"
+        Write-Host ''
+        Write-Host "No cert password found and RoboticoOpsSigning is absent on the target — generated a new one." -ForegroundColor Yellow
+        Write-Host "  Persisted to : $savedTo" -ForegroundColor Yellow
+        Write-Host "  Password     : $certPassword" -ForegroundColor Yellow
+        Write-Host "  ^ Shown ONCE. Also save it in your password manager: up/0011 is immutable, so this" -ForegroundColor Yellow
+        Write-Host "    is the only key to the RoboticoOpsSigning private key. A lost password means" -ForegroundColor Yellow
+        Write-Host "    dropping + recreating the certificate via a new up/ script." -ForegroundColor Yellow
+        Write-Host ''
+    }
+
     # The token is substituted TEXTUALLY into a single-quoted SQL literal in 0011/900 —
     # grate cannot escape it, so a single quote would break out of the literal. Reject it
-    # here with a clear message rather than producing a broken deploy.
+    # here with a clear message rather than producing a broken deploy. (Auto-generated
+    # passwords are alphanumeric and never hit this; a store/env value still might.)
     if ($certPassword.Contains("'")) {
         throw "The RoboticoOpsSigning certificate password must not contain a single quote ('): it is substituted textually into a single-quoted SQL literal in global/up/0011 + global/permissions/900."
     }
+    Write-Host "Cert password source: $certSource" -ForegroundColor DarkGray
     $userTokens += "CertPassword=$certPassword"
 }
 

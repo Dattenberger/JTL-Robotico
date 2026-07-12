@@ -89,6 +89,19 @@ Two secrets are **generated**, never committed:
 - `deploy.ps1 -Environment E2E` reads the SA password from `$env:MSSQL_SA_PASSWORD`
   at deploy time — the password is **not** in `targets.config.json`.
 
+> [!NOTE]
+> **Cert password for `-Scope global`.** Two ways work, both fine for E2E:
+> 1. **Export `.env.local`'s value** — `set -a; source .env.local; set +a` puts
+>    `GRATE_CERT_PASSWORD` in the session, which `deploy.ps1` uses as tier 1.
+> 2. **Let `deploy.ps1` auto-generate it** — export only `MSSQL_SA_PASSWORD` (not
+>    `GRATE_CERT_PASSWORD`). On a **fresh** container (no `RoboticoOpsSigning` cert yet)
+>    `deploy.ps1` mints a 100-char password and persists it to
+>    `~/.robotico-ops/grate-cert.env` under `GRATE_CERT_PASSWORD_E2E`, then reuses it on
+>    every later E2E global deploy. See `db-migrations/README.md` §7. After a `teardown -v`
+>    + rebuild the persisted value is simply reused as the new certificate's password (the
+>    fresh `up/0011` creates the cert with whatever `{{CertPassword}}` it is given), so no
+>    cleanup is needed.
+
 > [!CAUTION]
 > Never commit `.env.local` or paste its contents anywhere. If you need
 > reproducible secrets, copy `.env.example` to `.env.local` and set your own — but

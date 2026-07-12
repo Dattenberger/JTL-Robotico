@@ -247,20 +247,40 @@ Targets (servers, DB lists) are resolved from `targets.config.json` — no secre
 changes nothing and therefore skips the confirmation).
 
 > [!NOTE]
-> **Ebene B deploys prompt for the module-signing certificate password.** `-Scope global`
+> **Ebene B resolves the module-signing certificate password automatically.** `-Scope global`
 > applies the `RoboticoOpsSigning` signing chain (`global/up/0011_signing_certificate.sql`,
 > `global/permissions/900_resign_procedures.sql`), whose `{{CertPassword}}` token
-> `deploy.ps1` fills at run time: it reads `$env:GRATE_CERT_PASSWORD` when set, otherwise
-> prompts interactively (secure input). The password is a secret — it never lives in
-> `targets.config.json` or anywhere in git. `-Scope eazybusiness` needs no such token.
+> `deploy.ps1` fills at run time in this order:
+>
+> 1. **`$env:GRATE_CERT_PASSWORD`** — explicit session override (highest priority).
+> 2. **Persisted per-environment store** — survives sessions, keyed `GRATE_CERT_PASSWORD_<ENV>`
+>    (`TEST`/`PROD`/`E2E`). Windows: a `User`-scoped environment variable. Linux/macOS:
+>    `~/.robotico-ops/grate-cert.env` (`KEY=VALUE`, `chmod 600`), read automatically.
+> 3. **Auto-generate + persist** — first-run convenience. A 100-char, purely alphanumeric
+>    (`[A-Za-z0-9]`, so no quoting hazard) CSPRNG password with guaranteed upper/lower/digit
+>    is minted, persisted (tier 2 location), and shown **once** on screen so you can also
+>    file it in your password manager.
+>
+> The password is a secret — it never lives in `targets.config.json` or anywhere in git.
+> `-Scope eazybusiness` needs no such token.
+>
+> > [!CAUTION]
+> > **Auto-generation is hard-guarded (CQG-4 mismatch trap).** Tier 3 runs **only** when the
+> > target instance has **no** `RoboticoOpsSigning` certificate yet (probed via `sqlcmd`
+> > against the global DB / `master`). If the certificate already exists but no password is
+> > known (empty env + empty store), `deploy.ps1` **aborts** with a clear message — it will
+> > **never** mint a fresh password for an existing cert, because that new value could not
+> > unlock the immutable private key from `up/0011` and every re-sign would fail. If the
+> > safety probe cannot run (no `sqlcmd`, or the server is unreachable), the deploy also
+> > aborts rather than generate blind — set `$env:GRATE_CERT_PASSWORD` explicitly then.
 >
 > **Runtime exposure.** grate accepts the token only as a `--usertokens=CertPassword=…`
 > **command-line argument**, so during a `-Scope global` deploy the password is briefly
 > visible in the host's process table (`ps`, `Get-CimInstance Win32_Process`) to any local
 > user. Run global deploys only on a single-operator / least-privilege host, and never echo
-> `$grateArgs` from `deploy.ps1` (a `# @see` gotcha marks that line). When it reads the
-> password interactively, `deploy.ps1` frees the unmanaged plaintext buffer (`ZeroFreeBSTR`)
-> immediately after copying it out.
+> `$grateArgs` from `deploy.ps1` (a `# @see` gotcha marks that line). `deploy.ps1` prints
+> only the password *source* (`session env` / `persisted store` / `auto-generated`), never
+> the value — except the one-time display when a password is freshly generated.
 >
 > Two constraints on the cert password (the token is substituted **textually** into a
 > single-quoted SQL literal, so grate cannot escape it):
