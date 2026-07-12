@@ -240,6 +240,34 @@ pwsh db-migrations/deploy.ps1 -Scope eazybusiness -Environment TEST -DryRun
 pwsh db-migrations/deploy.ps1 -Scope eazybusiness -Environment PROD -Target eazybusiness -Baseline
 ```
 
+### npm run shortcuts
+
+The repo-root `package.json` exposes the whole infrastructure surface via `npm run`
+(cross-platform `pwsh`). Extra args pass through after `--`:
+
+| Script | Runs |
+|---|---|
+| `npm run db:lint` | the convention lint (must be 0 errors) |
+| `npm run db:deploy -- -Scope … -Environment …` | generic `deploy.ps1` (any arg combination) |
+| `npm run db:deploy:test` / `:test:global` | Ebene A / B against TEST |
+| `npm run db:deploy:prod` / `:prod:global` | Ebene A / B against PROD (keeps the interactive Y/N gate) |
+| `npm run db:deploy:e2e` / `:e2e:global` | Ebene A / B against the local E2E container |
+| `npm run db:e2e:up` / `:down` / `:down:full` | container `setup.ps1` / `teardown.ps1` / teardown `-PurgeSecrets` |
+| `npm run db:e2e:validate` | `validate_structure.sql` against the container's RoboticoOps |
+| `npm run db:e2e:copy-logins` | copy real server logins into the container (see below) |
+
+Add `-- -DryRun` to any deploy variant for a no-op run (e.g. `npm run db:deploy:test -- -DryRun`).
+The two `Deploy Test Environment:*` legacy entries are kept as the D12 PowerShell fallback.
+
+> [!NOTE]
+> **`npm run db:e2e:copy-logins`** (`tests/docker/copy-logins.ps1`) mirrors **SQL** server
+> logins from a read-only source (default `vm-sql-test1`) into the container, **preserving
+> their SID + password hash**, so the reset's orphan-remap/grant paths can be exercised
+> against real SIDs. Windows/AD logins are **skipped by design** — a SQL login's SID is
+> `binary(16)`, an AD SID is longer (28 bytes), and `CREATE LOGIN … FROM WINDOWS` needs the
+> domain a stand-alone container is not joined to. Hashes/passwords are applied via sqlcmd
+> STDIN, never written to a file. `-WhatIf` previews without applying.
+
 Targets (servers, DB lists) are resolved from `targets.config.json` — no secrets there
 (Windows authentication only). `deploy.ps1` requires grate on the `PATH`
 (`dotnet tool install --global grate`) and **prompts for interactive Y/N confirmation on

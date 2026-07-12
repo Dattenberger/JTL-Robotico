@@ -41,34 +41,36 @@ Nothing here ever touches a real server. It talks only to a local container on
 
 All commands run from the repo root, PowerShell 7 (`pwsh`).
 
-```powershell
+```bash
 # 1. Bring up a clean container (generates secrets, waits healthy, verifies).
-pwsh db-migrations/tests/docker/setup.ps1
+npm run db:e2e:up
 
-# 2. Load the generated secrets into the shell (deploy.ps1 reads them from env).
+# 2. Load the SA password into the shell (SQL-auth deploys read it from env).
 #    bash/zsh:  set -a; source db-migrations/tests/docker/.env.local; set +a
-#    pwsh:      Get-Content db-migrations/tests/docker/.env.local |
-#                 Where-Object { $_ -notmatch '^\s*#' -and $_ -match '=' } |
-#                 ForEach-Object { $kv = $_ -split '=', 2; Set-Item "env:$($kv[0].Trim())" $kv[1] }
+#    (Leave GRATE_CERT_PASSWORD unset to let the global deploy auto-generate + persist it;
+#     export it from .env.local instead to use that value — see §3.)
 
-# 3. (Next phase) Restore a JTL test DB named 'eazybusiness' into the container —
-#    via the excel_ekl test-db-jtl transfer pipeline (see §5).
+# 3. Restore a JTL test DB named 'eazybusiness' into the container — via the
+#    excel_ekl test-db-jtl transfer pipeline (see §5).
 
-# 4. Deploy Ebene B (RoboticoOps) — needs GRATE_CERT_PASSWORD from step 2.
-pwsh db-migrations/deploy.ps1 -Scope global -Environment E2E
+# 4. Deploy Ebene B (RoboticoOps) then Ebene A (eazybusiness objects).
+npm run db:deploy:e2e:global
+npm run db:deploy:e2e
 
-# 5. Deploy Ebene A (eazybusiness objects).
-pwsh db-migrations/deploy.ps1 -Scope eazybusiness -Environment E2E
+# 5. Sanity-check the deployed RoboticoOps structure.
+npm run db:e2e:validate
 
-# 6. Run the reset E2E + ported *_Tests.sql suites against the container
-#    (next phase — the reset runs the SQL Agent job).
+# 6. (optional) Mirror real SQL logins for SID-accurate orphan/grant tests.
+npm run db:e2e:copy-logins -- -WhatIf   # preview; drop -WhatIf to apply
 
-# 7. Tear it all down (container + volume).
-pwsh db-migrations/tests/docker/teardown.ps1
+# 7. Tear it all down (container + volume). Add :full to also purge .env.local.
+npm run db:e2e:down
 ```
 
-`setup.ps1` leaves the container **running**. It is idempotent — re-running it
-reuses the existing container and `.env.local`.
+`db:e2e:up` (setup.ps1) leaves the container **running** and is idempotent — re-running it
+reuses the existing container and `.env.local`. The raw `pwsh …` forms still work; the
+`npm run` shortcuts are just the curated entry points (full list: `db-migrations/README.md`
+§7).
 
 ---
 

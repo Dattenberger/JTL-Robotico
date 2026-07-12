@@ -1,7 +1,23 @@
 {
   "scripts": {
     "Deploy Test Environment:tm2-dana": "powershell -ExecutionPolicy Bypass -File \"Projekte/Testsystem/setup-test-environment.ps1\" -EasyBusinessMandant tm2",
-    "Deploy Test Environment:tm3-sanda": "powershell -ExecutionPolicy Bypass -File \"Projekte/Testsystem/setup-test-environment.ps1\" -EasyBusinessMandant tm3"
+    "Deploy Test Environment:tm3-sanda": "powershell -ExecutionPolicy Bypass -File \"Projekte/Testsystem/setup-test-environment.ps1\" -EasyBusinessMandant tm3",
+
+    "db:lint": "pwsh db-migrations/tests/lint-migrations.ps1",
+
+    "db:deploy": "pwsh db-migrations/deploy.ps1",
+    "db:deploy:test": "pwsh db-migrations/deploy.ps1 -Scope eazybusiness -Environment TEST",
+    "db:deploy:test:global": "pwsh db-migrations/deploy.ps1 -Scope global -Environment TEST",
+    "db:deploy:prod": "pwsh db-migrations/deploy.ps1 -Scope eazybusiness -Environment PROD",
+    "db:deploy:prod:global": "pwsh db-migrations/deploy.ps1 -Scope global -Environment PROD",
+    "db:deploy:e2e": "pwsh db-migrations/deploy.ps1 -Scope eazybusiness -Environment E2E",
+    "db:deploy:e2e:global": "pwsh db-migrations/deploy.ps1 -Scope global -Environment E2E",
+
+    "db:e2e:up": "pwsh db-migrations/tests/docker/setup.ps1",
+    "db:e2e:down": "pwsh db-migrations/tests/docker/teardown.ps1",
+    "db:e2e:down:full": "pwsh db-migrations/tests/docker/teardown.ps1 -PurgeSecrets",
+    "db:e2e:validate": "pwsh db-migrations/tests/docker/validate.ps1",
+    "db:e2e:copy-logins": "pwsh db-migrations/tests/docker/copy-logins.ps1"
   },
   "dependencies": {
     "@openai/codex": "^0.16.0"
