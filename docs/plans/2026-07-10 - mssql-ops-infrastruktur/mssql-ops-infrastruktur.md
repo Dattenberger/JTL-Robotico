@@ -21,6 +21,8 @@
 - [adrs/adr-grate-migration-runner.md](adrs/adr-grate-migration-runner.md) — plan-scoped, wird in §5 erstellt
 - [adrs/adr-two-chain-migration-paths.md](adrs/adr-two-chain-migration-paths.md) — plan-scoped, wird in §5 erstellt
 - [adrs/adr-module-signing-reset.md](adrs/adr-module-signing-reset.md) — plan-scoped, wird in §5 erstellt
+- [adrs/adr-reset-step-registry.md](adrs/adr-reset-step-registry.md) — plan-scoped (QG2), data-driven reset pipeline
+- [adrs/adr-ebene-b-hungarian-naming.md](adrs/adr-ebene-b-hungarian-naming.md) — plan-scoped (2026-07-13), Ebene-B RoboticoEKL naming reversal
 
 **Cross-References:**
 - `docs/SQL/NAMING-CONVENTIONS.md` — Schema-Eigentümer-Tabelle (wird in §5 um RoboticoOps + geteilte CW-Zone ergänzt)

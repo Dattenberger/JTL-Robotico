@@ -155,12 +155,35 @@ Commits on `feature/mssql-ops-infrastruktur`: `0d440e0`, `e023da4`, `f47c205`, `
 
 ---
 
+## Addendum — naming rename wave (2026-07-13, DONE)
+
+After the rehearsal, Lukas had all Ebene-B (`RoboticoOps`) objects renamed onto the RoboticoEKL
+Hungarian convention (`ops.tMandant` etc., English Hungarian columns `bActive`/`dCreated`/
+`kResetRequest`, EKL constraint names, and the `spPub_`/`spInternal_`/`sp` proc split). Ebene A
+was **not** touched (already conformant + one-time-hash-journaled on the non-disposable source).
+
+- **Analysis:** [`naming-inventory-hungarian.md`](./naming-inventory-hungarian.md) (v2, EKL-based).
+- **Decision record:** [`adrs/adr-ebene-b-hungarian-naming.md`](../adrs/adr-ebene-b-hungarian-naming.md)
+  (records the reversal of the earlier plain-PascalCase `NAMING-CONVENTIONS.md §9` decision).
+- **Implementation:** commit `72f8c17` (38 files) — SQL renames + the dispatch-whitelist trio
+  (`ProcessNextResetRequest` guard + `CK_tResetStep_cProcName` CHECK + 8 `ops.tResetStep` seeds
+  all moved to `spInternal_`) + validators + PowerShell + live docs. Lint 0 errors.
+- **test1 rebuild (Lukas, main session):** full Ebene-B teardown (agent job, `RoboticoOps`,
+  `RoboticoOpsSigningLogin`, **master certificate** — the last two are essential so the redeploy's
+  fresh cert thumbprint stays consistent), then `db:deploy:test:global` (exit 0, all 27 scripts,
+  cert password from tier 2), `ops.tConfig` C:-path repoint re-applied (`cKey`/`cValue`), and
+  **`db:validate:test` all PASS** on the new names (structure, journals/registry/signatures/agent
+  job/master principals, roundtrip via `spPub_ListMandants` + `spPub_GetResetStatus`).
+- **E2E container:** a `db:e2e:down` + `db:e2e:up` is still pending (the one-time `0011`/`0002`
+  hashes changed) — done on next container use, not blocking.
+
+---
+
 ## Open items / next steps
 
-1. **Naming normalization (separate task, pending Lukas' review).** The Hungarian-notation
-   inventory (`naming-inventory-hungarian.md`) proposes an Ebene-B-only rename wave (disposable →
-   in-place + teardown/redeploy). Six decision questions await Lukas. When approved, the rename
-   is executed as its own change set (with test1 `RoboticoOps` rebuilt and validation re-run).
+1. **Naming normalization — DONE (2026-07-13).** Ebene-B rename executed (`72f8c17`), test1
+   `RoboticoOps` rebuilt and re-validated green, ADR recorded. See the Addendum above. Only the
+   E2E-container `down`/`up` remains, on next use.
 2. **PROD rollout (Phase 4, future).** The rollout runbook's prod steps remain human-gated and
    are **not** part of this rehearsal. The dress rehearsal is the evidence that the prod path is
    safe.
