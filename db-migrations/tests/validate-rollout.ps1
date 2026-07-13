@@ -73,10 +73,8 @@ $repoRoot = (Resolve-Path (Join-Path $migrationsRoot '..')).Path
 . (Join-Path $migrationsRoot 'lib' 'targets.ps1')
 $target = Get-RoboticoTarget -Environment $Environment -ConfigPath (Join-Path $migrationsRoot 'targets.config.json')
 
-# ODBC-build sqlcmd first (Kerberos -E needs mssql-tools18); go-sqlcmd is fine for SQL auth.
-$sqlcmd = @('/opt/mssql-tools18/bin/sqlcmd', '/opt/mssql-tools/bin/sqlcmd', '/usr/local/bin/sqlcmd', 'sqlcmd') |
-    ForEach-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
-if (-not $sqlcmd) { throw 'No sqlcmd found.' }
+# Shared resolver (lib/targets.ps1): ODBC-build sqlcmd first (Kerberos -E needs mssql-tools18).
+$sqlcmdPath = Get-RoboticoSqlcmd
 $authArgs = Get-SqlcmdAuthArgs -Target $target
 
 $structureSql = Join-Path $migrationsRoot 'tests/global/validate_structure.sql'
@@ -91,7 +89,7 @@ function Pass([string] $msg) { Write-Host "  PASS: $msg" -ForegroundColor Green 
 function Invoke-SqlFile([string] $File, [string] $Label) {
     Write-Host "==> $Label" -ForegroundColor Cyan
     $a = $authArgs + @('-d', $target.GlobalDb, '-C', '-b', '-i', $File)
-    $out = & $sqlcmd.Source @a 2>&1
+    $out = & $sqlcmdPath @a 2>&1
     $out | ForEach-Object { Write-Host "     $_" }
     if ($LASTEXITCODE -ne 0) { Fail "$Label reported failures (exit $LASTEXITCODE)." } else { Pass $Label }
 }
@@ -100,7 +98,7 @@ function Invoke-SqlFile([string] $File, [string] $Label) {
 function Invoke-Query([string] $Query, [string] $Db, [string[]] $ExtraArgs) {
     $a = $authArgs + @('-d', $Db, '-C', '-b', '-h', '-1', '-W', '-Q', $Query)
     if ($ExtraArgs) { $a += $ExtraArgs }
-    $out = & $sqlcmd.Source @a 2>&1
+    $out = & $sqlcmdPath @a 2>&1
     return [pscustomobject]@{ Exit = $LASTEXITCODE; Out = ($out -join "`n") }
 }
 
@@ -128,7 +126,7 @@ if ($RightsTestLogin) {
     else {
         $a = @('-S', $target.Server, '-U', $RightsTestLogin, '-P', $pw, '-d', $target.GlobalDb, '-C', '-b', '-h', '-1', '-W',
                '-Q', 'SET NOCOUNT ON; SELECT TOP 1 ShopLicense FROM ops.Mandant;')
-        $out = (& $sqlcmd.Source @a 2>&1) -join "`n"
+        $out = (& $sqlcmdPath @a 2>&1) -join "`n"
         if ($out -match 'permission was denied|SELECT permission') { Pass "column DENY enforced ($RightsTestLogin cannot read ShopLicense)" }
         else { Fail "expected a SELECT-permission-denied error, got: $out" }
     }

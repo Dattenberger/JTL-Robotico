@@ -206,7 +206,11 @@ function Read-PersistedCertPassword {
     }
     $file = Get-CertStoreFile
     if (-not (Test-Path $file)) { return $null }
-    foreach ($line in (Get-Content -Path $file)) {
+    # Raw read + split (mirrors Save-PersistedCertPassword) so a file written without a
+    # trailing newline still parses. One KEY=VALUE per line; first match wins.
+    $raw = Get-Content -Path $file -Raw
+    if (-not $raw) { return $null }
+    foreach ($line in ($raw -split "`r?`n")) {
         if ($line -match "^\s*$([regex]::Escape($key))\s*=\s*(.*)$") { return $Matches[1] }
     }
     return $null
@@ -225,11 +229,22 @@ function Save-PersistedCertPassword {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
         & chmod 700 $dir 2>$null
     }
-    $existing = if (Test-Path $file) {
-        @(Get-Content -Path $file | Where-Object { $_ -notmatch "^\s*$([regex]::Escape($key))\s*=" })
+    # Robust rewrite: read raw, split into lines, drop any prior entry for this key, append
+    # the new one, and write the content back as ONE explicitly-built string. The earlier
+    # "@(Get-Content|Where) + Set-Content array" path could concatenate the new KEY=VALUE
+    # onto the previous line WITHOUT a separating newline (a Set-Content/pipeline quirk),
+    # producing a single corrupt line that hid the key from Read-PersistedCertPassword — the
+    # 2026-07-13 store-corruption bug (a second deploy would then not find the key, miss
+    # tier 2, and mint a *different* password an existing cert could never be unlocked with).
+    # Explicit `-join "`n"` + trailing newline + -NoNewline removes that whole class of bug.
+    $lines = @()
+    if (Test-Path $file) {
+        $raw = Get-Content -Path $file -Raw
+        if ($raw) { $lines = @($raw -split "`r?`n" | Where-Object { $_.Trim() -ne '' }) }
     }
-    else { @() }
-    Set-Content -Path $file -Value ($existing + "$key=$Password") -Encoding utf8
+    $lines = @($lines | Where-Object { $_ -notmatch "^\s*$([regex]::Escape($key))\s*=" })
+    $lines += "$key=$Password"
+    Set-Content -Path $file -Value (($lines -join "`n") + "`n") -NoNewline -Encoding utf8
     & chmod 600 $file 2>$null
     return $file
 }
@@ -261,13 +276,17 @@ function New-CertPassword {
 # before the global DB exists (a greenfield instance has neither DB nor cert).
 function Test-SigningCertExists {
     param([string] $Server, [string] $GlobalDb, [string] $AuthMode, [string] $SqlUser, [string] $SqlPassword)
-    $cmd = Get-Command sqlcmd -ErrorAction SilentlyContinue
-    if (-not $cmd) { return $null }
+    # Shared resolver (lib/targets.ps1): prefers the ODBC-build sqlcmd so the integrated
+    # (-E / Kerberos) probe below actually authenticates. A bare Get-Command sqlcmd would
+    # pick the go-sqlcmd on Linux, which cannot do Kerberos → the probe would fail and the
+    # deploy would abort with "Cannot verify …" (the 2026-07-13 regression).
+    $sqlcmdPath = try { Get-RoboticoSqlcmd } catch { $null }
+    if (-not $sqlcmdPath) { return $null }
     $q = "SET NOCOUNT ON; IF DB_ID('$GlobalDb') IS NULL SELECT 0 ELSE " +
          "SELECT COUNT(*) FROM [$GlobalDb].sys.certificates WHERE name='RoboticoOpsSigning';"
     $a = @('-S', $Server, '-C', '-h', '-1', '-W', '-b', '-Q', $q)
     if ($AuthMode -eq 'sql') { $a += @('-U', $SqlUser, '-P', $SqlPassword) } else { $a += '-E' }
-    $out = & $cmd.Source @a 2>&1
+    $out = & $sqlcmdPath @a 2>&1
     if ($LASTEXITCODE -ne 0) { return $null }
     $n = ($out | Where-Object { $_ -match '^\s*\d+\s*$' } | Select-Object -First 1)
     if ($null -eq $n) { return $null }

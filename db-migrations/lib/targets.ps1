@@ -55,6 +55,27 @@ function Get-RoboticoTarget {
     }
 }
 
+# Resolve the sqlcmd binary path (SSoT for every tool here: deploy.ps1, mandant.ps1,
+# validate-rollout.ps1). Prefers the ODBC-build under /opt/mssql-tools*/bin because a
+# Windows / Kerberos connection (`-E`, integrated auth) needs it — the go-sqlcmd on
+# /usr/local/bin cannot do Kerberos, so a bare `Get-Command sqlcmd` would silently pick
+# the wrong one and break integrated-auth probes (the 2026-07-13 Test-SigningCertExists
+# regression). Falls back to whatever `sqlcmd` is on PATH. Throws if none is found.
+function Get-RoboticoSqlcmd {
+    [CmdletBinding()]
+    param()
+    $candidate = @(
+        '/opt/mssql-tools18/bin/sqlcmd',
+        '/opt/mssql-tools/bin/sqlcmd',
+        '/usr/local/bin/sqlcmd',
+        'sqlcmd'
+    ) | ForEach-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+    if (-not $candidate) {
+        throw 'No sqlcmd found (looked for the ODBC-build /opt/mssql-tools*/bin/sqlcmd first, then PATH).'
+    }
+    return $candidate.Source
+}
+
 # Base sqlcmd argument array (server + auth) for a resolved target. Callers append
 # -d / -Q / -i etc. Uses the ODBC-build sqlcmd path passed in (Kerberos needs mssql-tools18).
 function Get-SqlcmdAuthArgs {

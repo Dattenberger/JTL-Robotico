@@ -87,16 +87,14 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot 'lib' 'targets.ps1')
 $target = Get-RoboticoTarget -Environment $Environment -ConfigPath (Join-Path $scriptRoot 'targets.config.json')
 
-# ODBC-build sqlcmd (Kerberos -E for TEST/PROD).
-$sqlcmd = @('/opt/mssql-tools18/bin/sqlcmd', '/opt/mssql-tools/bin/sqlcmd', '/usr/local/bin/sqlcmd', 'sqlcmd') |
-    ForEach-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
-if (-not $sqlcmd) { throw 'No sqlcmd found.' }
+# ODBC-build sqlcmd (Kerberos -E for TEST/PROD) — shared resolver in lib/targets.ps1.
+$sqlcmdPath = Get-RoboticoSqlcmd
 $baseArgs = (Get-SqlcmdAuthArgs -Target $target) + @('-d', $target.GlobalDb, '-b')
 
 function Invoke-OpsSql([string] $Query, [switch] $NoHeader) {
     $a = $baseArgs + @('-Q', $Query)
     if ($NoHeader) { $a += @('-h', '-1', '-W') }
-    $out = & $sqlcmd.Source @a 2>&1
+    $out = & $sqlcmdPath @a 2>&1
     if ($LASTEXITCODE -ne 0) { throw "sqlcmd failed:`n$out" }
     return $out
 }
