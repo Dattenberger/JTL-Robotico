@@ -4,14 +4,14 @@
 -- test-mandant reset is built on. Both schemas are AUTHORIZATION dbo so that
 -- ownership chaining covers cross-object access inside the signed / EXECUTE-AS
 -- procedures (the reset.* procs read ops.* without needing explicit grants to the
--- impersonated jobstartuser — see reset.StartTestmandantReset).
+-- impersonated jobstartuser — see reset.spPub_StartTestmandantReset).
 --
---   ops.Mandant       — registry of test mandants (which clone belongs to whom).
---   ops.Config        — key/value config that replaces the hard-coded paths from
+--   ops.tMandant       — registry of test mandants (which clone belongs to whom).
+--   ops.tConfig        — key/value config that replaces the hard-coded paths from
 --                       the legacy Projekte/Testsystem scripts.
---   ops.ResetRequest  — request queue + run log (state machine, audit trail).
+--   ops.tResetRequest  — request queue + run log (state machine, audit trail).
 --
--- The reset PIPELINE definition (ops.ResetStep — the ordered reset.internal_* steps)
+-- The reset PIPELINE definition (ops.tResetStep — the ordered reset.spInternal_* steps)
 -- is a later addition and lives in up/0021_reset_step_registry.sql (EXT-1).
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§2, §3)
@@ -27,73 +27,73 @@ IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'reset')
     EXEC (N'CREATE SCHEMA reset AUTHORIZATION dbo;');
 GO
 
--- --- ops.Mandant -----------------------------------------------------------------
--- One row per test mandant. TargetDb is guarded three ways against ever pointing at
+-- --- ops.tMandant -----------------------------------------------------------------
+-- One row per test mandant. cTargetDb is guarded three ways against ever pointing at
 -- the production DB: a CHECK here, plus SP-level and job-level re-validation (D6).
-IF OBJECT_ID(N'ops.Mandant', N'U') IS NULL
+IF OBJECT_ID(N'ops.tMandant', N'U') IS NULL
 BEGIN
-    CREATE TABLE ops.Mandant
+    CREATE TABLE ops.tMandant
     (
-        MandantKey   sysname       NOT NULL
-            CONSTRAINT PK_ops_Mandant PRIMARY KEY,
-        TargetDb     sysname       NOT NULL,
-        DisplayName  nvarchar(255) NOT NULL,
-        Developer    nvarchar(255) NULL,
-        LoginName    sysname       NULL,
-        ShopUrl      nvarchar(500) NULL,
-        ShopLicense  nvarchar(500) NULL,
-        IsActive     bit           NOT NULL CONSTRAINT DF_ops_Mandant_IsActive DEFAULT (1),
-        CreatedAt    datetime2(0)  NOT NULL CONSTRAINT DF_ops_Mandant_CreatedAt DEFAULT (SYSUTCDATETIME()),
-        ModifiedAt   datetime2(0)  NOT NULL CONSTRAINT DF_ops_Mandant_ModifiedAt DEFAULT (SYSUTCDATETIME()),
-        CONSTRAINT CK_ops_Mandant_MandantKey CHECK (MandantKey LIKE 'tm[0-9]%'),
-        CONSTRAINT CK_ops_Mandant_TargetDb   CHECK (TargetDb <> N'eazybusiness'
-                                                    AND TargetDb LIKE N'eazybusiness[_]%'),
-        CONSTRAINT UQ_ops_Mandant_TargetDb   UNIQUE (TargetDb)
+        cMandantKey   sysname       NOT NULL
+            CONSTRAINT PK_tMandant PRIMARY KEY,
+        cTargetDb     sysname       NOT NULL,
+        cDisplayName  nvarchar(255) NOT NULL,
+        cDeveloper    nvarchar(255) NULL,
+        cLoginName    sysname       NULL,
+        cShopUrl      nvarchar(500) NULL,
+        cShopLicense  nvarchar(500) NULL,
+        bActive     bit           NOT NULL CONSTRAINT DF_tMandant_bActive DEFAULT (1),
+        dCreated    datetime2(0)  NOT NULL CONSTRAINT DF_tMandant_dCreated DEFAULT (SYSUTCDATETIME()),
+        dModified   datetime2(0)  NOT NULL CONSTRAINT DF_tMandant_dModified DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT CK_tMandant_cMandantKey CHECK (cMandantKey LIKE 'tm[0-9]%'),
+        CONSTRAINT CK_tMandant_cTargetDb   CHECK (cTargetDb <> N'eazybusiness'
+                                                    AND cTargetDb LIKE N'eazybusiness[_]%'),
+        CONSTRAINT UQ_tMandant_cTargetDb   UNIQUE (cTargetDb)
     );
 END
 GO
 
--- --- ops.Config ------------------------------------------------------------------
+-- --- ops.tConfig ------------------------------------------------------------------
 -- Key/value config (BackupFile, TargetDataDir, SourceDb, ReferenceMandant, ...).
-IF OBJECT_ID(N'ops.Config', N'U') IS NULL
+IF OBJECT_ID(N'ops.tConfig', N'U') IS NULL
 BEGIN
-    CREATE TABLE ops.Config
+    CREATE TABLE ops.tConfig
     (
-        ConfigKey    sysname        NOT NULL
-            CONSTRAINT PK_ops_Config PRIMARY KEY,
-        ConfigValue  nvarchar(1000) NULL,
-        Notes        nvarchar(500)  NULL
+        cKey    sysname        NOT NULL
+            CONSTRAINT PK_tConfig PRIMARY KEY,
+        cValue  nvarchar(1000) NULL,
+        cNotes        nvarchar(500)  NULL
     );
 END
 GO
 
--- --- ops.ResetRequest ------------------------------------------------------------
+-- --- ops.tResetRequest ------------------------------------------------------------
 -- Queue + run log. State machine: queued -> running -> succeeded | failed.
--- The filtered UNIQUE index enforces "at most one active request per TargetDb"
+-- The filtered UNIQUE index enforces "at most one active request per cTargetDb"
 -- declaratively, on top of the SP-level applock (belt and braces).
-IF OBJECT_ID(N'ops.ResetRequest', N'U') IS NULL
+IF OBJECT_ID(N'ops.tResetRequest', N'U') IS NULL
 BEGIN
-    CREATE TABLE ops.ResetRequest
+    CREATE TABLE ops.tResetRequest
     (
-        RequestId    int IDENTITY(1,1) NOT NULL
-            CONSTRAINT PK_ops_ResetRequest PRIMARY KEY,
-        MandantKey   sysname       NOT NULL
-            CONSTRAINT FK_ops_ResetRequest_Mandant REFERENCES ops.Mandant (MandantKey),
-        TargetDb     sysname       NOT NULL,
-        Status       nvarchar(20)  NOT NULL
-            CONSTRAINT CK_ops_ResetRequest_Status
-                CHECK (Status IN (N'queued', N'running', N'succeeded', N'failed')),
-        RequestedBy  sysname       NOT NULL,
-        RequestedAt  datetime2(0)  NOT NULL CONSTRAINT DF_ops_ResetRequest_RequestedAt DEFAULT (SYSUTCDATETIME()),
-        StartedAt    datetime2(0)  NULL,
-        FinishedAt   datetime2(0)  NULL,
-        ErrorText    nvarchar(max) NULL,
-        StepLog      nvarchar(max) NULL,
-        ModifiedAt   datetime2(0)  NOT NULL CONSTRAINT DF_ops_ResetRequest_ModifiedAt DEFAULT (SYSUTCDATETIME())
+        kResetRequest    int IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_tResetRequest PRIMARY KEY,
+        cMandantKey   sysname       NOT NULL
+            CONSTRAINT FK_tResetRequest_tMandant REFERENCES ops.tMandant (cMandantKey),
+        cTargetDb     sysname       NOT NULL,
+        cStatus       nvarchar(20)  NOT NULL
+            CONSTRAINT CK_tResetRequest_cStatus
+                CHECK (cStatus IN (N'queued', N'running', N'succeeded', N'failed')),
+        cRequestedBy  sysname       NOT NULL,
+        dRequested  datetime2(0)  NOT NULL CONSTRAINT DF_tResetRequest_dRequested DEFAULT (SYSUTCDATETIME()),
+        dStarted    datetime2(0)  NULL,
+        dFinished   datetime2(0)  NULL,
+        cErrorMessage    nvarchar(max) NULL,
+        cStepLog      nvarchar(max) NULL,
+        dModified   datetime2(0)  NOT NULL CONSTRAINT DF_tResetRequest_dModified DEFAULT (SYSUTCDATETIME())
     );
 
-    CREATE UNIQUE INDEX UX_ResetRequest_Active
-        ON ops.ResetRequest (TargetDb)
-        WHERE Status IN (N'queued', N'running');
+    CREATE UNIQUE INDEX IX_tResetRequest_Active
+        ON ops.tResetRequest (cTargetDb)
+        WHERE cStatus IN (N'queued', N'running');
 END
 GO

@@ -1,10 +1,10 @@
--- reset.internal_RegisterMandant  (Ebene B / global — pipeline step, job-only)
+-- reset.spInternal_RegisterMandant  (Ebene B / global — pipeline step, job-only)
 --
 -- Ported from Projekte/Testsystem/register-mandant.sql. Registers the clone so it
 -- shows up in the JTL login and every user has a company: upserts dbo.tMandant
 -- (keyed by cDB) across all mandant DBs, and seeds dbo.tBenutzerFirma for the new
 -- kMandant from the reference mandant. SourceDb + ReferenceMandant come from
--- ops.Config; the display name is read from ops.Mandant by @MandantKey (uniform step
+-- ops.tConfig; the display name is read from ops.tMandant by @MandantKey (uniform step
 -- contract, EXT-2) and passed as an sp_executesql parameter (never concatenated); DB
 -- names go through QUOTENAME only.
 --
@@ -16,11 +16,11 @@
 -- guard validates the CLONE, not the set of DBs written. A write against @TargetDb
 -- itself is fatal (THROW); a failure against any OTHER mandant DB is non-fatal by
 -- design — it is logged as a WARN and counted into the summary line so a partial
--- registration is visible in reset.GetResetStatus rather than hidden behind 'succeeded'.
+-- registration is visible in reset.spPub_GetResetStatus rather than hidden behind 'succeeded'.
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see Projekte/Testsystem/register-mandant.sql
-CREATE OR ALTER PROCEDURE reset.internal_RegisterMandant
+CREATE OR ALTER PROCEDURE reset.spInternal_RegisterMandant
     @TargetDb   sysname,
     @RequestId  int,
     @MandantKey sysname
@@ -29,13 +29,13 @@ BEGIN
     SET NOCOUNT ON;
 
     IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
-        THROW 51070, 'internal_RegisterMandant refused: target is not a test-mandant clone.', 1;
+        THROW 51070, 'spInternal_RegisterMandant refused: target is not a test-mandant clone.', 1;
 
-    -- Each step reads its own inputs from ops.Mandant (EXT-2).
+    -- Each step reads its own inputs from ops.tMandant (EXT-2).
     DECLARE @DisplayName nvarchar(255);
-    SELECT @DisplayName = DisplayName FROM ops.Mandant WHERE MandantKey = @MandantKey;
+    SELECT @DisplayName = cDisplayName FROM ops.tMandant WHERE cMandantKey = @MandantKey;
     IF NULLIF(LTRIM(RTRIM(@DisplayName)), N'') IS NULL
-        THROW 51071, 'internal_RegisterMandant: DisplayName is empty.', 1;
+        THROW 51071, 'spInternal_RegisterMandant: cDisplayName is empty.', 1;
 
     DECLARE @SourceDb sysname, @refMandant int, @sql nvarchar(max), @k int, @warnCount int = 0,
             @log nvarchar(max);
@@ -44,8 +44,8 @@ BEGIN
     -- step's core purpose, silently skipping it would mark the reset succeeded while the
     -- mandant is invisible in the JTL login.
 
-    SELECT @SourceDb   = ConfigValue FROM ops.Config WHERE ConfigKey = N'SourceDb';
-    SELECT @refMandant = TRY_CONVERT(int, ConfigValue) FROM ops.Config WHERE ConfigKey = N'ReferenceMandant';
+    SELECT @SourceDb   = cValue FROM ops.tConfig WHERE cKey = N'SourceDb';
+    SELECT @refMandant = TRY_CONVERT(int, cValue) FROM ops.tConfig WHERE cKey = N'ReferenceMandant';
     SET @SourceDb   = ISNULL(@SourceDb, N'eazybusiness');
     SET @refMandant = ISNULL(@refMandant, 1);
 
@@ -91,7 +91,7 @@ BEGIN
             END
             SET @warnCount += 1;
             SET @log = CONCAT(N'register: WARN ', @db, N': ', ERROR_MESSAGE());
-            EXEC reset.internal_LogStep @RequestId, @log;
+            EXEC reset.spInternal_LogStep @RequestId, @log;
         END CATCH
         FETCH NEXT FROM dbcur INTO @db;
     END
@@ -130,7 +130,7 @@ BEGIN
                 END
                 SET @warnCount += 1;
                 SET @log = CONCAT(N'register: WARN ', @sdb, N': ', ERROR_MESSAGE());
-                EXEC reset.internal_LogStep @RequestId, @log;
+                EXEC reset.spInternal_LogStep @RequestId, @log;
             END CATCH
             FETCH NEXT FROM seedcur INTO @sdb;
         END
@@ -141,6 +141,6 @@ BEGIN
                       CASE WHEN @warnCount > 0
                            THEN CONCAT(N'; ', @warnCount, N' non-target DB WARN(s) — see above')
                            ELSE N'' END);
-    EXEC reset.internal_LogStep @RequestId, @log;
+    EXEC reset.spInternal_LogStep @RequestId, @log;
 END
 GO

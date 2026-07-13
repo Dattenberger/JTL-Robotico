@@ -1,7 +1,7 @@
 # Runbook — Validate the RoboticoOps test-mandant reset end-to-end (on test1)
 
-Operator runbook to prove the new server-side reset (`reset.StartTestmandantReset`
-→ SQL-Agent job → `reset.internal_*` pipeline) works end-to-end **before** it is
+Operator runbook to prove the new server-side reset (`reset.spPub_StartTestmandantReset`
+→ SQL-Agent job → `reset.spInternal_*` pipeline) works end-to-end **before** it is
 trusted on prod. It runs entirely on **vm-sql-test1**, whose worker has no live
 marketplace/shop credentials, so a mistake here cannot reach real customers.
 
@@ -38,25 +38,25 @@ Checks (read-only):
 
 # RoboticoOps + the reset SPs must exist (global chain deployed):
 /opt/mssql-tools18/bin/sqlcmd -S vm-sql-test1.zdbikes.local -E -C \
-    -d RoboticoOps -Q "SELECT name FROM sys.procedures WHERE name LIKE 'StartTestmandantReset' OR name LIKE 'GetResetStatus';"
+    -d RoboticoOps -Q "SELECT name FROM sys.procedures WHERE name LIKE 'spPub_StartTestmandantReset' OR name LIKE 'spPub_GetResetStatus';"
 ```
 
-## Step 1 — Seed a validation mandant in `ops.Mandant`
+## Step 1 — Seed a validation mandant in `ops.tMandant`
 
 test1 has only 1 mandant and no `tm*` clone, so the validation uses a dedicated
 throwaway mandant **`tm9`** (a deliberately high number that won't collide with
 the real `tm1`/`tm2` mandants), cloned from test1's own `eazybusiness`, targeting
 a fresh DB `eazybusiness_tm9`.
 
-**Preferred — one call via `reset.CreateTestmandant` (admin):** register the mandant AND
+**Preferred — one call via `reset.spPub_CreateTestmandant` (admin):** register the mandant AND
 kick its first reset (which builds the clone) in a single step, instead of a manual
-`INSERT` + separate `StartTestmandantReset`:
+`INSERT` + separate `spPub_StartTestmandantReset`:
 
 ```sql
 -- run against RoboticoOps, as an ops_admin member
-EXEC reset.CreateTestmandant @MandantKey = N'tm9', @DisplayName = N'Reset validation';
--- registers ops.Mandant (LoginName / ShopLicense default to the 0020 template + sentinel;
--- pass @LoginName / @ShopUrl / @ShopLicense to override) and returns {RequestId, Status}.
+EXEC reset.spPub_CreateTestmandant @MandantKey = N'tm9', @DisplayName = N'Reset validation';
+-- registers ops.tMandant (cLoginName / cShopLicense default to the 0020 template + sentinel;
+-- pass @LoginName / @ShopUrl / @ShopLicense to override) and returns {kResetRequest, cStatus}.
 -- Steps 2–3 (Agent + trigger) are then already done — skip to Step 4 (watch progress).
 ```
 
@@ -64,16 +64,16 @@ or via the wrapper: `npm run db:mandant:create -- -Environment TEST -MandantKey 
 An existing key is a hard error (no silent upsert); corrections go through an admin `UPDATE`.
 
 **Manual alternative** (if you only want to register without resetting, e.g. to inspect the
-row first): insert one `ops.Mandant` row for `tm9` (`IsActive = 1`, `TargetDb =
-'eazybusiness_tm9'`, `Developer`/`DisplayName`/`LoginName`/`ShopUrl`/`ShopLicense`
+row first): insert one `ops.tMandant` row for `tm9` (`bActive = 1`, `cTargetDb =
+'eazybusiness_tm9'`, `cDeveloper`/`cDisplayName`/`cLoginName`/`cShopUrl`/`cShopLicense`
 per the seed template — use the staging shop license, never a prod key committed
-to git; see plan D8), or call `CreateTestmandant … @StartReset = 0`. Do this with the same
+to git; see plan D8), or call `spPub_CreateTestmandant … @StartReset = 0`. Do this with the same
 seed mechanism the rollout runbook uses; do not hand-edit prod data.
 
 > [!NOTE]
-> Two shape constraints gate the seed row. `MandantKey` must match `tm[0-9]%`
-> (`CK_ops_Mandant_MandantKey`) — a non-numeric key like `tmv` is rejected at
-> insert, so use a `tm<digit>` key such as `tm9`. `TargetDb` must match
+> Two shape constraints gate the seed row. `cMandantKey` must match `tm[0-9]%`
+> (`CK_tMandant_cMandantKey`) — a non-numeric key like `tmv` is rejected at
+> insert, so use a `tm<digit>` key such as `tm9`. `cTargetDb` must match
 > `eazybusiness[_]%` and must never equal `eazybusiness`; the reset refuses
 > `eazybusiness` as a target in three independent places (CHECK constraint,
 > Start-SP validation, job re-validation, plan D6). `tm9` / `eazybusiness_tm9`
@@ -91,26 +91,26 @@ under the Agent, so start it for the duration of the test:
 
 ```sql
 -- run against RoboticoOps
-EXEC reset.StartTestmandantReset @MandantKey = N'tm9';
--- returns: RequestId, Status='queued'
+EXEC reset.spPub_StartTestmandantReset @MandantKey = N'tm9';
+-- returns: kResetRequest, cStatus='queued'
 -- Idempotent (OPS-6): calling it again while tm9 is still queued/running returns the
--- SAME in-flight RequestId + its Status instead of erroring — safe to re-run.
+-- SAME in-flight kResetRequest + its cStatus instead of erroring — safe to re-run.
 ```
 
 Then poll status until it reaches `succeeded` or `failed`:
 
 ```sql
-EXEC reset.GetResetStatus @MandantKey = N'tm9';
--- watch Status + StepLog. Before each step the orchestrator writes a
--- "starting step N: internal_<Name>" line (OPS-3), so live progress and — on a
+EXEC reset.spPub_GetResetStatus @MandantKey = N'tm9';
+-- watch cStatus + cStepLog. Before each step the orchestrator writes a
+-- "starting step N: spInternal_<Name>" line (OPS-3), so live progress and — on a
 -- failure — the exact step that broke are visible. Default order:
 --   clone -> post-restore-security -> invalidate-credentials -> neutralize-worker
 --   -> anonymize -> grant-access -> register-mandant -> apply-roles
 ```
 
 To discover which mandant keys exist without `ops_admin` rights (e.g. on prod), a
-colleague can run `EXEC reset.ListMandants;` (OPS-1) — it lists `MandantKey`,
-`DisplayName`, `Developer`, `TargetDb`, `IsActive` and the last reset's status, and
+colleague can run `EXEC reset.spPub_ListMandants;` (OPS-1) — it lists `cMandantKey`,
+`cDisplayName`, `cDeveloper`, `cTargetDb`, `bActive` and the last reset's status, and
 deliberately shows no shop license/URL.
 
 ## Step 4 — Verify the outcome
@@ -119,8 +119,8 @@ Run each check read-only against the **clone** (`-d eazybusiness_tm9`) unless no
 
 ### 4.1 Request status
 
-`GetResetStatus` shows `Status = 'succeeded'`, a populated `StepLog` with every
-pipeline step, and a non-null `FinishedAt`. No `ErrorText`.
+`spPub_GetResetStatus` shows `cStatus = 'succeeded'`, a populated `cStepLog` with every
+pipeline step, and a non-null `dFinished`. No `cErrorMessage`.
 
 ### 4.2 Clone exists and is version-correct
 
@@ -179,7 +179,7 @@ request (CATCH), so `succeeded` implies all 11 blocks ran.
 ### 4.6 Registration + access
 
 `eazybusiness_tm9` appears as a mandant (`dbo.tMandant` upsert) and the configured
-`LoginName` has access (JTL roles applied). The WaWi client can log into `tm9`
+`cLoginName` has access (JTL roles applied). The WaWi client can log into `tm9`
 (manual — this also partly answers O2: note whether the just-registered mandant
 is visible/where the worker would have picked it up, but keep the worker stopped).
 
@@ -205,11 +205,11 @@ The validation mandant is throwaway. After the run:
 --   DROP DATABASE [eazybusiness_tm9];
 ```
 
-Optionally clear the `tm9` `ops.ResetRequest` history. For routine retention (not this
-throwaway run) an admin can trim the audit log with `EXEC reset.PurgeOldRequests
+Optionally clear the `tm9` `ops.tResetRequest` history. For routine retention (not this
+throwaway run) an admin can trim the audit log with `EXEC reset.spPub_PurgeOldRequests
 @KeepPerMandant = 20;` — it keeps the newest N rows per mandant and never deletes a
 `queued`/`running` row (OPS-5; run with `@WhatIf = 1` first to preview the count). Set the
-`ops.Mandant` `tm9` row `IsActive = 0` (or delete it) so it can't be reset again by accident.
+`ops.tMandant` `tm9` row `bActive = 0` (or delete it) so it can't be reset again by accident.
 Stop the SQL-Agent again if test1 should return to its Stopped/Manual baseline.
 
 ---
@@ -220,11 +220,11 @@ Stop the SQL-Agent again if test1 should return to its Stopped/Manual baseline.
 > **Request stuck in `running`.** If the Agent job dies mid-pipeline, the request
 > stays `running` and the Start-SP returns that in-flight request instead of queuing a
 > new one for `tm9`. The pipeline auto-reclaims `running` rows older than
-> `ops.Config('StaleRunningHours')` (default 4h) as `failed` on its next start. To
+> `ops.tConfig('StaleRunningHours')` (default 4h) as `failed` on its next start. To
 > recover **sooner** without server rights (OPS-2), a colleague runs:
 >
 > ```sql
-> EXEC reset.CancelResetRequest @RequestId = <id>;   -- id from GetResetStatus
+> EXEC reset.spPub_CancelResetRequest @RequestId = <id>;   -- id from spPub_GetResetStatus
 > ```
 >
 > It cancels a `queued` request outright, and force-reclaims a `running` one to
@@ -232,7 +232,7 @@ Stop the SQL-Agent again if test1 should return to its Stopped/Manual baseline.
 > activity first), so a genuinely-running clone is never yanked. If the job *is* still
 > running it refuses with a clear message. After a successful cancel, re-trigger. An
 > `ops_admin` can alternatively hand-fix the row (it now has `UPDATE` on
-> `ops.ResetRequest`); no raw sysadmin is required.
+> `ops.tResetRequest`); no raw sysadmin is required.
 
 > [!WARNING]
 > **Clone left behind after a failure.** On CATCH the clone DB is left as-is for

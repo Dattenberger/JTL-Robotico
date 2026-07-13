@@ -1,4 +1,4 @@
--- reset.StartTestmandantReset  (Ebene B / global — signed, EXECUTE AS jobstartuser)
+-- reset.spPub_StartTestmandantReset  (Ebene B / global — signed, EXECUTE AS jobstartuser)
 --
 -- The ONLY entry point a colleague needs: validate, enqueue a reset request, and
 -- kick the Agent job. EXECUTE granted to role ops_reset_executor (permissions/100).
@@ -15,7 +15,7 @@
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see db-migrations/global/permissions/900_resign_procedures.sql
-CREATE OR ALTER PROCEDURE reset.StartTestmandantReset
+CREATE OR ALTER PROCEDURE reset.spPub_StartTestmandantReset
     @MandantKey sysname
 WITH EXECUTE AS 'jobstartuser'
 AS
@@ -30,50 +30,50 @@ BEGIN
             @existingStatus nvarchar(20),
             @lockRes nvarchar(255) = N'reset:' + @MandantKey,
             @caller sysname = ORIGINAL_LOGIN(),
-            -- Job name is a single-sourced ops.Config knob (CQG-8): the same literal is
-            -- read here, in reset.EnsureAgentJob, and in permissions/200_ensure_agent_job.
+            -- Job name is a single-sourced ops.tConfig knob (CQG-8): the same literal is
+            -- read here, in reset.spEnsureAgentJob, and in permissions/200_ensure_agent_job.
             -- The ISNULL keeps a pre-config instance working with the built-in default.
             @jobName sysname = ISNULL(
-                (SELECT ConfigValue FROM ops.Config WHERE ConfigKey = N'AgentJobName'),
+                (SELECT cValue FROM ops.tConfig WHERE cKey = N'AgentJobName'),
                 N'RoboticoOps - Testmandant Reset');
 
     -- Short exclusive applock dedups concurrent submissions for the same mandant
-    -- (the filtered unique index on ops.ResetRequest is the declarative backstop).
+    -- (the filtered unique index on ops.tResetRequest is the declarative backstop).
     EXEC @rc = sp_getapplock @Resource = @lockRes, @LockMode = 'Exclusive',
                              @LockOwner = 'Session', @LockTimeout = 5000;
     IF @rc < 0
         THROW 51001, 'Could not acquire the submission lock for this mandant; try again.', 1;
 
     BEGIN TRY
-        SELECT @TargetDb = TargetDb
-        FROM ops.Mandant
-        WHERE MandantKey = @MandantKey AND IsActive = 1;
+        SELECT @TargetDb = cTargetDb
+        FROM ops.tMandant
+        WHERE cMandantKey = @MandantKey AND bActive = 1;
 
         IF @TargetDb IS NULL
             THROW 51002, 'Unknown or inactive mandant key.', 1;
 
-        -- Defense in depth (redundant to the CK_ops_Mandant_TargetDb constraint).
+        -- Defense in depth (redundant to the CK_tMandant_cTargetDb constraint).
         IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
             THROW 51003, 'Refusing: target database is not a test-mandant clone.', 1;
 
         -- OPS-6: a reset already in flight for this mandant is NOT an error. Return the
-        -- existing request (same {RequestId, Status} shape as the success path) so a
-        -- caller who submitted twice transparently keeps polling GetResetStatus for the
-        -- SAME RequestId instead of getting an exception. Release the applock first, since
+        -- existing request (same {kResetRequest, cStatus} shape as the success path) so a
+        -- caller who submitted twice transparently keeps polling spPub_GetResetStatus for the
+        -- SAME kResetRequest instead of getting an exception. Release the applock first, since
         -- this early RETURN bypasses the normal release at the end of the TRY.
-        SELECT TOP (1) @existingId = RequestId, @existingStatus = Status
-        FROM ops.ResetRequest
-        WHERE TargetDb = @TargetDb AND Status IN (N'queued', N'running')
-        ORDER BY RequestId DESC;
+        SELECT TOP (1) @existingId = kResetRequest, @existingStatus = cStatus
+        FROM ops.tResetRequest
+        WHERE cTargetDb = @TargetDb AND cStatus IN (N'queued', N'running')
+        ORDER BY kResetRequest DESC;
 
         IF @existingId IS NOT NULL
         BEGIN
             EXEC sp_releaseapplock @Resource = @lockRes, @LockOwner = 'Session';
-            SELECT @existingId AS RequestId, @existingStatus AS Status;
+            SELECT @existingId AS kResetRequest, @existingStatus AS cStatus;
             RETURN;
         END
 
-        INSERT ops.ResetRequest (MandantKey, TargetDb, Status, RequestedBy, RequestedAt, ModifiedAt)
+        INSERT ops.tResetRequest (cMandantKey, cTargetDb, cStatus, cRequestedBy, dRequested, dModified)
         VALUES (@MandantKey, @TargetDb, N'queued', @caller, SYSUTCDATETIME(), SYSUTCDATETIME());
         SET @RequestId = CAST(SCOPE_IDENTITY() AS int);
 
@@ -89,12 +89,12 @@ BEGIN
         BEGIN CATCH
             IF ERROR_NUMBER() <> 22022
             BEGIN
-                UPDATE ops.ResetRequest
-                   SET Status     = N'failed',
-                       ErrorText  = N'sp_start_job failed: ' + ERROR_MESSAGE(),
-                       FinishedAt = SYSUTCDATETIME(),
-                       ModifiedAt = SYSUTCDATETIME()
-                 WHERE RequestId = @RequestId;
+                UPDATE ops.tResetRequest
+                   SET cStatus     = N'failed',
+                       cErrorMessage  = N'sp_start_job failed: ' + ERROR_MESSAGE(),
+                       dFinished = SYSUTCDATETIME(),
+                       dModified = SYSUTCDATETIME()
+                 WHERE kResetRequest = @RequestId;
                 THROW;
             END
         END CATCH
@@ -106,6 +106,6 @@ BEGIN
         THROW;
     END CATCH
 
-    SELECT @RequestId AS RequestId, N'queued' AS Status;
+    SELECT @RequestId AS kResetRequest, N'queued' AS cStatus;
 END
 GO

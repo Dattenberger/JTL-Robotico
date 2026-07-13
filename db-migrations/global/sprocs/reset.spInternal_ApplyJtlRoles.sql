@@ -1,4 +1,4 @@
--- reset.internal_ApplyJtlRoles  (Ebene B / global — pipeline step, job-only)
+-- reset.spInternal_ApplyJtlRoles  (Ebene B / global — pipeline step, job-only)
 --
 -- Ported from Berechtigungen/JTL-Rollen.sql, parameterised on the target clone. Runs
 -- inside the target DB (QUOTENAME(@TargetDb).sys.sp_executesql) and ensures the
@@ -22,7 +22,7 @@
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see Berechtigungen/JTL-Rollen.sql
-CREATE OR ALTER PROCEDURE reset.internal_ApplyJtlRoles
+CREATE OR ALTER PROCEDURE reset.spInternal_ApplyJtlRoles
     @TargetDb   sysname,
     @RequestId  int,
     @MandantKey sysname   -- uniform step contract (EXT-2); not used by this step
@@ -31,7 +31,7 @@ BEGIN
     SET NOCOUNT ON;
 
     IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
-        THROW 51080, 'internal_ApplyJtlRoles refused: target is not a test-mandant clone.', 1;
+        THROW 51080, 'spInternal_ApplyJtlRoles refused: target is not a test-mandant clone.', 1;
 
     DECLARE @exec nvarchar(300) = QUOTENAME(@TargetDb) + N'.sys.sp_executesql';
     DECLARE @batch nvarchar(max) = N'
@@ -83,7 +83,7 @@ BEGIN
     ';
     EXEC @exec @batch;
 
-    EXEC reset.internal_LogStep @RequestId,
+    EXEC reset.spInternal_LogStep @RequestId,
          N'roles: JTL_Reader/JTL_Writer ensured + members applied';
 END
 GO

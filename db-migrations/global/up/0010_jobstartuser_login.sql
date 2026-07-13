@@ -5,7 +5,7 @@
 --
 --   * LOGIN  jobstartuser  — server login, immediately DISABLED and DENY CONNECT SQL.
 --                            It is never used to log in; it exists only as the
---                            EXECUTE AS target of reset.StartTestmandantReset. Its
+--                            EXECUTE AS target of reset.spPub_StartTestmandantReset. Its
 --                            password is random and never logged (login is disabled).
 --   * USER   jobstartuser  in RoboticoOps — required so the proc header
 --                            "WITH EXECUTE AS 'jobstartuser'" resolves. Needs no

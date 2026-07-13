@@ -92,19 +92,24 @@ that describes *our* feature is English.
 
 ## 5. What we deliberately do NOT adopt from RoboticoEKL
 
-The `excel_ekl` repo defines an additional layer in
-[`SP-NAMING-CONVENTIONS.md`](#references): the `spPub_` prefix, the
-`@bRunOrchestration BIT = 1` parameter and a 4-layer call architecture
-(`spPub_` / `spApply` / `spCM` / `spCreate`/`spAppend`).
+The `excel_ekl` repo defines a 4-layer article-orchestration apparatus in
+[`SP-NAMING-CONVENTIONS.md`](#references): the `@bRunOrchestration BIT = 1`
+parameter and the `spPub_` / `spApply` / `spCM` / `spCreate`/`spAppend` call
+architecture.
 
-That apparatus exists to control **one specific thing**: whether the article
-orchestrator `RoboticoEKL.spCMArtikel` runs at the end of a mutation, and to
-prevent recursion inside the article-phase system. It is bound to that system
-and is **not used in the `Robotico` schema here** — applying it would be
-cargo-culting a mechanism with no counterpart in our use cases.
+That **orchestration apparatus** exists to control **one specific thing**:
+whether the article orchestrator `RoboticoEKL.spCMArtikel` runs at the end of a
+mutation, and to prevent recursion inside the article-phase system. It is bound
+to that system and has **no counterpart in our use cases** — porting the
+`@bRunOrchestration` recursion-control layering here would be cargo-culting.
 
-We keep only the **general** conventions (sections 2–4), which `excel_ekl`
-documents in [`SCHEMA-ARCHITECTURE.md`](#references).
+We keep the **general** conventions (sections 2–4) and — for the Ebene-B
+`RoboticoOps` procedures (§9) — the `spPub_` (public entry) / `spInternal_`
+(pipeline step) **naming markers**, which cleanly express our own
+public-vs-internal reset split. What we drop is only the article-phase
+*orchestration mechanism* above, not the public/internal naming idea. The
+Ebene-A `Robotico.*` workflow procedures stay plain `sp` (§7): single-layer,
+workflow-facing, with no public/internal distinction to mark.
 
 ---
 
@@ -172,48 +177,57 @@ schemas we own:
 
 | Schema | Owner | Purpose |
 |---|---|---|
-| `ops.*` | this project | registry & state: `ops.Mandant`, `ops.Config`, `ops.ResetRequest`, grate journal |
-| `reset.*` | this project | reset procedures: `reset.StartTestmandantReset`, `reset.GetResetStatus`, `reset.ProcessNextResetRequest`, `reset.EnsureAgentJob`, `reset.internal_*` |
+| `ops.*` | this project | registry & state: `ops.tMandant`, `ops.tConfig`, `ops.tResetRequest`, `ops.tResetStep`, grate journal |
+| `reset.*` | this project | reset procedures: `reset.spPub_StartTestmandantReset`, `reset.spPub_GetResetStatus`, `reset.spProcessNextResetRequest`, `reset.spEnsureAgentJob`, `reset.spInternal_*` |
 
-### Naming: admin-DB style, **not** the JTL Hungarian convention
+### Naming: the JTL / RoboticoEKL Hungarian convention (aligned with §2–4)
 
-`RoboticoOps` sits **outside** `eazybusiness` and never reads alongside `dbo` JTL tables, so
-it deliberately does **not** carry the JTL table/column prefixes of sections 2–4. The reason
-those prefixes exist (§3) — "so `Robotico` objects read like the surrounding `dbo` tables" —
-does not apply here, because there are no surrounding JTL tables. `ops.*` / `reset.*` use a
-plain PascalCase, admin-database style instead:
+`RoboticoOps` Ebene-B objects follow the **same JTL / RoboticoEKL Hungarian convention** as
+the `Robotico.*` objects in §2–4: `t`-prefixed tables, Hungarian column prefixes
+(`c`/`k`/`b`/`d`/`n`), and `sp`-prefixed procedures. This aligns the admin DB with the
+`RoboticoEKL` naming standard and with the tooling that expects it.
 
-| Element | Ebene-B convention | Example | Contrast with §2–4 |
-|---|---|---|---|
-| Table | PascalCase, **no `t` prefix**, singular | `ops.Mandant`, `ops.ResetRequest` | not `ops.tMandant` |
-| Column | PascalCase, **no Hungarian prefix** | `MandantKey`, `TargetDb`, `Status`, `StepLog` | not `cName`, `kMandant`, `bIsActive` |
-| Parameter | PascalCase with `@` | `@TargetDb`, `@RequestId` | not `@cTargetDb` |
-| Procedure | PascalCase, **no `sp` prefix** | `reset.StartTestmandantReset`, `reset.GetResetStatus` | not `reset.spStart…` |
+> [!NOTE]
+> This **replaces** an earlier decision that gave `ops.*` / `reset.*` a plain PascalCase,
+> un-prefixed "admin-DB" style (un-prefixed tables, PascalCase columns, `sp`-less procedures).
+> Ebene B was renamed onto the Hungarian convention; the examples below are the current,
+> binding names.
 
-Constraints keep the section-2 prefixed style, but **schema-qualified** so the name stays
-globally unambiguous inside the admin DB (`PK_<schema>_<Table>`, not `PK_<Table>`):
+| Element | Ebene-B convention | Example |
+|---|---|---|
+| Table | `t<SingularName>` | `ops.tMandant`, `ops.tResetRequest`, `ops.tConfig`, `ops.tResetStep` |
+| Column (string) | `c<Name>` | `cMandantKey`, `cTargetDb`, `cStatus`, `cStepLog` |
+| Column (INT key) | `k<Table>` | `kResetRequest`, `kResetStep` |
+| Column (BIT flag) | `b<Name>` | `bActive`, `bEnabled`, `bCritical` |
+| Column (DATE/DATETIME) | `d<Name>` | `dCreated`, `dModified`, `dStarted`, `dFinished`, `dRequested` |
+| Column (non-key INT) | `n<Name>` | `nStepOrder` |
+| Parameter | PascalCase with `@` (marks a value, not a stored column) | `@TargetDb`, `@RequestId`, `@MandantKey` |
+| Public procedure | `spPub_<ActionName>` | `reset.spPub_StartTestmandantReset`, `reset.spPub_GetResetStatus` |
+| Internal pipeline step | `spInternal_<Name>` | `reset.spInternal_CloneDatabase` |
+| Orchestrator / infra procedure | `sp<Name>` | `reset.spProcessNextResetRequest`, `reset.spEnsureAgentJob` |
+
+Constraints and indexes follow the section-2 `<prefix>_<Table>_<Col>` style, keyed on the
+`t`-prefixed table name (the schema qualifier is dropped — the `t`-prefixed table name is
+already unambiguous):
 
 | Constraint / index | Convention | Example |
 |---|---|---|
-| Primary key | `PK_<schema>_<Table>` | `PK_ops_Mandant` |
-| Foreign key | `FK_<schema>_<Table>_<Ref>` | `FK_ops_ResetRequest_Mandant` |
-| Unique constraint | `UQ_<schema>_<Table>_<Cols>` | `UQ_ops_Mandant_TargetDb` |
-| Check | `CK_<schema>_<Table>_<Col>` | `CK_ops_Mandant_TargetDb` |
-| Default | `DF_<schema>_<Table>_<Col>` | `DF_ops_Mandant_IsActive` |
-| Standalone (filtered) unique index | `UX_<Table>_<Purpose>` | `UX_ResetRequest_Active` |
+| Primary key | `PK_<Table>` | `PK_tMandant` |
+| Foreign key | `FK_<Table>_<Ref>` | `FK_tResetRequest_tMandant` |
+| Unique constraint | `UQ_<Table>_<Cols>` | `UQ_tMandant_cTargetDb` |
+| Check | `CK_<Table>_<Col>` | `CK_tMandant_cTargetDb` |
+| Default | `DF_<Table>_<Col>` | `DF_tMandant_bActive` |
+| Standalone (filtered) unique index | `IX_<Table>_<Purpose>` | `IX_tResetRequest_Active` |
 
 > [!NOTE]
-> Standalone unique indexes created with `CREATE UNIQUE INDEX` (as opposed to an inline
-> `UNIQUE` constraint) use the `UX_` prefix to mark them as *unique* indexes, distinct from
-> both the non-unique `IX_` and the constraint-borne `UQ_` of §2. `UX_ResetRequest_Active`
-> — the filtered "at most one active request per `TargetDb`" index on `ops.ResetRequest` —
-> is the sole current example. It is intentionally not schema-qualified because an index name
-> is already scoped to its table.
+> `IX_tResetRequest_Active` — the filtered "at most one active request per `cTargetDb`" index
+> on `ops.tResetRequest` — is created with `CREATE UNIQUE INDEX`. It carries the `IX_` prefix
+> and is intentionally not schema-qualified because an index name is already scoped to its table.
 
 Two further local conventions:
-- reset pipeline steps are prefixed `internal_` (called only by the job orchestrator, e.g.
-  `reset.internal_CloneDatabase`);
-- column-level secrets (e.g. `ops.Mandant.ShopLicense`) are protected by `DENY` rather than
+- reset pipeline steps are prefixed `spInternal_` (called only by the job orchestrator, e.g.
+  `reset.spInternal_CloneDatabase`);
+- column-level secrets (e.g. `ops.tMandant.cShopLicense`) are protected by `DENY` rather than
   renamed.
 
 ### Principals: roles and signing objects
@@ -230,7 +244,7 @@ prefix. They follow admin-DB conventions distinct from §2:
 
 Roles name the **capability, not the person** — membership is data (the AD group is added in
 `permissions/100_grants.sql`, individuals out of band). The certificate / certificate-login
-pair exists solely to counter-sign `reset.StartTestmandantReset` (via `ADD SIGNATURE …
+pair exists solely to counter-sign `reset.spPub_StartTestmandantReset` (via `ADD SIGNATURE …
 BY CERTIFICATE RoboticoOpsSigning` in `permissions/900_resign_procedures.sql`) so the
 impersonated `jobstartuser` can cross the `RoboticoOps → msdb` boundary; **do not rename**
 either — the signing step and the `WITH EXECUTE AS 'jobstartuser'` proc headers reference

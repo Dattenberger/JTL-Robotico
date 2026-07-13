@@ -1,4 +1,4 @@
--- reset.internal_NeutralizeWorker  (Ebene B / global — pipeline step, job-only)
+-- reset.spInternal_NeutralizeWorker  (Ebene B / global — pipeline step, job-only)
 --
 -- NEW step (D9). Stops the JTL worker from acting on a fresh clone as if it were
 -- production: lock the Amazon platform user (pf_user), and empty the message/print
@@ -10,7 +10,7 @@
 -- pf_user column is existence-guarded so a schema difference cannot break the reset.
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
-CREATE OR ALTER PROCEDURE reset.internal_NeutralizeWorker
+CREATE OR ALTER PROCEDURE reset.spInternal_NeutralizeWorker
     @TargetDb   sysname,
     @RequestId  int,
     @MandantKey sysname   -- uniform step contract (EXT-2); not used by this step
@@ -19,7 +19,7 @@ BEGIN
     SET NOCOUNT ON;
 
     IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
-        THROW 51040, 'internal_NeutralizeWorker refused: target is not a test-mandant clone.', 1;
+        THROW 51040, 'spInternal_NeutralizeWorker refused: target is not a test-mandant clone.', 1;
 
     DECLARE @exec nvarchar(300) = QUOTENAME(@TargetDb) + N'.sys.sp_executesql';
     DECLARE @batch nvarchar(max) = N'
@@ -43,7 +43,7 @@ BEGIN
     ';
     EXEC @exec @batch;
 
-    EXEC reset.internal_LogStep @RequestId,
+    EXEC reset.spInternal_LogStep @RequestId,
          N'worker: pf_user locked, queues emptied (Worker.tTarget untouched)';
 END
 GO

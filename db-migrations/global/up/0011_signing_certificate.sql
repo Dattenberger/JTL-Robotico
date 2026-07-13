@@ -1,7 +1,7 @@
 -- 0011_signing_certificate.sql  (Ebene B / global chain — runs in RoboticoOps)
 --
 -- Sets up the module-signing certificate that lets the low-privilege caller of
--- reset.StartTestmandantReset reach msdb.dbo.sp_start_job WITHOUT TRUSTWORTHY and
+-- reset.spPub_StartTestmandantReset reach msdb.dbo.sp_start_job WITHOUT TRUSTWORTHY and
 -- WITHOUT counter-signing msdb system procs (hybrid recipe, research/3 §1/§4, D6).
 --
 --   1. Certificate RoboticoOpsSigning WITH a private key (encrypted by the deploy

@@ -32,10 +32,10 @@ IF OBJECT_ID(N'ops.ScriptsRun', N'U') IS NULL
 ELSE IF NOT EXISTS (SELECT 1 FROM ops.ScriptsRun)
     INSERT INTO @problems (Check_) VALUES (N'EBENE-B JOURNAL: ops.ScriptsRun has 0 rows (nothing journaled)');
 
--- --- Ebene A journal in the SourceDb (cross-DB, resolved from ops.Config) --------
-DECLARE @srcDb sysname = (SELECT ConfigValue FROM ops.Config WHERE ConfigKey = N'SourceDb');
+-- --- Ebene A journal in the SourceDb (cross-DB, resolved from ops.tConfig) --------
+DECLARE @srcDb sysname = (SELECT cValue FROM ops.tConfig WHERE cKey = N'SourceDb');
 IF @srcDb IS NULL
-    INSERT INTO @problems (Check_) VALUES (N'CONFIG: ops.Config has no SourceDb row');
+    INSERT INTO @problems (Check_) VALUES (N'CONFIG: ops.tConfig has no SourceDb row');
 ELSE
 BEGIN
     DECLARE @srcJournal nvarchar(400) =
@@ -50,33 +50,33 @@ BEGIN
         INSERT INTO @problems (Check_) VALUES (N'EBENE-A JOURNAL: ' + @srcDb + N'.Robotico.ScriptsRun has 0 rows');
 END
 
--- --- ops.ResetStep registry: the 8 canonical steps, enabled, in order -----------
-;WITH expected (StepOrder, ProcName) AS (
-    SELECT v.StepOrder, v.ProcName FROM (VALUES
-        (10, N'internal_CloneDatabase'),
-        (20, N'internal_PostRestoreSecurity'),
-        (30, N'internal_InvalidateCredentials'),
-        (40, N'internal_NeutralizeWorker'),
-        (50, N'internal_AnonymizeCustomerData'),
-        (60, N'internal_GrantAccess'),
-        (70, N'internal_RegisterMandant'),
-        (80, N'internal_ApplyJtlRoles')
-    ) v(StepOrder, ProcName)
+-- --- ops.tResetStep registry: the 8 canonical steps, enabled, in order -----------
+;WITH expected (nStepOrder, cProcName) AS (
+    SELECT v.nStepOrder, v.cProcName FROM (VALUES
+        (10, N'spInternal_CloneDatabase'),
+        (20, N'spInternal_PostRestoreSecurity'),
+        (30, N'spInternal_InvalidateCredentials'),
+        (40, N'spInternal_NeutralizeWorker'),
+        (50, N'spInternal_AnonymizeCustomerData'),
+        (60, N'spInternal_GrantAccess'),
+        (70, N'spInternal_RegisterMandant'),
+        (80, N'spInternal_ApplyJtlRoles')
+    ) v(nStepOrder, cProcName)
 )
 INSERT INTO @problems (Check_)
-SELECT N'RESET STEP: ' + e.ProcName + N' (order ' + CONVERT(varchar(10), e.StepOrder) + N') '
+SELECT N'RESET STEP: ' + e.cProcName + N' (order ' + CONVERT(varchar(10), e.nStepOrder) + N') '
      + CASE
-         WHEN s.ProcName IS NULL THEN N'missing from ops.ResetStep'
-         WHEN s.IsEnabled = 0     THEN N'is disabled'
-         WHEN s.StepOrder <> e.StepOrder THEN N'has StepOrder ' + CONVERT(varchar(10), s.StepOrder) + N' (expected ' + CONVERT(varchar(10), e.StepOrder) + N')'
+         WHEN s.cProcName IS NULL THEN N'missing from ops.tResetStep'
+         WHEN s.bEnabled = 0     THEN N'is disabled'
+         WHEN s.nStepOrder <> e.nStepOrder THEN N'has nStepOrder ' + CONVERT(varchar(10), s.nStepOrder) + N' (expected ' + CONVERT(varchar(10), e.nStepOrder) + N')'
          ELSE N'?' END
 FROM expected e
-LEFT JOIN ops.ResetStep s ON s.ProcName = e.ProcName
-WHERE s.ProcName IS NULL OR s.IsEnabled = 0 OR s.StepOrder <> e.StepOrder;
+LEFT JOIN ops.tResetStep s ON s.cProcName = e.cProcName
+WHERE s.cProcName IS NULL OR s.bEnabled = 0 OR s.nStepOrder <> e.nStepOrder;
 
 -- --- the two entry-point procs must be signed by RoboticoOpsSigning --------------
 ;WITH signed_required (name) AS (
-    SELECT v.name FROM (VALUES (N'reset.StartTestmandantReset'), (N'reset.CancelResetRequest')) v(name)
+    SELECT v.name FROM (VALUES (N'reset.spPub_StartTestmandantReset'), (N'reset.spPub_CancelResetRequest')) v(name)
 )
 INSERT INTO @problems (Check_)
 SELECT N'UNSIGNED: ' + s.name + N' is not signed by RoboticoOpsSigning'
@@ -86,9 +86,9 @@ WHERE NOT EXISTS (
         JOIN sys.certificates c ON cp.thumbprint = c.thumbprint
         WHERE cp.major_id = OBJECT_ID(s.name) AND c.name = N'RoboticoOpsSigning');
 
--- --- SQL-Agent job present and enabled (name from ops.Config, CQG-8) -------------
+-- --- SQL-Agent job present and enabled (name from ops.tConfig, CQG-8) -------------
 DECLARE @jobName sysname = ISNULL(
-    (SELECT ConfigValue FROM ops.Config WHERE ConfigKey = N'AgentJobName'),
+    (SELECT cValue FROM ops.tConfig WHERE cKey = N'AgentJobName'),
     N'RoboticoOps - Testmandant Reset');
 IF NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE name = @jobName)
     INSERT INTO @problems (Check_) VALUES (N'AGENT JOB: "' + @jobName + N'" not found in msdb');

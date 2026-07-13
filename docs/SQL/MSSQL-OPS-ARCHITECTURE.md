@@ -99,24 +99,24 @@ synchronous reset / Service Broker / pure-certificate signing / least-privilege 
 - **Journal:** `ops.ScriptsRun` in `RoboticoOps`.
 - **RoboticoOps** (collation `Latin1_General_CI_AS`, recovery SIMPLE, owner `sa`) holds
   two schemas:
-  - `ops` — registry & state: `ops.Mandant` (config incl. column-protected `ShopLicense`),
-    `ops.Config` (paths, source DB, reference mandant), `ops.ResetRequest` (the queue /
-    audit log), `ops.ResetStep` (the ordered pipeline definition — see §1a.3), and the
+  - `ops` — registry & state: `ops.tMandant` (config incl. column-protected `cShopLicense`),
+    `ops.tConfig` (paths, source DB, reference mandant), `ops.tResetRequest` (the queue /
+    audit log), `ops.tResetStep` (the ordered pipeline definition — see §1a.3), and the
     grate journal.
-  - `reset` — the reset SPs (entry, status, orchestrator, the `internal_*` steps, and the
-    `internal_LogStep` StepLog helper).
+  - `reset` — the reset SPs (entry, status, orchestrator, the `spInternal_*` steps, and the
+    `spInternal_LogStep` cStepLog helper).
 
 ### 1a.3 The reset control path
 
 ```
 Colleague (EXECUTE only)                     RoboticoOps (Ebene B)
    │                                          ┌──────────────────────────────────┐
-   │ EXEC reset.StartTestmandantReset ───────▶│ StartTestmandantReset            │
+   │ EXEC reset.spPub_StartTestmandantReset ───────▶│ spPub_StartTestmandantReset            │
    │   @MandantKey = 'tm4'                     │  [signed, EXECUTE AS jobstartuser]│
-   │                                           │  validate vs ops.Mandant          │
-   │                                           │  applock + INSERT ops.ResetRequest │
+   │                                           │  validate vs ops.tMandant          │
+   │                                           │  applock + INSERT ops.tResetRequest │
    │                                           │  (queued) + msdb.sp_start_job      │
-   │ EXEC reset.GetResetStatus  ──────────────▶│ GetResetStatus [EXECUTE grant only]│
+   │ EXEC reset.spPub_GetResetStatus  ──────────────▶│ spPub_GetResetStatus [EXECUTE grant only]│
    │   (poll)                                  └──────────────────────────────────┘
    │                                                         │ sp_start_job
    ▼                                                         ▼
@@ -124,35 +124,35 @@ Colleague (EXECUTE only)                     RoboticoOps (Ebene B)
                               runs its T-SQL step as the Agent service account (sysadmin)
                                                              │
                                                              ▼
-                              reset.ProcessNextResetRequest  [no in-job signing]
+                              reset.spProcessNextResetRequest  [no in-job signing]
                                 1. claim oldest queued → running  (RE-VALIDATE the row)
-                                2. FOR EACH enabled ops.ResetStep row, ORDER BY StepOrder:
-                                     whitelist ProcName (deployed reset.internal_* only)
-                                     → EXEC reset.[<ProcName>] @TargetDb,@RequestId,@MandantKey
-                                     (each step reads its own inputs from ops.Mandant)
+                                2. FOR EACH enabled ops.tResetStep row, ORDER BY nStepOrder:
+                                     whitelist cProcName (deployed reset.spInternal_* only)
+                                     → EXEC reset.[<cProcName>] @TargetDb,@RequestId,@MandantKey
+                                     (each step reads its own inputs from ops.tMandant)
                                    default seeded order (up/0021):
                                      CloneDatabase → PostRestoreSecurity →
                                      InvalidateCredentials → NeutralizeWorker →
                                      AnonymizeCustomerData → GrantAccess →
                                      RegisterMandant → ApplyJtlRoles
-                                → succeeded / failed + ErrorText + StepLog
+                                → succeeded / failed + cErrorMessage + cStepLog
 ```
 
-Why this shape: an Agent job takes no parameters, so the `ops.ResetRequest` queue is the
+Why this shape: an Agent job takes no parameters, so the `ops.tResetRequest` queue is the
 parameter-passing **and** audit mechanism; async avoids the client timeout of a
 minutes-long restore; the signed entry SP lets a non-privileged colleague start a
 sysadmin-context job without holding any server rights. Full rationale:
 `adr-module-signing-reset.md` (plan D5–D8).
 
 The pipeline itself is **data-driven** (`adr-reset-step-registry.md`): the ordered,
-enabled steps are rows in `ops.ResetStep`, not a hard-coded `EXEC` list, so a new
-preparation step is "deploy a `reset.internal_*` proc + `INSERT` one row" without editing
-the orchestrator. The orchestrator whitelists each `ProcName` against the deployed catalog
-before running it (only `reset.internal_*` procs may run, name via `QUOTENAME`), so the
+enabled steps are rows in `ops.tResetStep`, not a hard-coded `EXEC` list, so a new
+preparation step is "deploy a `reset.spInternal_*` proc + `INSERT` one row" without editing
+the orchestrator. The orchestrator whitelists each `cProcName` against the deployed catalog
+before running it (only `reset.spInternal_*` procs may run, name via `QUOTENAME`), so the
 executable set stays exactly what the versioned chain deployed — only step order/enablement
 is admin-only data. Every step takes the uniform `(@TargetDb,@RequestId,@MandantKey)`
-contract and logs through `reset.internal_LogStep`; the loop writes a "starting step N"
-line before each step so a mid-step failure is attributable in `StepLog`.
+contract and logs through `reset.spInternal_LogStep`; the loop writes a "starting step N"
+line before each step so a mid-step failure is attributable in `cStepLog`.
 
 ## 2. Properties this architecture guarantees
 
@@ -163,9 +163,9 @@ line before each step so a mid-step failure is attributable in `StepLog`.
 3. **Self-service reset** — a colleague needs only EXECUTE on four SPs (start / poll /
    discover / cancel); `RoboticoOps` is otherwise invisible to them.
 4. **CU survivability** — signing is confined to our two `EXECUTE AS` entry SPs
-   (`StartTestmandantReset` + `CancelResetRequest`); no msdb countersignatures exist to
+   (`spPub_StartTestmandantReset` + `spPub_CancelResetRequest`); no msdb countersignatures exist to
    be dropped by a cumulative update.
-5. **Full audit** — every reset is a durable `ops.ResetRequest` row (who/when/status/
+5. **Full audit** — every reset is a durable `ops.tResetRequest` row (who/when/status/
    error/step-log).
 6. **No secrets in git** — licence keys are seeded by placeholder + runbook UPDATE.
 7. **Engine-safe promotion** — only versioned scripts flow toward prod; no test1-built
@@ -180,14 +180,14 @@ line before each step so a mid-step failure is attributable in `StepLog`.
 | Ebene-B tree | `db-migrations/global/` | ~20 files; journal `ops` in RoboticoOps |
 | Deploy wrapper | `db-migrations/deploy.ps1` | `-Scope`, `-Environment`, `-Target`, `-Baseline`, `-DryRun` |
 | Target catalogue | `db-migrations/targets.config.json` | servers + DB lists; Windows auth, no secrets |
-| Registry & queue | `db-migrations/global/up/0002_ops_schema_tables.sql` | `ops.Mandant` / `ops.Config` / `ops.ResetRequest` |
-| Pipeline registry | `db-migrations/global/up/0021_reset_step_registry.sql` | `ops.ResetStep` — ordered `reset.internal_*` steps + seed (data-driven pipeline, EXT-1) |
+| Registry & queue | `db-migrations/global/up/0002_ops_schema_tables.sql` | `ops.tMandant` / `ops.tConfig` / `ops.tResetRequest` |
+| Pipeline registry | `db-migrations/global/up/0021_reset_step_registry.sql` | `ops.tResetStep` — ordered `reset.spInternal_*` steps + seed (data-driven pipeline, EXT-1) |
 | Signing cert | `db-migrations/global/up/0011_signing_certificate.sql` | private key in RoboticoOps, public in master |
 | Proxy login | `db-migrations/global/up/0010_jobstartuser_login.sql` | DISABLEd, `DENY CONNECT SQL`, msdb SQLAgentOperatorRole |
-| Reset colleague SPs | `db-migrations/global/sprocs/reset.{StartTestmandantReset,GetResetStatus,ListMandants,CancelResetRequest}.sql` | self-service surface (EXECUTE → `ops_reset_executor`). Start + Cancel are signed `EXECUTE AS jobstartuser` (cross into msdb); Status + List are grant-only |
-| Reset admin SPs | `db-migrations/global/sprocs/reset.{PurgeOldRequests,CreateTestmandant}.sql` | EXECUTE → `ops_admin` only. `PurgeOldRequests` = audit-log retention (keep-last-N per mandant). `CreateTestmandant` = one-call mandant creation: registers `ops.Mandant` (no silent upsert — existing key THROWs) then EXECs `StartTestmandantReset`, whose first reset **builds** the clone DB (`internal_CloneDatabase` RESTOREs it). Not signed; delegates the msdb crossing to the signed `Start` |
-| Reset pipeline | `db-migrations/global/sprocs/reset.{ProcessNextResetRequest,internal_*}.sql` | whitelist-guarded loop over `ops.ResetStep`; uniform-contract steps; `internal_LogStep` StepLog helper |
-| Agent-job wrapper | `db-migrations/global/runAfterOtherAnyTimeScripts/reset.EnsureAgentJob.sql` | idempotent job (re)install, owner `sa` |
+| Reset colleague SPs | `db-migrations/global/sprocs/reset.{spPub_StartTestmandantReset,spPub_GetResetStatus,spPub_ListMandants,spPub_CancelResetRequest}.sql` | self-service surface (EXECUTE → `ops_reset_executor`). Start + Cancel are signed `EXECUTE AS jobstartuser` (cross into msdb); Status + List are grant-only |
+| Reset admin SPs | `db-migrations/global/sprocs/reset.{spPub_PurgeOldRequests,spPub_CreateTestmandant}.sql` | EXECUTE → `ops_admin` only. `spPub_PurgeOldRequests` = audit-log retention (keep-last-N per mandant). `spPub_CreateTestmandant` = one-call mandant creation: registers `ops.tMandant` (no silent upsert — existing key THROWs) then EXECs `spPub_StartTestmandantReset`, whose first reset **builds** the clone DB (`spInternal_CloneDatabase` RESTOREs it). Not signed; delegates the msdb crossing to the signed `Start` |
+| Reset pipeline | `db-migrations/global/sprocs/reset.{spProcessNextResetRequest,spInternal_*}.sql` | whitelist-guarded loop over `ops.tResetStep`; uniform-contract steps; `spInternal_LogStep` cStepLog helper |
+| Agent-job wrapper | `db-migrations/global/runAfterOtherAnyTimeScripts/reset.spEnsureAgentJob.sql` | idempotent job (re)install, owner `sa` |
 | Re-signing | `db-migrations/global/permissions/900_resign_procedures.sql` | everytime; heals dropped signatures |
 | Lint | `db-migrations/tests/lint-migrations.ps1` | rules (a)–(g), the executable contract |
 
@@ -247,7 +247,7 @@ changed anytime scripts). Never edit an applied `up/` script to "fix" drift — 
 ### 6.3 Re-signing after a signed-SP redeploy
 
 `CREATE OR ALTER` on a signed SP **drops its signature**. Two procs are signed —
-`reset.StartTestmandantReset` and `reset.CancelResetRequest`, our two `EXECUTE AS`
+`reset.spPub_StartTestmandantReset` and `reset.spPub_CancelResetRequest`, our two `EXECUTE AS`
 entry points that cross into msdb (§2, item 4). The everytime
 `permissions/900_resign_procedures.sql` re-signs **every** unsigned
 `EXECUTE AS 'jobstartuser'` proc within the same grate run (it derives the set from the
@@ -257,7 +257,7 @@ catalog, so a new EXECUTE-AS entry point is signed automatically), so a normal
 it to grate as the `{{CertPassword}}` token — the private-key password never touches git.
 
 **Rule:** never `CREATE OR ALTER` a signed reset entry point
-(`reset.StartTestmandantReset`, `reset.CancelResetRequest`) directly in SSMS on a live
+(`reset.spPub_StartTestmandantReset`, `reset.spPub_CancelResetRequest`) directly in SSMS on a live
 instance — redeploy the `global` chain so the re-signing step runs. Note that
 `900_resign_procedures.sql` carries the `{{CertPassword}}` grate token and is therefore not
 runnable as raw SQL; if you must hotfix, re-sign by hand with `ADD SIGNATURE TO

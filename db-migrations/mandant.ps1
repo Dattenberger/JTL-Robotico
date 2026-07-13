@@ -3,12 +3,12 @@
     Create / list test mandants via the RoboticoOps registry SPs.
 
 .DESCRIPTION
-    Thin sqlcmd wrapper around reset.CreateTestmandant (admin) and reset.ListMandants. Reuses
+    Thin sqlcmd wrapper around reset.spPub_CreateTestmandant (admin) and reset.spPub_ListMandants. Reuses
     the shared target/auth resolver (lib/targets.ps1 + targets.config.json) — same servers and
     auth as deploy.ps1, no secrets in config.
 
     -Create registers a NEW mandant and (unless -NoReset) kicks its first reset, which BUILDS
-    the clone database (internal_CloneDatabase RESTOREs it). EXECUTE on reset.CreateTestmandant
+    the clone database (spInternal_CloneDatabase RESTOREs it). EXECUTE on reset.spPub_CreateTestmandant
     is granted to ops_admin only, so the connecting principal must be an ops_admin member.
 
     Never runs autonomously against PROD: -Environment PROD + -Create requires an interactive
@@ -21,7 +21,7 @@
     Create a new mandant. Requires -MandantKey + -DisplayName.
 
 .PARAMETER List
-    List mandants (wraps reset.ListMandants).
+    List mandants (wraps reset.spPub_ListMandants).
 
 .PARAMETER MandantKey
     New mandant key, must match tm<number> (e.g. tm5).
@@ -103,8 +103,8 @@ function Invoke-OpsSql([string] $Query, [switch] $NoHeader) {
 function Q([string] $v) { $v.Replace("'", "''") }
 
 if ($List) {
-    Write-Host "==> reset.ListMandants ($Environment / $($target.GlobalDb) @ $($target.Server))" -ForegroundColor Cyan
-    Invoke-OpsSql 'SET NOCOUNT ON; EXEC reset.ListMandants;' | Write-Host
+    Write-Host "==> reset.spPub_ListMandants ($Environment / $($target.GlobalDb) @ $($target.Server))" -ForegroundColor Cyan
+    Invoke-OpsSql 'SET NOCOUNT ON; EXEC reset.spPub_ListMandants;' | Write-Host
     return
 }
 
@@ -131,10 +131,10 @@ if ($PSBoundParameters.ContainsKey('TargetDb'))    { $params += "@TargetDb = N'$
 if ($PSBoundParameters.ContainsKey('ShopUrl'))     { $params += "@ShopUrl = N'$(Q $ShopUrl)'" }
 if ($PSBoundParameters.ContainsKey('ShopLicense')) { $params += "@ShopLicense = N'$(Q $ShopLicense)'" }
 $params += "@StartReset = $(if ($NoReset) { 0 } else { 1 })"
-$exec = "SET NOCOUNT ON; EXEC reset.CreateTestmandant " + ($params -join ', ') + ';'
+$exec = "SET NOCOUNT ON; EXEC reset.spPub_CreateTestmandant " + ($params -join ', ') + ';'
 
 Write-Host ''
-Write-Host "==> reset.CreateTestmandant $MandantKey ($Environment / $($target.GlobalDb))" -ForegroundColor Cyan
+Write-Host "==> reset.spPub_CreateTestmandant $MandantKey ($Environment / $($target.GlobalDb))" -ForegroundColor Cyan
 $result = Invoke-OpsSql $exec -NoHeader
 $result | Write-Host
 
@@ -142,5 +142,5 @@ if (-not $NoReset) {
     Write-Host ''
     Write-Host "Reset kicked. Poll status with:" -ForegroundColor Green
     Write-Host "  pwsh db-migrations/mandant.ps1 -Environment $Environment -List" -ForegroundColor Green
-    Write-Host "  (or EXEC reset.GetResetStatus @MandantKey = N'$MandantKey'; — until Status = succeeded)" -ForegroundColor Green
+    Write-Host "  (or EXEC reset.spPub_GetResetStatus @MandantKey = N'$MandantKey'; — until cStatus = succeeded)" -ForegroundColor Green
 }

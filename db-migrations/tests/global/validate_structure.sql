@@ -20,27 +20,27 @@ DECLARE @problems TABLE (Check_ nvarchar(200));
 -- --- objects that must exist -----------------------------------------------------
 ;WITH required (name, type) AS (
     SELECT v.name, v.type FROM (VALUES
-        (N'ops.Mandant',        N'U'),
-        (N'ops.Config',         N'U'),
-        (N'ops.ResetRequest',   N'U'),
-        (N'ops.ResetStep',      N'U'),
-        (N'reset.StartTestmandantReset',      N'P'),
-        (N'reset.GetResetStatus',             N'P'),
-        (N'reset.ListMandants',               N'P'),
-        (N'reset.CancelResetRequest',         N'P'),
-        (N'reset.CreateTestmandant',          N'P'),
-        (N'reset.PurgeOldRequests',           N'P'),
-        (N'reset.ProcessNextResetRequest',    N'P'),
-        (N'reset.internal_LogStep',           N'P'),
-        (N'reset.internal_CloneDatabase',     N'P'),
-        (N'reset.internal_PostRestoreSecurity', N'P'),
-        (N'reset.internal_InvalidateCredentials', N'P'),
-        (N'reset.internal_NeutralizeWorker',  N'P'),
-        (N'reset.internal_AnonymizeCustomerData', N'P'),
-        (N'reset.internal_GrantAccess',       N'P'),
-        (N'reset.internal_RegisterMandant',   N'P'),
-        (N'reset.internal_ApplyJtlRoles',     N'P'),
-        (N'reset.EnsureAgentJob',             N'P')
+        (N'ops.tMandant',        N'U'),
+        (N'ops.tConfig',         N'U'),
+        (N'ops.tResetRequest',   N'U'),
+        (N'ops.tResetStep',      N'U'),
+        (N'reset.spPub_StartTestmandantReset',      N'P'),
+        (N'reset.spPub_GetResetStatus',             N'P'),
+        (N'reset.spPub_ListMandants',               N'P'),
+        (N'reset.spPub_CancelResetRequest',         N'P'),
+        (N'reset.spPub_CreateTestmandant',          N'P'),
+        (N'reset.spPub_PurgeOldRequests',           N'P'),
+        (N'reset.spProcessNextResetRequest',    N'P'),
+        (N'reset.spInternal_LogStep',           N'P'),
+        (N'reset.spInternal_CloneDatabase',     N'P'),
+        (N'reset.spInternal_PostRestoreSecurity', N'P'),
+        (N'reset.spInternal_InvalidateCredentials', N'P'),
+        (N'reset.spInternal_NeutralizeWorker',  N'P'),
+        (N'reset.spInternal_AnonymizeCustomerData', N'P'),
+        (N'reset.spInternal_GrantAccess',       N'P'),
+        (N'reset.spInternal_RegisterMandant',   N'P'),
+        (N'reset.spInternal_ApplyJtlRoles',     N'P'),
+        (N'reset.spEnsureAgentJob',             N'P')
     ) v(name, type)
 )
 INSERT INTO @problems (Check_)
@@ -51,17 +51,17 @@ WHERE OBJECT_ID(r.name, r.type) IS NULL;
 -- --- columns the reset procs depend on -------------------------------------------
 ;WITH cols (tbl, col) AS (
     SELECT v.tbl, v.col FROM (VALUES
-        (N'ops.Mandant', N'MandantKey'), (N'ops.Mandant', N'TargetDb'), (N'ops.Mandant', N'LoginName'),
-        (N'ops.Mandant', N'ShopUrl'), (N'ops.Mandant', N'ShopLicense'), (N'ops.Mandant', N'DisplayName'),
-        (N'ops.Mandant', N'IsActive'),
-        (N'ops.Config', N'ConfigKey'), (N'ops.Config', N'ConfigValue'),
-        (N'ops.ResetRequest', N'RequestId'), (N'ops.ResetRequest', N'MandantKey'),
-        (N'ops.ResetRequest', N'TargetDb'), (N'ops.ResetRequest', N'Status'),
-        (N'ops.ResetRequest', N'RequestedBy'), (N'ops.ResetRequest', N'StepLog'),
-        (N'ops.ResetRequest', N'ErrorText'), (N'ops.ResetRequest', N'StartedAt'),
-        (N'ops.ResetRequest', N'FinishedAt'),
-        (N'ops.ResetStep', N'StepOrder'), (N'ops.ResetStep', N'ProcName'),
-        (N'ops.ResetStep', N'IsEnabled'), (N'ops.ResetStep', N'IsCritical')
+        (N'ops.tMandant', N'cMandantKey'), (N'ops.tMandant', N'cTargetDb'), (N'ops.tMandant', N'cLoginName'),
+        (N'ops.tMandant', N'cShopUrl'), (N'ops.tMandant', N'cShopLicense'), (N'ops.tMandant', N'cDisplayName'),
+        (N'ops.tMandant', N'bActive'),
+        (N'ops.tConfig', N'cKey'), (N'ops.tConfig', N'cValue'),
+        (N'ops.tResetRequest', N'kResetRequest'), (N'ops.tResetRequest', N'cMandantKey'),
+        (N'ops.tResetRequest', N'cTargetDb'), (N'ops.tResetRequest', N'cStatus'),
+        (N'ops.tResetRequest', N'cRequestedBy'), (N'ops.tResetRequest', N'cStepLog'),
+        (N'ops.tResetRequest', N'cErrorMessage'), (N'ops.tResetRequest', N'dStarted'),
+        (N'ops.tResetRequest', N'dFinished'),
+        (N'ops.tResetStep', N'nStepOrder'), (N'ops.tResetStep', N'cProcName'),
+        (N'ops.tResetStep', N'bEnabled'), (N'ops.tResetStep', N'bCritical')
     ) v(tbl, col)
 )
 INSERT INTO @problems (Check_)
@@ -71,13 +71,13 @@ WHERE OBJECT_ID(c.tbl, N'U') IS NULL OR COL_LENGTH(c.tbl, c.col) IS NULL;
 
 -- --- the signature-required procs must actually be signed by RoboticoOpsSigning ---
 -- Signed set = the EXECUTE-AS-'jobstartuser' entry points that cross into msdb:
--- reset.StartTestmandantReset (sp_start_job) and reset.CancelResetRequest (job-activity
+-- reset.spPub_StartTestmandantReset (sp_start_job) and reset.spPub_CancelResetRequest (job-activity
 -- read). A named check here catches the case where someone drops a proc's EXECUTE AS
 -- clause — the generic assertion below only sees procs that STILL declare EXECUTE AS.
 ;WITH signed_required (name) AS (
     SELECT v.name FROM (VALUES
-        (N'reset.StartTestmandantReset'),
-        (N'reset.CancelResetRequest')
+        (N'reset.spPub_StartTestmandantReset'),
+        (N'reset.spPub_CancelResetRequest')
     ) v(name)
 )
 INSERT INTO @problems (Check_)
@@ -91,7 +91,7 @@ WHERE OBJECT_ID(s.name) IS NOT NULL
           AND c.name = N'RoboticoOpsSigning');
 
 -- --- every EXECUTE-AS reset proc must be signed (the signed set = the EXECUTE-AS set:
--- --- currently StartTestmandantReset + CancelResetRequest) -----------------------
+-- --- currently spPub_StartTestmandantReset + spPub_CancelResetRequest) -----------------------
 INSERT INTO @problems (Check_)
 SELECT N'EXECUTE-AS proc without signature: ' + OBJECT_SCHEMA_NAME(m.object_id) + N'.' + OBJECT_NAME(m.object_id)
 FROM sys.sql_modules m

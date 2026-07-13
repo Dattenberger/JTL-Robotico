@@ -17,8 +17,8 @@
       1. tests/global/validate_structure.sql  — objects / columns / signatures / roles.
       2. tests/global/validate_rollout.sql     — journals, reset-step registry, agent job,
                                                   master signing/impersonation principals.
-      3. Roundtrip: reset.ListMandants + reset.GetResetStatus run and return.
-      4. (optional -RightsTestLogin) low-priv negative test: direct SELECT ShopLicense denied.
+      3. Roundtrip: reset.spPub_ListMandants + reset.spPub_GetResetStatus run and return.
+      4. (optional -RightsTestLogin) low-priv negative test: direct SELECT cShopLicense denied.
       5. (optional -FullReset) create a throwaway mandant, poll to succeeded/failed, then
          run the runbook's read-only outcome checks against the clone.
 
@@ -37,7 +37,7 @@
 
 .PARAMETER LoginName
     Developer login granted db_owner on the clone by -FullReset (must exist on the target).
-    Default: the seed template login (skipped by internal_GrantAccess if absent).
+    Default: the seed template login (skipped by spInternal_GrantAccess if absent).
 
 .PARAMETER RightsTestLogin / .PARAMETER RightsTestPasswordEnv
     Optional low-privilege SQL login (+ env var holding its password) for the rights
@@ -110,24 +110,24 @@ Invoke-SqlFile $structureSql 'validate_structure.sql (objects / columns / signat
 Invoke-SqlFile $rolloutSql   'validate_rollout.sql (journals / registry / agent job / master principals)'
 
 # --- 3: consumer roundtrip ------------------------------------------------------
-Write-Host "==> Consumer roundtrip (ListMandants + GetResetStatus)" -ForegroundColor Cyan
-$rt = Invoke-Query 'SET NOCOUNT ON; EXEC reset.ListMandants;' $target.GlobalDb
-if ($rt.Exit -ne 0) { Fail "reset.ListMandants failed: $($rt.Out)" } else { Pass "reset.ListMandants returned" }
-$gs = Invoke-Query 'SET NOCOUNT ON; EXEC reset.GetResetStatus;' $target.GlobalDb
-if ($gs.Exit -ne 0) { Fail "reset.GetResetStatus failed: $($gs.Out)" } else { Pass "reset.GetResetStatus returned" }
+Write-Host "==> Consumer roundtrip (spPub_ListMandants + spPub_GetResetStatus)" -ForegroundColor Cyan
+$rt = Invoke-Query 'SET NOCOUNT ON; EXEC reset.spPub_ListMandants;' $target.GlobalDb
+if ($rt.Exit -ne 0) { Fail "reset.spPub_ListMandants failed: $($rt.Out)" } else { Pass "reset.spPub_ListMandants returned" }
+$gs = Invoke-Query 'SET NOCOUNT ON; EXEC reset.spPub_GetResetStatus;' $target.GlobalDb
+if ($gs.Exit -ne 0) { Fail "reset.spPub_GetResetStatus failed: $($gs.Out)" } else { Pass "reset.spPub_GetResetStatus returned" }
 
 # --- 4: rights negative test (optional) -----------------------------------------
 if ($RightsTestLogin) {
-    Write-Host "==> Rights negative test as '$RightsTestLogin' (expect DENY on ops.Mandant.ShopLicense)" -ForegroundColor Cyan
+    Write-Host "==> Rights negative test as '$RightsTestLogin' (expect DENY on ops.tMandant.cShopLicense)" -ForegroundColor Cyan
     $pw = if ($RightsTestPasswordEnv) { [Environment]::GetEnvironmentVariable($RightsTestPasswordEnv) } else { $null }
     if ([string]::IsNullOrEmpty($pw)) {
         Fail "RightsTestLogin given but no password in env '$RightsTestPasswordEnv' — cannot run the negative test."
     }
     else {
         $a = @('-S', $target.Server, '-U', $RightsTestLogin, '-P', $pw, '-d', $target.GlobalDb, '-C', '-b', '-h', '-1', '-W',
-               '-Q', 'SET NOCOUNT ON; SELECT TOP 1 ShopLicense FROM ops.Mandant;')
+               '-Q', 'SET NOCOUNT ON; SELECT TOP 1 cShopLicense FROM ops.tMandant;')
         $out = (& $sqlcmdPath @a 2>&1) -join "`n"
-        if ($out -match 'permission was denied|SELECT permission') { Pass "column DENY enforced ($RightsTestLogin cannot read ShopLicense)" }
+        if ($out -match 'permission was denied|SELECT permission') { Pass "column DENY enforced ($RightsTestLogin cannot read cShopLicense)" }
         else { Fail "expected a SELECT-permission-denied error, got: $out" }
     }
 }
@@ -142,7 +142,7 @@ if ($FullReset) {
     if ($Environment -eq 'PROD') { throw "-FullReset is refused against PROD by this validation script." }
 
     # Register + kick via the mandant wrapper (admin). Reuse if it already exists and -ReuseExisting.
-    $exists = Invoke-Query "SET NOCOUNT ON; SELECT COUNT(*) FROM ops.Mandant WHERE MandantKey = N'$($MandantKey.Replace("'","''"))';" $target.GlobalDb
+    $exists = Invoke-Query "SET NOCOUNT ON; SELECT COUNT(*) FROM ops.tMandant WHERE cMandantKey = N'$($MandantKey.Replace("'","''"))';" $target.GlobalDb
     $alreadyThere = ($exists.Out.Trim() -match '^\d+$') -and ([int]$exists.Out.Trim() -gt 0)
 
     if ($alreadyThere -and -not $ReuseExisting) {
@@ -151,8 +151,8 @@ if ($FullReset) {
     else {
         if ($alreadyThere) {
             Write-Host "   '$MandantKey' exists — re-triggering its reset." -ForegroundColor DarkGray
-            $kick = Invoke-Query "SET NOCOUNT ON; EXEC reset.StartTestmandantReset @MandantKey = N'$MandantKey';" $target.GlobalDb
-            if ($kick.Exit -ne 0) { Fail "StartTestmandantReset failed: $($kick.Out)" }
+            $kick = Invoke-Query "SET NOCOUNT ON; EXEC reset.spPub_StartTestmandantReset @MandantKey = N'$MandantKey';" $target.GlobalDb
+            if ($kick.Exit -ne 0) { Fail "spPub_StartTestmandantReset failed: $($kick.Out)" }
         }
         else {
             $mandantArgs = @('-Environment', $Environment, '-Create', '-MandantKey', $MandantKey, '-DisplayName', 'Rollout validation')
@@ -161,12 +161,12 @@ if ($FullReset) {
             if ($LASTEXITCODE -ne 0) { Fail "mandant.ps1 -Create failed (exit $LASTEXITCODE)." }
         }
 
-        # Poll GetResetStatus until succeeded / failed (or timeout).
+        # Poll spPub_GetResetStatus until succeeded / failed (or timeout).
         $deadline = (Get-Date).AddMinutes(40)
         $status = 'unknown'
         do {
             Start-Sleep -Seconds 15
-            $r = Invoke-Query "SET NOCOUNT ON; SELECT TOP 1 Status FROM ops.ResetRequest WHERE MandantKey = N'$MandantKey' ORDER BY RequestId DESC;" $target.GlobalDb
+            $r = Invoke-Query "SET NOCOUNT ON; SELECT TOP 1 cStatus FROM ops.tResetRequest WHERE cMandantKey = N'$MandantKey' ORDER BY kResetRequest DESC;" $target.GlobalDb
             $status = $r.Out.Trim()
             Write-Host "   status: $status" -ForegroundColor DarkGray
         } while ($status -notin @('succeeded', 'failed') -and (Get-Date) -lt $deadline)
@@ -175,7 +175,7 @@ if ($FullReset) {
             Pass "reset '$MandantKey' reached 'succeeded'"
 
             # Read-only outcome checks against the clone (runbook §4 subset).
-            $cloneDb = (Invoke-Query "SET NOCOUNT ON; SELECT TOP 1 TargetDb FROM ops.Mandant WHERE MandantKey = N'$MandantKey';" $target.GlobalDb).Out.Trim()
+            $cloneDb = (Invoke-Query "SET NOCOUNT ON; SELECT TOP 1 cTargetDb FROM ops.tMandant WHERE cMandantKey = N'$MandantKey';" $target.GlobalDb).Out.Trim()
             Write-Host "==> Clone outcome checks against '$cloneDb'" -ForegroundColor Cyan
 
             $ver = (Invoke-Query "SET NOCOUNT ON; SELECT cVersion FROM dbo.tVersion;" $cloneDb).Out.Trim()
@@ -202,7 +202,7 @@ SELECT SUM(n) FROM (
             Write-Host "  DELETE FROM dbo.tMandant WHERE cDB = '$cloneDb';   -- in $($target.Eazybusiness[0]), reviewed" -ForegroundColor Yellow
         }
         elseif ($status -eq 'failed') {
-            $err = (Invoke-Query "SET NOCOUNT ON; SELECT TOP 1 ErrorText FROM ops.ResetRequest WHERE MandantKey = N'$MandantKey' ORDER BY RequestId DESC;" $target.GlobalDb).Out.Trim()
+            $err = (Invoke-Query "SET NOCOUNT ON; SELECT TOP 1 cErrorMessage FROM ops.tResetRequest WHERE cMandantKey = N'$MandantKey' ORDER BY kResetRequest DESC;" $target.GlobalDb).Out.Trim()
             Fail "reset '$MandantKey' ended 'failed': $err"
         }
         else {

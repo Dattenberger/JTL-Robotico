@@ -1,22 +1,22 @@
--- reset.internal_InvalidateCredentials  (Ebene B / global — pipeline step, job-only)
+-- reset.spInternal_InvalidateCredentials  (Ebene B / global — pipeline step, job-only)
 --
 -- Ported from Projekte/Testsystem/invalidate-credentials-for-testing.sql (state
 -- e6d7b2b). Clears secrets and repoints the JS-Shop to the developer's staging shop.
--- ShopUrl / ShopLicense are read from ops.Mandant by @MandantKey (uniform step
+-- cShopUrl / cShopLicense are read from ops.tMandant by @MandantKey (uniform step
 -- contract, EXT-2) and passed on as sp_executesql PARAMETERS — never concatenated into
 -- SQL, D6 — instead of the source's SQLCMD $(...) variables.
 --
 -- Deviations from the source (documented, D4):
 --   * The banking-anonymization blocks (tkontodaten / tinetzahlungsinfo) are NOT
---     ported here — they are fully covered by internal_AnonymizeCustomerData block 8,
+--     ported here — they are fully covered by spInternal_AnonymizeCustomerData block 8,
 --     which runs later in the pipeline (single source of truth, avoids drift).
 --   * Per-statement PRINTs and the trailing verification SELECT are dropped (noise in
---     an automated job); progress is summarised into @StepLog / GetResetStatus.
+--     an automated job); progress is summarised into @StepLog / spPub_GetResetStatus.
 --   * No wrapping transaction: each UPDATE auto-commits; a failure THROWs and the
 --     orchestrator quarantines the clone as 'failed' for diagnosis.
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
-CREATE OR ALTER PROCEDURE reset.internal_InvalidateCredentials
+CREATE OR ALTER PROCEDURE reset.spInternal_InvalidateCredentials
     @TargetDb   sysname,
     @RequestId  int,
     @MandantKey sysname
@@ -25,13 +25,13 @@ BEGIN
     SET NOCOUNT ON;
 
     IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
-        THROW 51030, 'internal_InvalidateCredentials refused: target is not a test-mandant clone.', 1;
+        THROW 51030, 'spInternal_InvalidateCredentials refused: target is not a test-mandant clone.', 1;
 
-    -- Each step reads its own inputs from ops.Mandant (EXT-2) — the orchestrator no
+    -- Each step reads its own inputs from ops.tMandant (EXT-2) — the orchestrator no
     -- longer routes per-step parameters.
     DECLARE @ShopUrl nvarchar(max), @ShopLicense nvarchar(max);
-    SELECT @ShopUrl = ShopUrl, @ShopLicense = ShopLicense
-    FROM ops.Mandant WHERE MandantKey = @MandantKey;
+    SELECT @ShopUrl = cShopUrl, @ShopLicense = cShopLicense
+    FROM ops.tMandant WHERE cMandantKey = @MandantKey;
 
     -- Rows hit by the JS-Shop repoint; 0 => no matching shop row (PAR-4).
     DECLARE @ShopRepointRows int;
@@ -156,15 +156,15 @@ BEGIN
          @ShopUrl = @ShopUrl, @ShopLicense = @ShopLicense, @ShopRepointRows = @ShopRepointRows OUTPUT;
 
     -- No THROW: 0 matching shop rows is legitimate for some clones, but must be
-    -- visible in GetResetStatus so a silently un-repointed shop is not mistaken for
+    -- visible in spPub_GetResetStatus so a silently un-repointed shop is not mistaken for
     -- a staging repoint (PAR-4).
     IF ISNULL(@ShopRepointRows, 0) = 0
-        EXEC reset.internal_LogStep @RequestId,
+        EXEC reset.spInternal_LogStep @RequestId,
              N'WARN shop-repoint: no matching JS-Shop row (nTyp=0 + http URL) — shop NOT repointed to staging';
 
     DECLARE @credMsg nvarchar(200) =
         N'credentials: cleared + JS-Shop repointed to staging ('
         + CAST(ISNULL(@ShopRepointRows, 0) AS nvarchar(10)) + N' row(s))';
-    EXEC reset.internal_LogStep @RequestId, @credMsg;
+    EXEC reset.spInternal_LogStep @RequestId, @credMsg;
 END
 GO

@@ -70,7 +70,7 @@
 ### D5 — Reset asynchron: signierte SP startet Agent-Job, Queue-Tabelle als Übergabe
 
 **Trigger:** Backup+Restore dauert Minuten (Client-Timeout); Kollegen ohne Server-Rechte; Nutzer-Entscheid.
-**Decision:** `reset.StartTestmandantReset` (nur EXECUTE-Grant) validiert, schreibt Request-Zeile (`ops.ResetRequest`, Status-Machine queued→running→succeeded/failed) und startet den Agent-Job `RoboticoOps - Testmandant Reset` via `msdb.dbo.sp_start_job`. Der Job verarbeitet die älteste queued-Zeile.
+**Decision:** `reset.spPub_StartTestmandantReset` (nur EXECUTE-Grant) validiert, schreibt Request-Zeile (`ops.tResetRequest`, Status-Machine queued→running→succeeded/failed) und startet den Agent-Job `RoboticoOps - Testmandant Reset` via `msdb.dbo.sp_start_job`. Der Job verarbeitet die älteste queued-Zeile.
 **Rationale:** Agent-Jobs nehmen keine Parameter → Queue-Tabelle ist das robuste, auditierbare Muster; asynchron = kein Client-Timeout; Tabelle = einsehbarer State.
 **Alternatives Considered:**
 - Synchron in der SP: Minuten-Wartezeit, Verbindungsabbruch = unklarer Zustand — abgelehnt.
@@ -89,21 +89,21 @@
 ### D7 — Status-Rückkanal: signierte Status-SP, keine Tabellen-Grants
 
 **Trigger:** Nutzer-Entscheid 2026-07-09.
-**Decision:** `reset.GetResetStatus` (+ optional `@RequestId`/`@MandantKey`-Filter) ist der einzige Lesezugang für Kollegen; RoboticoOps bleibt für sie sonst unsichtbar. Reine Lese-SP auf die eigene DB → braucht kein Signing, nur EXECUTE-Grant an die Rolle `ops_reset_executor`.
+**Decision:** `reset.spPub_GetResetStatus` (+ optional `@RequestId`/`@MandantKey`-Filter) ist der einzige Lesezugang für Kollegen; RoboticoOps bleibt für sie sonst unsichtbar. Reine Lese-SP auf die eigene DB → braucht kein Signing, nur EXECUTE-Grant an die Rolle `ops_reset_executor`.
 **Rationale:** „Die SP ist die Schnittstelle" konsistent durchgezogen; Secret-Spalten der Registry automatisch geschützt.
 **Alternatives Considered:** SELECT-Grant auf View: öffnet die DB als benutzbare Fläche, Dauerprüfpflicht bei Schemaerweiterungen — abgelehnt.
 
-### D8 — Mandanten-Config inkl. Lizenz-Keys in `ops.Mandant`, spaltenrechtsgeschützt
+### D8 — Mandanten-Config inkl. Lizenz-Keys in `ops.tMandant`, spaltenrechtsgeschützt
 
 **Trigger:** Ablösung der gitignorierten `test-environment.config.json` (Google-Drive-Sync); Nutzer-Entscheid.
-**Decision:** `ops.Mandant` trägt MandantKey (tmN), TargetDb, Developer, DisplayName, LoginName, ShopUrl, ShopLicense, IsActive. `ShopLicense` (+ ggf. weitere Secret-Spalten) per Spalten-DENY für alle außer den reset-internen Prozeduren/Admins. Seeds mit echten Keys laufen NIE über git — Seed-Template mit Platzhaltern + Runbook-Schritt.
+**Decision:** `ops.tMandant` trägt cMandantKey (tmN), cTargetDb, cDeveloper, cDisplayName, cLoginName, cShopUrl, cShopLicense, bActive. `cShopLicense` (+ ggf. weitere Secret-Spalten) per Spalten-DENY für alle außer den reset-internen Prozeduren/Admins. Seeds mit echten Keys laufen NIE über git — Seed-Template mit Platzhaltern + Runbook-Schritt.
 **Rationale:** Ein Pflegeort, versionierbares Schema, kein Datei-Sync; Rechte-basiertes Schutzniveau genügt (Zugriff hat ohnehin nur die signierte SP-Kette + Admins).
 **Alternatives Considered:** ENCRYPTBYKEY-Verschlüsselung: Key-Management-Komplexität ohne relevanten Zugewinn im Admin-only-Kontext — abgelehnt (nachrüstbar).
 
 ### D9 — Worker-Neutralisierung wird fester Reset-Bestandteil (über Credential-Invalidierung hinaus)
 
 **Trigger:** Research/4 (Worker gleicht alle tMandant-Einträge ab; Lizenz-Leitplanke); Survey-Funde der konkreten Flags.
-**Decision:** Der Reset-Job neutralisiert im Zielklon zusätzlich: `dbo.ebay_user.nGesperrt=1` (bereits in e6d7b2b), `dbo.pf_user`: `nGesperrt=1, nAktiv=0` (Amazon-Pendant, guarded — Tabelle kann leer sein), Queue-Leerung (`dbo.tQueue`, `dbo.tWorkflowQueue`, `dbo.ebay_usermessagequeue`, `dbo.ebay_queue_out`, `dbo.tGlobalsQueue`, `dbo.tDruckQueue`; jeweils `IF OBJECT_ID`-guarded DELETE/TRUNCATE), Shop-Repoint auf Staging (aus ops.Mandant statt SQLCMD-Var). `Worker.tTarget` wird NICHT verändert (Semantik von nAbgleichstyp ungeklärt → Probeliste §4; konservativ: Sperren wirken auf Konto-/Shop-Ebene).
+**Decision:** Der Reset-Job neutralisiert im Zielklon zusätzlich: `dbo.ebay_user.nGesperrt=1` (bereits in e6d7b2b), `dbo.pf_user`: `nGesperrt=1, nAktiv=0` (Amazon-Pendant, guarded — Tabelle kann leer sein), Queue-Leerung (`dbo.tQueue`, `dbo.tWorkflowQueue`, `dbo.ebay_usermessagequeue`, `dbo.ebay_queue_out`, `dbo.tGlobalsQueue`, `dbo.tDruckQueue`; jeweils `IF OBJECT_ID`-guarded DELETE/TRUNCATE), Shop-Repoint auf Staging (aus ops.tMandant statt SQLCMD-Var). `Worker.tTarget` wird NICHT verändert (Semantik von nAbgleichstyp ungeklärt → Probeliste §4; konservativ: Sperren wirken auf Konto-/Shop-Ebene).
 **Rationale:** Credentials leeren ≠ Abgleich verhindern; Queue-Rückstau feuert, sobald jemand testweise Credentials setzt; Lizenz-Compliance (Klon darf nie produktiv abgleichen).
 **Alternatives Considered:** Nur Credential-Invalidierung (Ist-Stand): nachgewiesene Lücken — abgelehnt.
 
@@ -193,29 +193,29 @@ Der Testmandanten-Reset ist ein PowerShell-Skript, das persönliche Admin-Rechte
 ```
 Kollege (nur EXECUTE)                          Admin/Deployer (Lukas)
   |                                              |
-  | EXEC RoboticoOps.reset.StartTestmandantReset | deploy.ps1 (grate)
+  | EXEC RoboticoOps.reset.spPub_StartTestmandantReset | deploy.ps1 (grate)
   v                                              v
 +---------------- RoboticoOps (Ebene B) ------------------+
-| reset.StartTestmandantReset  [signiert, EXECUTE AS      |
-|   jobstartuser] -> validiert gegen ops.Mandant,         |
-|   applock, INSERT ops.ResetRequest(queued),             |
+| reset.spPub_StartTestmandantReset  [signiert, EXECUTE AS      |
+|   jobstartuser] -> validiert gegen ops.tMandant,         |
+|   applock, INSERT ops.tResetRequest(queued),             |
 |   msdb.dbo.sp_start_job                                 |
-| reset.GetResetStatus  [nur EXECUTE-Grant]               |
-| ops.Mandant / ops.Config / ops.ResetRequest             |
+| reset.spPub_GetResetStatus  [nur EXECUTE-Grant]               |
+| ops.tMandant / ops.tConfig / ops.tResetRequest             |
 | ops.ScriptsRun (grate-Journal Ebene B)                  |
 +----------------------------------------------------------+
   | Agent-Job "RoboticoOps - Testmandant Reset" (Owner sa)
   v
-reset.ProcessNextResetRequest  [laeuft als Agent-Dienstkonto]
+reset.spProcessNextResetRequest  [laeuft als Agent-Dienstkonto]
   1. aelteste queued-Zeile -> running (Re-Validierung!)
   2. COPY_ONLY-Backup eazybusiness -> Restore Ziel-Klon
   3. Owner/Orphans/TRUSTWORTHY-Sequenz
   4. Nacharbeiten im Klon (dynamisches SQL, USE [Ziel]):
-     Credentials invalidieren -> Shop-Repoint (aus ops.Mandant)
+     Credentials invalidieren -> Shop-Repoint (aus ops.tMandant)
      -> Worker-Neutralisierung (eBay+Amazon-Sperre, Queues leeren)
      -> Anonymisierung -> Grants -> tMandant/tBenutzerFirma
      -> JTL-Rollen
-  5. succeeded/failed + ErrorText -> ops.ResetRequest
+  5. succeeded/failed + cErrorMessage -> ops.tResetRequest
 
 eazybusiness / eazybusiness_tmN / test1-eazybusiness (Ebene A)
   Robotico.* (Objekte + grate-Journal Robotico.ScriptsRun)
@@ -291,25 +291,25 @@ eazybusiness / eazybusiness_tmN / test1-eazybusiness (Ebene A)
 | Path | Action | Notes |
 |---|---|---|
 | `db-migrations/global/up/0001_roboticoops_settings.sql` | NEW | DB-Settings absichern: Collation-Assert (`Latin1_General_CI_AS`, hard FAIL bei Mismatch), `ALTER DATABASE … SET RECOVERY SIMPLE`, `ALTER AUTHORIZATION … TO sa`, TRUSTWORTHY-OFF-Assert |
-| `db-migrations/global/up/0002_ops_schema_tables.sql` | NEW | Schemas `ops`, `reset`; Tabellen `ops.Mandant`, `ops.Config`, `ops.ResetRequest` (inkl. gefiltertem Unique-Index) |
-| `db-migrations/global/up/0003_roles.sql` | NEW | DB-Rollen `ops_reset_executor`, `ops_admin`; Spalten-DENY auf `ops.Mandant.ShopLicense` für ops_reset_executor |
+| `db-migrations/global/up/0002_ops_schema_tables.sql` | NEW | Schemas `ops`, `reset`; Tabellen `ops.tMandant`, `ops.tConfig`, `ops.tResetRequest` (inkl. gefiltertem Unique-Index) |
+| `db-migrations/global/up/0003_roles.sql` | NEW | DB-Rollen `ops_reset_executor`, `ops_admin`; Spalten-DENY auf `ops.tMandant.cShopLicense` für ops_reset_executor |
 | `db-migrations/global/up/0010_jobstartuser_login.sql` | NEW | Guarded: `CREATE LOGIN jobstartuser` (random PW via CRYPT_GEN_RANDOM-Konstruktion im Skript), `ALTER LOGIN … DISABLE`, `DENY CONNECT SQL`; msdb-User + `SQLAgentOperatorRole` + GRANT EXECUTE sp_start_job |
 | `db-migrations/global/up/0011_signing_certificate.sql` | NEW | Guarded: `CREATE CERTIFICATE RoboticoOpsSigning` in RoboticoOps (Passwort via grate-Token `{{CertPassword}}`), Public-Key-Export nach master via `certencoded()`, `CREATE LOGIN RoboticoOpsSigningLogin FROM CERTIFICATE`, `GRANT AUTHENTICATE SERVER TO RoboticoOpsSigningLogin` |
-| `db-migrations/global/sprocs/reset.StartTestmandantReset.sql` | NEW | §3-Detail; `WITH EXECUTE AS 'jobstartuser'` |
-| `db-migrations/global/sprocs/reset.GetResetStatus.sql` | NEW | §3-Detail |
-| `db-migrations/global/sprocs/reset.ProcessNextResetRequest.sql` | NEW | §3-Detail (Job-Körper) + interne Helfer-Procs (siehe §3) |
-| `db-migrations/global/runAfterOtherAnyTimeScripts/agent_job_testmandant_reset.sql` | NEW | Idempotent: `sp_delete_job` IF EXISTS → `sp_add_job` (Owner `sa`) + 1 T-SQL-Step `EXEC RoboticoOps.reset.ProcessNextResetRequest` + `sp_add_jobserver`; enabled, kein Schedule (nur On-Demand via sp_start_job) |
+| `db-migrations/global/sprocs/reset.spPub_StartTestmandantReset.sql` | NEW | §3-Detail; `WITH EXECUTE AS 'jobstartuser'` |
+| `db-migrations/global/sprocs/reset.spPub_GetResetStatus.sql` | NEW | §3-Detail |
+| `db-migrations/global/sprocs/reset.spProcessNextResetRequest.sql` | NEW | §3-Detail (Job-Körper) + interne Helfer-Procs (siehe §3) |
+| `db-migrations/global/runAfterOtherAnyTimeScripts/agent_job_testmandant_reset.sql` | NEW | Idempotent: `sp_delete_job` IF EXISTS → `sp_add_job` (Owner `sa`) + 1 T-SQL-Step `EXEC RoboticoOps.reset.spProcessNextResetRequest` + `sp_add_jobserver`; enabled, kein Schedule (nur On-Demand via sp_start_job) |
 | `db-migrations/global/permissions/100_grants.sql` | NEW | Everytime: EXECUTE auf Start-/Status-SP an `ops_reset_executor`; Rollen-Membership für AD-Gruppe `ZDBIKES\sql-jtl-users` (guarded CREATE USER FROM LOGIN) |
 | `db-migrations/global/permissions/900_resign_procedures.sql` | NEW | Everytime: prüft je signierpflichtiger SP `sys.crypt_properties`; fehlt die Signatur (z. B. nach CREATE OR ALTER) → `ADD SIGNATURE … BY CERTIFICATE RoboticoOpsSigning WITH PASSWORD = '{{CertPassword}}'` |
-| `db-migrations/global/up/0020_seed_mandant_template.sql` | NEW | Seed für ops.Config (BackupFile-Pfad, TargetDataDir aus copy_test_db.sql) + ops.Mandant-Zeilen tm2/tm3/tm4 mit `{{…}}`-Platzhaltern NUR für ShopLicense (Runbook-Schritt trägt echte Keys nach — nie in git) |
+| `db-migrations/global/up/0020_seed_mandant_template.sql` | NEW | Seed für ops.tConfig (BackupFile-Pfad, TargetDataDir aus copy_test_db.sql) + ops.tMandant-Zeilen tm2/tm3/tm4 mit `{{…}}`-Platzhaltern NUR für cShopLicense (Runbook-Schritt trägt echte Keys nach — nie in git) |
 
 ### Implementation Approach
 
 1. **DB-Erzeugung:** grate legt die Ziel-DB automatisch an, wenn sie fehlt (Connection auf `RoboticoOps`). 0001 validiert danach die Invarianten (Collation!) und bricht hart ab, wenn der Server-Default abweicht — mit Anleitung (`CREATE DATABASE … COLLATE Latin1_General_CI_AS` manuell).
 2. **Tabellen:**
-   - `ops.Mandant`: `MandantKey` (PK, z. B. 'tm4', CHECK `^tm[0-9]+$`-artig via LIKE), `TargetDb` (UNIQUE, CHECK `<> 'eazybusiness'` AND LIKE 'eazybusiness[_]%'), `DisplayName`, `Developer`, `LoginName`, `ShopUrl`, `ShopLicense`, `IsActive BIT`, Audit-Spalten (CreatedAt/ModifiedAt).
-   - `ops.Config`: Key/Value (`BackupFile`, `TargetDataDir`, `SourceDb`='eazybusiness', `ReferenceMandant`=1) — löst die hart codierten Pfade aus copy_test_db.sql ab.
-   - `ops.ResetRequest`: `RequestId INT IDENTITY PK`, `MandantKey FK`, `TargetDb`, `Status` (CHECK IN queued/running/succeeded/failed), `RequestedBy` (ORIGINAL_LOGIN), `RequestedAt/StartedAt/FinishedAt`, `ErrorText NVARCHAR(MAX)`, `StepLog NVARCHAR(MAX)` (append-only Fortschrittstext). Gefilterter Unique-Index: `CREATE UNIQUE INDEX UX_ResetRequest_Active ON ops.ResetRequest(TargetDb) WHERE Status IN ('queued','running')`.
+   - `ops.tMandant`: `cMandantKey` (PK, z. B. 'tm4', CHECK `^tm[0-9]+$`-artig via LIKE), `cTargetDb` (UNIQUE, CHECK `<> 'eazybusiness'` AND LIKE 'eazybusiness[_]%'), `cDisplayName`, `cDeveloper`, `cLoginName`, `cShopUrl`, `cShopLicense`, `bActive BIT`, Audit-Spalten (dCreated/dModified).
+   - `ops.tConfig`: Key/Value (`BackupFile`, `TargetDataDir`, `SourceDb`='eazybusiness', `ReferenceMandant`=1) — löst die hart codierten Pfade aus copy_test_db.sql ab.
+   - `ops.tResetRequest`: `kResetRequest INT IDENTITY PK`, `cMandantKey FK`, `cTargetDb`, `cStatus` (CHECK IN queued/running/succeeded/failed), `cRequestedBy` (ORIGINAL_LOGIN), `dRequested/dStarted/dFinished`, `cErrorMessage NVARCHAR(MAX)`, `cStepLog NVARCHAR(MAX)` (append-only Fortschrittstext). Gefilterter Unique-Index: `CREATE UNIQUE INDEX IX_tResetRequest_Active ON ops.tResetRequest(cTargetDb) WHERE cStatus IN ('queued','running')`.
 3. **Signing-Kette (D6):** Zertifikat mit Private Key nur in RoboticoOps; master bekommt Public-only via `certencoded()`-Binärliteral-Trick in dynamischem SQL (kein Datei-Roundtrip, kein BACKUP CERTIFICATE auf Platte). `GRANT AUTHENTICATE SERVER` genügt für die Kontext-Weitergabe des EXECUTE-AS über DB-Grenzen (Sommarskog-Rezept); der eigentliche msdb-Zugriff läuft über die jobstartuser-Rechte.
 4. **Token-Handling:** `{{CertPassword}}` kommt via `deploy.ps1 -Scope global` → Prompt (`Read-Host -AsSecureString`) oder Env-Var `GRATE_CERT_PASSWORD`; deploy.ps1 reicht ihn als `--usertoken CertPassword=…` durch. Ablage des Passworts: `~/.claude-secrets.md` (Runbook-Schritt, O5).
 5. **Idempotenz-Muster Instanz-Objekte:** jedes up-Skript prüft `sys.server_principals`/`sys.certificates`/`msdb.dbo.sysjobs` per `IF NOT EXISTS`; Doppellauf ist folgenlos (Ebene B hat keinen Klon-Mechanismus — D2).
@@ -339,44 +339,44 @@ eazybusiness / eazybusiness_tmN / test1-eazybusiness (Ebene A)
 
 | Path | Action | Notes |
 |---|---|---|
-| `db-migrations/global/sprocs/reset.StartTestmandantReset.sql` | NEW | siehe §2-Tabelle; Logik hier |
-| `db-migrations/global/sprocs/reset.GetResetStatus.sql` | NEW | dito |
-| `db-migrations/global/sprocs/reset.ProcessNextResetRequest.sql` | NEW | Orchestrator des Jobs |
-| `db-migrations/global/sprocs/reset.internal_CloneDatabase.sql` | NEW | Backup+Restore (aus copy_test_db.sql portiert, Pfade aus ops.Config) |
-| `db-migrations/global/sprocs/reset.internal_PostRestoreSecurity.sql` | NEW | Owner→sa, Orphan-Remap (`ALTER USER … WITH LOGIN`), User-Cleanup, TRUSTWORTHY-OFF-Check |
-| `db-migrations/global/sprocs/reset.internal_InvalidateCredentials.sql` | NEW | aus invalidate-credentials-for-testing.sql (Stand e6d7b2b) portiert; ShopUrl/ShopLicense aus ops.Mandant statt SQLCMD-Vars |
-| `db-migrations/global/sprocs/reset.internal_NeutralizeWorker.sql` | NEW | NEU (D9): pf_user-Sperre, Queue-Leerung (guarded Liste) |
-| `db-migrations/global/sprocs/reset.internal_AnonymizeCustomerData.sql` | NEW | aus clear-customer-fields.sql portiert (inkl. CONTEXT_INFO-Trigger-Bypass); Blöcke in TRY/CATCH mit StepLog |
-| `db-migrations/global/sprocs/reset.internal_GrantAccess.sql` | NEW | aus grant-database-access.sql (LoginName aus ops.Mandant) |
-| `db-migrations/global/sprocs/reset.internal_RegisterMandant.sql` | NEW | aus register-mandant.sql (DisplayName aus ops.Mandant; Upsert in alle Mandanten-DBs) |
-| `db-migrations/global/sprocs/reset.internal_ApplyJtlRoles.sql` | NEW | aus Berechtigungen/JTL-Rollen.sql portiert, parametrisiert auf Ziel-DB |
+| `db-migrations/global/sprocs/reset.spPub_StartTestmandantReset.sql` | NEW | siehe §2-Tabelle; Logik hier |
+| `db-migrations/global/sprocs/reset.spPub_GetResetStatus.sql` | NEW | dito |
+| `db-migrations/global/sprocs/reset.spProcessNextResetRequest.sql` | NEW | Orchestrator des Jobs |
+| `db-migrations/global/sprocs/reset.spInternal_CloneDatabase.sql` | NEW | Backup+Restore (aus copy_test_db.sql portiert, Pfade aus ops.tConfig) |
+| `db-migrations/global/sprocs/reset.spInternal_PostRestoreSecurity.sql` | NEW | Owner→sa, Orphan-Remap (`ALTER USER … WITH LOGIN`), User-Cleanup, TRUSTWORTHY-OFF-Check |
+| `db-migrations/global/sprocs/reset.spInternal_InvalidateCredentials.sql` | NEW | aus invalidate-credentials-for-testing.sql (Stand e6d7b2b) portiert; cShopUrl/cShopLicense aus ops.tMandant statt SQLCMD-Vars |
+| `db-migrations/global/sprocs/reset.spInternal_NeutralizeWorker.sql` | NEW | NEU (D9): pf_user-Sperre, Queue-Leerung (guarded Liste) |
+| `db-migrations/global/sprocs/reset.spInternal_AnonymizeCustomerData.sql` | NEW | aus clear-customer-fields.sql portiert (inkl. CONTEXT_INFO-Trigger-Bypass); Blöcke in TRY/CATCH mit cStepLog |
+| `db-migrations/global/sprocs/reset.spInternal_GrantAccess.sql` | NEW | aus grant-database-access.sql (cLoginName aus ops.tMandant) |
+| `db-migrations/global/sprocs/reset.spInternal_RegisterMandant.sql` | NEW | aus register-mandant.sql (cDisplayName aus ops.tMandant; Upsert in alle Mandanten-DBs) |
+| `db-migrations/global/sprocs/reset.spInternal_ApplyJtlRoles.sql` | NEW | aus Berechtigungen/JTL-Rollen.sql portiert, parametrisiert auf Ziel-DB |
 
 ### Implementation Approach
 
-1. **`reset.StartTestmandantReset(@MandantKey sysname)`** (signiert, EXECUTE AS jobstartuser):
+1. **`reset.spPub_StartTestmandantReset(@MandantKey sysname)`** (signiert, EXECUTE AS jobstartuser):
    - `sp_getapplock` Exclusive auf `'reset:' + @MandantKey` (Session-Owner, kurz).
-   - Validierung: Zeile in `ops.Mandant` mit `IsActive=1` vorhanden; `TargetDb <> 'eazybusiness'` (redundant zum CHECK — Defense in Depth); keine aktive Anfrage (gefilterter Unique-Index fängt Races zusätzlich ab).
-   - `INSERT ops.ResetRequest (…, RequestedBy = ORIGINAL_LOGIN(), Status='queued')`.
+   - Validierung: Zeile in `ops.tMandant` mit `bActive=1` vorhanden; `cTargetDb <> 'eazybusiness'` (redundant zum CHECK — Defense in Depth); keine aktive Anfrage (gefilterter Unique-Index fängt Races zusätzlich ab).
+   - `INSERT ops.tResetRequest (…, cRequestedBy = ORIGINAL_LOGIN(), cStatus='queued')`.
    - `EXEC msdb.dbo.sp_start_job @job_name = N'RoboticoOps - Testmandant Reset'`; wenn Job bereits läuft (Fehler 22022) → kein Fehler an den Aufrufer, Request bleibt queued (der laufende Job nimmt ihn im Anschluss — While-Schleife in ProcessNext).
-   - RETURN `RequestId` als Resultset (`SELECT RequestId, 'queued' AS Status`).
-2. **`reset.GetResetStatus(@RequestId INT = NULL, @MandantKey sysname = NULL)`**: letzte N Requests bzw. gefiltert; Spalten ohne Secrets (RequestId, MandantKey, TargetDb, Status, RequestedBy, RequestedAt, StartedAt, FinishedAt, DATEDIFF-Dauer, ErrorText, StepLog). Kein Signing nötig (eigene DB), EXECUTE-Grant an ops_reset_executor.
-3. **`reset.ProcessNextResetRequest`** (nur vom Job aufgerufen; läuft als Agent-Dienstkonto):
-   - While-Schleife: älteste `queued`-Zeile mit `UPDLOCK, READPAST` claimen → `running` + StartedAt; keine Zeile → Ende.
-   - **Re-Validierung (Defense in Depth, D6):** TargetDb matcht ops.Mandant-Registry, Pattern `eazybusiness[_]%`, nie Quelle==Ziel.
-   - Pipeline in TRY/CATCH, jeder Schritt appended an `StepLog` (`step=clone ok (137s)` …): internal_CloneDatabase → internal_PostRestoreSecurity → internal_InvalidateCredentials → internal_NeutralizeWorker → internal_AnonymizeCustomerData → internal_GrantAccess → internal_RegisterMandant → internal_ApplyJtlRoles.
-   - CATCH: `failed` + `ERROR_MESSAGE()` + StepLog; Klon-DB bleibt liegen wie sie ist (für Diagnose), MULTI_USER sicherstellen.
-   - Erfolg: `succeeded` + FinishedAt.
-4. **Portierungs-Muster für die internal-Procs:** Ziel-DB-Kontext via dynamischem SQL: `SET @sql = N'USE ' + QUOTENAME(@TargetDb) + N'; ' + <Batch>; EXEC (@sql);` — Batches aus den Quellskripten übernehmen, `$(TargetDb)`/`$(LoginName)`/`$(ShopUrl)`/`$(ShopLicense)`/`$(MandantName)`-SQLCMD-Vars durch sp_executesql-Parameter bzw. QUOTENAME-Injektion ersetzen (String-Werte NUR parametrisiert — kein Konkatenieren von Nutzdaten in elevated SQL; DB-/Objekt-Namen NUR via QUOTENAME).
-   - `internal_AnonymizeCustomerData`: die 11 Prioritätsblöcke des Quellskripts als nummerierte Sub-Batches; CONTEXT_INFO-Bypass beibehalten; abweichend vom Original: gesamter Proc-Lauf protokolliert pro Block in StepLog, Fehler in einem Block bricht die Pipeline (CATCH) — kein „halb anonymisiert, still weiter".
-   - `internal_NeutralizeWorker` (NEU): `ebay_user.nGesperrt=1` (aus e6d7b2b übernommen — bleibt auch in InvalidateCredentials-Portierung, doppelt schadet nicht), `pf_user SET nGesperrt=1, nAktiv=0` (IF OBJECT_ID-guarded), Queue-Leerung: DELETE (nicht TRUNCATE — FK-sicher) auf `tQueue`, `tWorkflowQueue`, `ebay_usermessagequeue`, `ebay_queue_out`, `tGlobalsQueue`, `tDruckQueue` — jede guarded; `Worker.tTarget` NICHT anfassen (O1).
-   - `internal_RegisterMandant`: Logik aus register-mandant.sql 1:1 (kMandant-Wiederverwendung per cDB, MAX+1, tBenutzerFirma-Seed aus Referenz-Mandant `ops.Config.ReferenceMandant`).
+   - RETURN `kResetRequest` als Resultset (`SELECT kResetRequest, 'queued' AS cStatus`).
+2. **`reset.spPub_GetResetStatus(@RequestId INT = NULL, @MandantKey sysname = NULL)`**: letzte N Requests bzw. gefiltert; Spalten ohne Secrets (kResetRequest, cMandantKey, cTargetDb, cStatus, cRequestedBy, dRequested, dStarted, dFinished, DATEDIFF-Dauer, cErrorMessage, cStepLog). Kein Signing nötig (eigene DB), EXECUTE-Grant an ops_reset_executor.
+3. **`reset.spProcessNextResetRequest`** (nur vom Job aufgerufen; läuft als Agent-Dienstkonto):
+   - While-Schleife: älteste `queued`-Zeile mit `UPDLOCK, READPAST` claimen → `running` + dStarted; keine Zeile → Ende.
+   - **Re-Validierung (Defense in Depth, D6):** cTargetDb matcht ops.tMandant-Registry, Pattern `eazybusiness[_]%`, nie Quelle==Ziel.
+   - Pipeline in TRY/CATCH, jeder Schritt appended an `cStepLog` (`step=clone ok (137s)` …): spInternal_CloneDatabase → spInternal_PostRestoreSecurity → spInternal_InvalidateCredentials → spInternal_NeutralizeWorker → spInternal_AnonymizeCustomerData → spInternal_GrantAccess → spInternal_RegisterMandant → spInternal_ApplyJtlRoles.
+   - CATCH: `failed` + `ERROR_MESSAGE()` + cStepLog; Klon-DB bleibt liegen wie sie ist (für Diagnose), MULTI_USER sicherstellen.
+   - Erfolg: `succeeded` + dFinished.
+4. **Portierungs-Muster für die internal-Procs:** Ziel-DB-Kontext via dynamischem SQL: `SET @sql = N'USE ' + QUOTENAME(@TargetDb) + N'; ' + <Batch>; EXEC (@sql);` — Batches aus den Quellskripten übernehmen, `$(cTargetDb)`/`$(cLoginName)`/`$(cShopUrl)`/`$(cShopLicense)`/`$(MandantName)`-SQLCMD-Vars durch sp_executesql-Parameter bzw. QUOTENAME-Injektion ersetzen (String-Werte NUR parametrisiert — kein Konkatenieren von Nutzdaten in elevated SQL; DB-/Objekt-Namen NUR via QUOTENAME).
+   - `spInternal_AnonymizeCustomerData`: die 11 Prioritätsblöcke des Quellskripts als nummerierte Sub-Batches; CONTEXT_INFO-Bypass beibehalten; abweichend vom Original: gesamter Proc-Lauf protokolliert pro Block in cStepLog, Fehler in einem Block bricht die Pipeline (CATCH) — kein „halb anonymisiert, still weiter".
+   - `spInternal_NeutralizeWorker` (NEU): `ebay_user.nGesperrt=1` (aus e6d7b2b übernommen — bleibt auch in InvalidateCredentials-Portierung, doppelt schadet nicht), `pf_user SET nGesperrt=1, nAktiv=0` (IF OBJECT_ID-guarded), Queue-Leerung: DELETE (nicht TRUNCATE — FK-sicher) auf `tQueue`, `tWorkflowQueue`, `ebay_usermessagequeue`, `ebay_queue_out`, `tGlobalsQueue`, `tDruckQueue` — jede guarded; `Worker.tTarget` NICHT anfassen (O1).
+   - `spInternal_RegisterMandant`: Logik aus register-mandant.sql 1:1 (kMandant-Wiederverwendung per cDB, MAX+1, tBenutzerFirma-Seed aus Referenz-Mandant `ops.tConfig.ReferenceMandant`).
 5. **Keine PowerShell mehr im Reset-Pfad** — der gesamte Ablauf ist serverseitig; `setup-test-environment.ps1` bleibt als Fallback bis zur Validierung (D12).
 
 ### Edge Cases & Risks
 
-- **Gleichzeitige Requests für verschiedene Mandanten:** Job arbeitet seriell (While-Schleife) — gewollt (Backup-Datei `ops.Config.BackupFile` ist ein Single-Pfad; Klon-Backups serialisieren).
-- **Job stirbt hart** (Agent-Neustart): Zeile bleibt `running` → Start-SP erlaubt für diesen Mandanten keinen neuen Request. Lösung: `reset.ProcessNextResetRequest` re-claimt beim Start `running`-Zeilen älter als 4h als `failed` (`ErrorText='stale running request reclaimed'`).
-- **Restore einer 27-GB-DB**: Dauer ~Minuten; StepLog + GetResetStatus zeigen Fortschritt grob (kein STATS-Streaming in Tabellen — akzeptiert).
+- **Gleichzeitige Requests für verschiedene Mandanten:** Job arbeitet seriell (While-Schleife) — gewollt (Backup-Datei `ops.tConfig.BackupFile` ist ein Single-Pfad; Klon-Backups serialisieren).
+- **Job stirbt hart** (Agent-Neustart): Zeile bleibt `running` → Start-SP erlaubt für diesen Mandanten keinen neuen Request. Lösung: `reset.spProcessNextResetRequest` re-claimt beim Start `running`-Zeilen älter als 4h als `failed` (`cErrorMessage='stale running request reclaimed'`).
+- **Restore einer 27-GB-DB**: Dauer ~Minuten; cStepLog + spPub_GetResetStatus zeigen Fortschritt grob (kein STATS-Streaming in Tabellen — akzeptiert).
 - **eazybusiness als Ziel:** dreifach verhindert (CHECK-Constraint, SP-Validierung, Job-Re-Validierung).
 - **`tShop`-Repoint-Selektivität** (nur nTyp=0 + http-URL) aus e6d7b2b beibehalten — Check24/unicorn2 unangetastet.
 
@@ -409,7 +409,7 @@ eazybusiness / eazybusiness_tmN / test1-eazybusiness (Ebene A)
 
 ### Edge Cases & Risks
 
-- test1 hat nur 1 Mandant + keinen tm-Klon → Runbook legt Registry-Eintrag `tmv` (Validierungs-Mandant) mit TargetDb `eazybusiness_tmv` an; Klon-Quelle ist test1s eazybusiness.
+- test1 hat nur 1 Mandant + keinen tm-Klon → Runbook legt Registry-Eintrag `tmv` (Validierungs-Mandant) mit cTargetDb `eazybusiness_tmv` an; Klon-Quelle ist test1s eazybusiness.
 - Agent-Dienst auf test1 gestoppt → Runbook-Vorbedingung.
 
 ### Acceptance
@@ -504,7 +504,7 @@ Kein Test-Framework im Repo (reines SQL-Repo) → drei statische/halb-statische 
 
 1. `pwsh db-migrations/tests/lint-migrations.ps1` → Exit 0.
 2. Vollständigkeits-Mapping: jedes Objekt aus research/5 §3 ↔ genau eine Datei in `db-migrations/eazybusiness/` (Tabelle im Implementation-Report).
-3. Jede Funktionalität der 6 Ist-Reset-Skripte ↔ eine reset.internal_*-Proc (Tabelle im Report).
+3. Jede Funktionalität der 6 Ist-Reset-Skripte ↔ eine reset.spInternal_*-Proc (Tabelle im Report).
 4. Read-only-Probes gegen test1 gelaufen (soweit Verbindung im Implementationskontext verfügbar), Ergebnisse dokumentiert.
 5. ADR-Format-Check gegen knowledge-adr-format-Pflichtsektionen.
 6. Git: alle Commits nach Konvention `[<Phase>.<Chunk>] … (mssql-ops-infrastruktur)`.
@@ -538,7 +538,7 @@ Kein Test-Framework im Repo (reines SQL-Repo) → drei statische/halb-statische 
 - **Server-Zugriff:** Read-only gegen test1/prod via `/opt/mssql-tools*/bin/sqlcmd -S <host> -E -C` erlaubt (Kerberos-Ticket des Users); **keinerlei Writes gegen irgendeinen Server** in diesem Plan — Deployment ist Runbook-Sache.
 - **Sprachen:** Plan deutsch; alle neuen Doku-/README-/Runbook-Dateien englisch; SQL-Kommentare englisch (Neucode) — portierte Bestands-Kommentare dürfen deutsch bleiben (Provenienz).
 - **Quell-Treue:** Portierungen ändern Verhalten NICHT stillschweigend; jede bewusste Abweichung (z. B. Anonymisierung bricht jetzt bei Blockfehler ab) ist im Code kommentiert und im Chunk-Report gelistet.
-- **Secrets:** niemals echte ShopLicense-Keys, Cert-Passwörter o. ä. in Dateien; Platzhalter `{{…}}` + Runbook.
+- **Secrets:** niemals echte cShopLicense-Keys, Cert-Passwörter o. ä. in Dateien; Platzhalter `{{…}}` + Runbook.
 
 ---
 

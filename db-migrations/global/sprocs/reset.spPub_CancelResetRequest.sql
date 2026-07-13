@@ -1,4 +1,4 @@
--- reset.CancelResetRequest  (Ebene B / global — signed, EXECUTE AS jobstartuser — OPS-2)
+-- reset.spPub_CancelResetRequest  (Ebene B / global — signed, EXECUTE AS jobstartuser — OPS-2)
 --
 -- Recovery entry point for a colleague: get a mandant OUT of a stuck reset without
 -- server rights and without waiting for the StaleRunningHours window.
@@ -10,7 +10,7 @@
 --                   so we refuse and tell the caller to wait / let the stale reclaim run.
 --   * 'succeeded'/'failed' → no-op; the state is echoed back so the caller sees why.
 --
--- Why signed + EXECUTE AS (identical model to reset.StartTestmandantReset, research/3, D6):
+-- Why signed + EXECUTE AS (identical model to reset.spPub_StartTestmandantReset, research/3, D6):
 --   the "is the job running?" check reads msdb.dbo.sysjobactivity, which crosses the
 --   RoboticoOps → msdb boundary. That is exactly what the jobstartuser proxy
 --   (msdb SQLAgentOperatorRole, up/0010) + the RoboticoOpsSigning signature (up/0011,
@@ -19,11 +19,11 @@
 --
 -- CREATE OR ALTER strips the signature — permissions/900 re-applies it every deploy
 -- (catalog-driven: it signs every EXECUTE-AS-'jobstartuser' proc, so this one is picked
--- up automatically alongside StartTestmandantReset).
+-- up automatically alongside spPub_StartTestmandantReset).
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see db-migrations/global/permissions/900_resign_procedures.sql
-CREATE OR ALTER PROCEDURE reset.CancelResetRequest
+CREATE OR ALTER PROCEDURE reset.spPub_CancelResetRequest
     @RequestId int
 WITH EXECUTE AS 'jobstartuser'
 AS
@@ -34,46 +34,46 @@ BEGIN
     DECLARE @status  nvarchar(20),
             @caller  sysname = ORIGINAL_LOGIN(),
             @rows    int,
-            -- Same single-sourced ops.Config knob the job wrapper uses (CQG-8).
+            -- Same single-sourced ops.tConfig knob the job wrapper uses (CQG-8).
             @jobName sysname = ISNULL(
-                (SELECT ConfigValue FROM ops.Config WHERE ConfigKey = N'AgentJobName'),
+                (SELECT cValue FROM ops.tConfig WHERE cKey = N'AgentJobName'),
                 N'RoboticoOps - Testmandant Reset');
 
-    SELECT @status = Status FROM ops.ResetRequest WHERE RequestId = @RequestId;
+    SELECT @status = cStatus FROM ops.tResetRequest WHERE kResetRequest = @RequestId;
 
     IF @status IS NULL
-        THROW 51006, 'Unknown RequestId.', 1;
+        THROW 51006, 'Unknown kResetRequest.', 1;
 
     -- Already terminal — nothing to cancel.
     IF @status IN (N'succeeded', N'failed')
     BEGIN
-        SELECT @RequestId AS RequestId, @status AS Status,
+        SELECT @RequestId AS kResetRequest, @status AS cStatus,
                N'already finished — nothing to cancel' AS Note;
         RETURN;
     END
 
-    -- 'queued': the job has not claimed it yet. Guard the UPDATE on Status = 'queued'
+    -- 'queued': the job has not claimed it yet. Guard the UPDATE on cStatus = 'queued'
     -- so a claim that races us (queued → running between our read and write) is detected
     -- as 0 rows rather than silently clobbering a now-running request.
     IF @status = N'queued'
     BEGIN
-        UPDATE ops.ResetRequest
-           SET Status     = N'failed',
-               ErrorText  = N'cancelled by ' + @caller + N' (was queued)',
-               FinishedAt = SYSUTCDATETIME(),
-               ModifiedAt = SYSUTCDATETIME()
-         WHERE RequestId = @RequestId AND Status = N'queued';
+        UPDATE ops.tResetRequest
+           SET cStatus     = N'failed',
+               cErrorMessage  = N'cancelled by ' + @caller + N' (was queued)',
+               dFinished = SYSUTCDATETIME(),
+               dModified = SYSUTCDATETIME()
+         WHERE kResetRequest = @RequestId AND cStatus = N'queued';
         SET @rows = @@ROWCOUNT;
 
         IF @rows = 0
         BEGIN
-            SELECT @status = Status FROM ops.ResetRequest WHERE RequestId = @RequestId;
-            SELECT @RequestId AS RequestId, @status AS Status,
+            SELECT @status = cStatus FROM ops.tResetRequest WHERE kResetRequest = @RequestId;
+            SELECT @RequestId AS kResetRequest, @status AS cStatus,
                    N'could not cancel: the job already picked it up — re-check status' AS Note;
             RETURN;
         END
 
-        SELECT @RequestId AS RequestId, N'failed' AS Status, N'cancelled (was queued)' AS Note;
+        SELECT @RequestId AS kResetRequest, N'failed' AS cStatus, N'cancelled (was queued)' AS Note;
         RETURN;
     END
 
@@ -92,14 +92,14 @@ BEGIN
           AND ja.stop_execution_date  IS NULL)
         THROW 51007, 'Refusing: the reset job is currently running. Wait for it to finish, or let the StaleRunningHours reclaim handle a job that has actually died.', 1;
 
-    UPDATE ops.ResetRequest
-       SET Status     = N'failed',
-           ErrorText  = N'force-reclaimed by ' + @caller + N' (was running; no active agent job run)',
-           FinishedAt = SYSUTCDATETIME(),
-           ModifiedAt = SYSUTCDATETIME()
-     WHERE RequestId = @RequestId AND Status = N'running';
+    UPDATE ops.tResetRequest
+       SET cStatus     = N'failed',
+           cErrorMessage  = N'force-reclaimed by ' + @caller + N' (was running; no active agent job run)',
+           dFinished = SYSUTCDATETIME(),
+           dModified = SYSUTCDATETIME()
+     WHERE kResetRequest = @RequestId AND cStatus = N'running';
 
-    SELECT @RequestId AS RequestId, N'failed' AS Status,
+    SELECT @RequestId AS kResetRequest, N'failed' AS cStatus,
            N'force-reclaimed (was running, no active job)' AS Note;
 END
 GO

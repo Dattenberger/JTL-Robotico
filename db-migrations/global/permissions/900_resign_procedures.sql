@@ -6,7 +6,7 @@
 --
 -- The signature-required set is EXACTLY the procs declared WITH EXECUTE AS
 -- 'jobstartuser' that need the cross-DB authenticate token (currently only
--- reset.StartTestmandantReset). Instead of hard-coding that list, the set is derived
+-- reset.spPub_StartTestmandantReset). Instead of hard-coding that list, the set is derived
 -- from the catalog (sys.procedures.execute_as_principal_id = jobstartuser), so a
 -- future EXECUTE-AS-'jobstartuser' entry point is signed automatically — it can never
 -- deploy green through grate and then fail unsigned at first runtime call in msdb.

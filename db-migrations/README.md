@@ -102,7 +102,7 @@ shapes, chosen by layer:
   an `@see` plan anchor follows the prose:
 
   ```sql
-  -- reset.internal_CloneDatabase  (Ebene B / global — pipeline step, job-only)
+  -- reset.spInternal_CloneDatabase  (Ebene B / global — pipeline step, job-only)
   --
   -- <what it does, security model>
   -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
@@ -203,7 +203,7 @@ allowed datatypes, ≤7 params). There is **no registry table**.
 
 **Registration pattern in our action files.** Each `CustomWorkflows.sp*` file ends with
 its label registration bundled in the *same* file as the proc (a `DROP PROCEDURE` would
-orphan the `DisplayName` extended property, so the two are one unit). Because the helper
+orphan the `cDisplayName` extended property, so the two are one unit). Because the helper
 is module-provided, the call is **guarded** so a machine without the module gets a clear
 warning instead of a hard failure:
 
@@ -262,7 +262,7 @@ The repo-root `package.json` exposes the whole infrastructure surface via `npm r
 | `npm run db:e2e:validate` | `validate_structure.sql` against the container's RoboticoOps |
 | `npm run db:e2e:copy-logins` | copy real server logins into the container (see below) |
 | `npm run db:mandant:create -- -Environment … -MandantKey tmN -DisplayName "…"` | create a new test mandant (registers + kicks the first reset, which **builds** the clone). Admin-only |
-| `npm run db:mandant:list -- -Environment …` | list mandants (wraps `reset.ListMandants`) |
+| `npm run db:mandant:list -- -Environment …` | list mandants (wraps `reset.spPub_ListMandants`) |
 
 Add `-- -DryRun` to any deploy variant for a no-op run (e.g. `npm run db:deploy:test -- -DryRun`).
 The two `Deploy Test Environment:*` legacy entries are kept as the D12 PowerShell fallback.
@@ -329,19 +329,19 @@ changes nothing and therefore skips the confirmation).
 >   the password means dropping+recreating the certificate via a new `up/` script.
 
 > [!NOTE]
-> **`ops.Config` runtime knobs (Ebene B).** A few reset behaviours are data, not code —
-> tune them by `UPDATE ops.Config` (admin-only), no redeploy needed. Seeded by
+> **`ops.tConfig` runtime knobs (Ebene B).** A few reset behaviours are data, not code —
+> tune them by `UPDATE ops.tConfig` (admin-only), no redeploy needed. Seeded by
 > `global/up/0020_seed_mandant_template.sql`:
 >
-> | ConfigKey | Default | Meaning |
+> | cKey | Default | Meaning |
 > |---|---|---|
 > | `BackupFile` | `E:\work\eazybusiness_to_test.bak` | COPY_ONLY backup staging path (single path ⇒ resets serialize) |
 > | `TargetDataDir` | `E:\MSSQL\Data` | Data dir for clone `.mdf`/`.ldf` |
 > | `SourceDb` | `eazybusiness` | Clone source database |
 > | `ReferenceMandant` | `1` | kMandant used as the `tBenutzerFirma` seed template |
-> | `StaleRunningHours` | `4` | Age after which `ProcessNextResetRequest` reclaims a still-`running` request as `failed` |
-> | `AgentJobName` | `RoboticoOps - Testmandant Reset` | SQL Agent job name; single-sourced for `StartTestmandantReset` / `EnsureAgentJob` / `200_ensure_agent_job` |
-> | `NotifyOperator` | *(empty)* | Optional SQL-Agent operator emailed when the reset job **fails** (OPS-4). Empty ⇒ failures are pull-only (poll `GetResetStatus`). Requires Database Mail + an existing operator; wired by `reset.EnsureAgentJob` |
+> | `StaleRunningHours` | `4` | Age after which `spProcessNextResetRequest` reclaims a still-`running` request as `failed` |
+> | `AgentJobName` | `RoboticoOps - Testmandant Reset` | SQL Agent job name; single-sourced for `spPub_StartTestmandantReset` / `spEnsureAgentJob` / `200_ensure_agent_job` |
+> | `NotifyOperator` | *(empty)* | Optional SQL-Agent operator emailed when the reset job **fails** (OPS-4). Empty ⇒ failures are pull-only (poll `spPub_GetResetStatus`). Requires Database Mail + an existing operator; wired by `reset.spEnsureAgentJob` |
 
 > [!CAUTION]
 > This repository never writes to a SQL Server autonomously. PROD deployment is always a
@@ -378,14 +378,14 @@ pwsh db-migrations/tests/lint-migrations.ps1
 ## 9. Adding a reset step (Ebene B pipeline)
 
 The test-mandant reset pipeline is **data-driven** (`adr-reset-step-registry.md`): the ordered
-steps are rows in `ops.ResetStep`, and `reset.ProcessNextResetRequest` dispatches them in a
+steps are rows in `ops.tResetStep`, and `reset.spProcessNextResetRequest` dispatches them in a
 whitelist-guarded loop. Adding a preparation step therefore does **not** edit the orchestrator.
 
-1. **Write the step proc** `db-migrations/global/sprocs/reset.internal_<Name>.sql`. It **must**
+1. **Write the step proc** `db-migrations/global/sprocs/reset.spInternal_<Name>.sql`. It **must**
    have the uniform contract — the loop calls every step exactly this way:
 
    ```sql
-   CREATE OR ALTER PROCEDURE reset.internal_<Name>
+   CREATE OR ALTER PROCEDURE reset.spInternal_<Name>
        @TargetDb   sysname,
        @RequestId  int,
        @MandantKey sysname
@@ -396,40 +396,40 @@ whitelist-guarded loop. Adding a preparation step therefore does **not** edit th
        -- Guard: never touch prod. Keep a distinct THROW code (51xxx) per step so the
        -- number identifies the refusing step in an error (kept inline on purpose).
        IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
-           THROW 510xx, 'internal_<Name> refused: target is not a test-mandant clone.', 1;
+           THROW 510xx, 'spInternal_<Name> refused: target is not a test-mandant clone.', 1;
 
-       -- Read any further inputs from ops.Mandant yourself (do NOT expect the
+       -- Read any further inputs from ops.tMandant yourself (do NOT expect the
        -- orchestrator to route them):
-       --   DECLARE @Foo ... ; SELECT @Foo = Foo FROM ops.Mandant WHERE MandantKey = @MandantKey;
+       --   DECLARE @Foo ... ; SELECT @Foo = Foo FROM ops.tMandant WHERE cMandantKey = @MandantKey;
 
        -- ... the work, inside the target DB via QUOTENAME(@TargetDb).sys.sp_executesql ...
 
-       -- Append progress through the shared helper (owns the StepLog format):
-       EXEC reset.internal_LogStep @RequestId, N'<name>: <what happened>';
+       -- Append progress through the shared helper (owns the cStepLog format):
+       EXEC reset.spInternal_LogStep @RequestId, N'<name>: <what happened>';
    END
    GO
    ```
 
-   - The message passed to `internal_LogStep` carries **no** leading space and **no** trailing
+   - The message passed to `spInternal_LogStep` carries **no** leading space and **no** trailing
      newline (the helper adds both).
    - Data values go through `sp_executesql` parameters; object/DB names through `QUOTENAME`
      (rule (g)). Never concatenate user data into an `EXEC` string.
 
-2. **Register it** in `ops.ResetStep` by extending the seed `MERGE` in
+2. **Register it** in `ops.tResetStep` by extending the seed `MERGE` in
    `db-migrations/global/up/0021_reset_step_registry.sql` — but as a **new** `up/NNNN_…` script
-   (0021 is applied and immutable; see §2 CAUTION). Give it a `StepOrder` that places it in the
-   pipeline, set `IsCritical = 0` only if a failure should warn-and-continue rather than abort.
+   (0021 is applied and immutable; see §2 CAUTION). Give it a `nStepOrder` that places it in the
+   pipeline, set `bCritical = 0` only if a failure should warn-and-continue rather than abort.
 
 3. **Extend the structure test** `db-migrations/tests/global/validate_structure.sql`: add
-   `reset.internal_<Name>` to the required-objects list.
+   `reset.spInternal_<Name>` to the required-objects list.
 
 That is the whole change — the orchestrator, the signing chain, and the grants are untouched.
-The loop **whitelists** `ProcName` against the deployed `reset.internal_*` procs before running
+The loop **whitelists** `cProcName` against the deployed `reset.spInternal_*` procs before running
 it, so a row must name a proc that the chain actually deployed (the executable set stays
 versioned; only order/enablement is data — the D6 narrowing in the ADR).
 
 > [!NOTE]
 > **Role membership is deliberately NOT data (EXT-4).** The JTL_Reader/JTL_Writer member list in
-> `reset.internal_ApplyJtlRoles` stays a code SSoT mirroring `Berechtigungen/JTL-Rollen.sql`
+> `reset.spInternal_ApplyJtlRoles` stays a code SSoT mirroring `Berechtigungen/JTL-Rollen.sql`
 > (the prod source of truth). Do not move it into a runtime table — that would split the SSoT.
 > Change both mirrors and redeploy. Rationale: `adr-reset-step-registry.md` §Alternatives.

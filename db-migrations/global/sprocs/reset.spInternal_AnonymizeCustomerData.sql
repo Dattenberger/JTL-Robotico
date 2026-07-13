@@ -1,10 +1,10 @@
--- reset.internal_AnonymizeCustomerData  (Ebene B / global — pipeline step, job-only)
+-- reset.spInternal_AnonymizeCustomerData  (Ebene B / global — pipeline step, job-only)
 --
 -- Ported from Projekte/Testsystem/clear-customer-fields.sql. Replaces all PII with
 -- deterministic "Field_<id>" placeholders across the JTL schema. Structured as the
 -- source's 11 priority blocks; each block runs as one batch in the TARGET database
 -- (QUOTENAME(@TargetDb).sys.sp_executesql — no USE), logs "anon.P<n> ok" to
--- ops.ResetRequest.StepLog on success, and any error in a block THROWs and breaks the
+-- ops.tResetRequest.cStepLog on success, and any error in a block THROWs and breaks the
 -- pipeline (no "half anonymized, silently continue"). The trigger-protected tables
 -- (tkunde, tAdresse) keep the source's CONTEXT_INFO trigger-bypass. All values are
 -- derived from columns only — nothing external is concatenated (only @TargetDb, via
@@ -12,7 +12,7 @@
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see Projekte/Testsystem/clear-customer-fields.sql (source of the block mapping)
-CREATE OR ALTER PROCEDURE reset.internal_AnonymizeCustomerData
+CREATE OR ALTER PROCEDURE reset.spInternal_AnonymizeCustomerData
     @TargetDb   sysname,
     @RequestId  int,
     @MandantKey sysname   -- uniform step contract (EXT-2); not used by this step
@@ -21,7 +21,7 @@ BEGIN
     SET NOCOUNT ON;
 
     IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%'
-        THROW 51050, 'internal_AnonymizeCustomerData refused: target is not a test-mandant clone.', 1;
+        THROW 51050, 'spInternal_AnonymizeCustomerData refused: target is not a test-mandant clone.', 1;
 
     DECLARE @exec nvarchar(300) = QUOTENAME(@TargetDb) + N'.sys.sp_executesql';
     DECLARE @b nvarchar(max);
@@ -165,7 +165,7 @@ BEGIN
         END CATCH
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P1 core-person ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P1 core-person ok';
 
     -- ===== PRIORITY 2: transaction addresses =====================================
     SET @b = N'
@@ -276,7 +276,7 @@ BEGIN
         WHERE kAddress IS NOT NULL;
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P2 tx-addresses ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P2 tx-addresses ok';
 
     -- ===== PRIORITY 3: eBay checkout =============================================
     SET @b = N'
@@ -313,7 +313,7 @@ BEGIN
         WHERE kEbayCheckout IS NOT NULL;
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P3 ebay-checkout ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P3 ebay-checkout ok';
 
     -- ===== PRIORITY 4: Amazon SFP ================================================
     SET @b = N'
@@ -328,7 +328,7 @@ BEGIN
         WHERE kSFPVersand IS NOT NULL;
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P4 amazon-sfp ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P4 amazon-sfp ok';
 
     -- ===== PRIORITY 5: history / logs ============================================
     SET @b = N'
@@ -363,7 +363,7 @@ BEGIN
         UPDATE Kunde.tNotiz SET cNotiz = ''Notiz_'' + CAST(kNotiz AS NVARCHAR(30)) WHERE kNotiz IS NOT NULL;
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P5 history/logs ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P5 history/logs ok';
 
     -- ===== PRIORITY 6: ticket system =============================================
     SET @b = N'
@@ -388,7 +388,7 @@ BEGIN
         WHERE kAusgangskanalEmail IS NOT NULL;
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P6 ticketsystem ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P6 ticketsystem ok';
 
     -- ===== PRIORITY 7: returns ===================================================
     SET @b = N'
@@ -417,7 +417,7 @@ BEGIN
         WHERE kRMRetoureAbholAdresse IS NOT NULL;
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P7 returns ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P7 returns ok';
 
     -- ===== PRIORITY 8: payment data ==============================================
     SET @b = N'
@@ -456,7 +456,7 @@ BEGIN
         WHERE kZahlung IS NOT NULL;
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P8 payment ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P8 payment ok';
 
     -- ===== PRIORITY 9: access / authentication ===================================
     SET @b = N'
@@ -477,7 +477,7 @@ BEGIN
         WHERE kInkassoUser IS NOT NULL;
 
         -- pf_user presence AND shape are an open question in prod clones (O4). Guard
-        -- every referenced column (CQG-10, matching internal_NeutralizeWorker), so a
+        -- every referenced column (CQG-10, matching spInternal_NeutralizeWorker), so a
         -- schema difference makes this block a no-op instead of THROWing and failing the
         -- whole reset. (Token columns are additionally cleared server-side elsewhere.)
         IF OBJECT_ID(''dbo.pf_user'', ''U'') IS NOT NULL
@@ -505,7 +505,7 @@ BEGIN
         WHERE kMobileBenutzer IS NOT NULL;
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P9 access/auth ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P9 access/auth ok';
 
     -- ===== PRIORITY 10: suppliers / incoming invoices ============================
     SET @b = N'
@@ -542,7 +542,7 @@ BEGIN
         UPDATE Contact.tContact SET cNumber = ''ContactNr_'' + CAST(kContact AS NVARCHAR(30)) WHERE kContact IS NOT NULL;
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P10 suppliers/invoices ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P10 suppliers/invoices ok';
 
     -- ===== PRIORITY 11: POS ======================================================
     SET @b = N'
@@ -550,6 +550,6 @@ BEGIN
         UPDATE dbo.POS_Benutzer SET cPasswort = ''Pass_'' + CAST(kBenutzer AS NVARCHAR(30)) WHERE kBenutzer IS NOT NULL;
     ';
     EXEC @exec @b;
-    EXEC reset.internal_LogStep @RequestId, N'anon.P11 pos ok';
+    EXEC reset.spInternal_LogStep @RequestId, N'anon.P11 pos ok';
 END
 GO

@@ -68,7 +68,7 @@ service is running on test1 (Survey found it stopped) — the agent job needs it
 
 ## Phase 3 — Validate the reset end-to-end on test1
 
-Prove `StartTestmandantReset` → agent job → `internal_*` pipeline → `GetResetStatus`
+Prove `spPub_StartTestmandantReset` → agent job → `spInternal_*` pipeline → `spPub_GetResetStatus`
 works before prod ever sees it. The worker on test1 has no live credentials, so a mistake
 cannot reach real customers:
 
@@ -92,22 +92,22 @@ pwsh db-migrations/deploy.ps1 -Scope global -Environment PROD
 
 > [!WARNING]
 > Do not run a global deploy while a test-mandant reset is queued or running: if
-> `reset.EnsureAgentJob.sql` changed, its drop/recreate would cancel the running agent
-> job mid-clone. The script guards this itself (it THROWs when `ops.ResetRequest` has a
+> `reset.spEnsureAgentJob.sql` changed, its drop/recreate would cancel the running agent
+> job mid-clone. The script guards this itself (it THROWs when `ops.tResetRequest` has a
 > `queued`/`running` row) — if the deploy fails with that message, wait for the reset to
-> finish (check `reset.GetResetStatus`) and rerun.
+> finish (check `reset.spPub_GetResetStatus`) and rerun.
 
 ## Phase 5 — Seed real keys (never via git)
 
-The Ebene-B seed shipped `ops.Mandant` rows with a `'<SET-VIA-RUNBOOK>'` sentinel for
-`ShopLicense`. Set the real per-mandant keys **in place**, in a reviewed session:
+The Ebene-B seed shipped `ops.tMandant` rows with a `'<SET-VIA-RUNBOOK>'` sentinel for
+`cShopLicense`. Set the real per-mandant keys **in place**, in a reviewed session:
 
 ```sql
 -- RoboticoOps, admin session. One UPDATE per mandant. Keys from ~/.claude-secrets.md.
-UPDATE ops.Mandant SET ShopLicense = N'<real-key>' WHERE MandantKey = N'tm4';
+UPDATE ops.tMandant SET cShopLicense = N'<real-key>' WHERE cMandantKey = N'tm4';
 ```
 
-Verify `ops.Config` paths (`BackupFile`, `TargetDataDir`, `SourceDb`, `ReferenceMandant`)
+Verify `ops.tConfig` paths (`BackupFile`, `TargetDataDir`, `SourceDb`, `ReferenceMandant`)
 match prod reality. No real key ever enters a committed file.
 
 ## Phase 6 — First prod reset (tm4)
@@ -115,14 +115,14 @@ match prod reality. No real key ever enters a committed file.
 Run one real reset through the new path and watch it:
 
 ```sql
-EXEC RoboticoOps.reset.StartTestmandantReset @MandantKey = N'tm4';
+EXEC RoboticoOps.reset.spPub_StartTestmandantReset @MandantKey = N'tm4';
 -- poll:
-EXEC RoboticoOps.reset.GetResetStatus @MandantKey = N'tm4';
+EXEC RoboticoOps.reset.spPub_GetResetStatus @MandantKey = N'tm4';
 ```
 
-Confirm `Status` walks `queued → running → succeeded`, `StepLog` shows all eight steps,
+Confirm `cStatus` walks `queued → running → succeeded`, `cStepLog` shows all eight steps,
 and the clone is neutralised (spot-check per the validation runbook's checks). If it ends
-`failed`, the clone is left as-is for diagnosis and `ErrorText`/`StepLog` say where.
+`failed`, the clone is left as-is for diagnosis and `cErrorMessage`/`cStepLog` say where.
 
 ## Phase 7 — Retire the PowerShell path (D12)
 
@@ -147,8 +147,8 @@ of this rollout — they are handled separately and manually:
 - **Ebene B on prod (Phase 4):** if the global deploy misbehaves, the objects are
   idempotent and inspectable; a failed reset never touches prod `eazybusiness` (it only
   writes the clone). The old PowerShell reset remains available until Phase 7.
-- **A stuck reset:** a `running` row older than `ops.Config('StaleRunningHours')` (default
-  4h) is auto-reclaimed as `failed` on the job's next start; inspect with `GetResetStatus`.
+- **A stuck reset:** a `running` row older than `ops.tConfig('StaleRunningHours')` (default
+  4h) is auto-reclaimed as `failed` on the job's next start; inspect with `spPub_GetResetStatus`.
   To recover sooner without server rights, a colleague runs
-  `EXEC reset.CancelResetRequest @RequestId = <id>;` — it cancels a `queued` request and
+  `EXEC reset.spPub_CancelResetRequest @RequestId = <id>;` — it cancels a `queued` request and
   force-reclaims a `running` one only when the job is not actually executing (OPS-2).
