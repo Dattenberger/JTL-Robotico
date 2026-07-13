@@ -136,6 +136,12 @@ match `tests/lint-migrations.ps1`.
 - **(g) No user data concatenated into dynamic SQL.** Object/DB names go through
   `QUOTENAME`; data values go through `sp_executesql` parameters — never string `+ @var`
   concatenation into an `EXEC` string. (Heuristic warning; see the Ebene-B reset procs.)
+- **(h) No ambiguous dashed date literal.** A `'YYYY-MM-DD'` string is parsed against the
+  session's language / `DATEFORMAT`, so on a non-US login (German = `dmy`) it is read
+  year-day-month and throws (error 190 on `CREATE CERTIFICATE … EXPIRY_DATE` — a real
+  test1 deploy failure that passed the `us_english` E2E container silently). Use the
+  language-neutral basic ISO form `'YYYYMMDD'`. (Comments are stripped first, so header /
+  `@see` dates never trip this.)
 
 Beyond the lint, two conventions the lint cannot fully check:
 

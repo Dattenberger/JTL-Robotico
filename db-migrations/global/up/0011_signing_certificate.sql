@@ -40,7 +40,11 @@ BEGIN
     CREATE CERTIFICATE RoboticoOpsSigning
         ENCRYPTION BY PASSWORD = '{{CertPassword}}'
         WITH SUBJECT = 'RoboticoOps reset SP signing certificate',
-             EXPIRY_DATE = '2999-12-31';
+             -- Basic ISO 'YYYYMMDD' (NOT 'YYYY-MM-DD'): the dashed form is parsed
+             -- against the session's DATEFORMAT, so on a German login (dmy) it reads
+             -- as year-day-month and throws error 190. The basic form is language-
+             -- neutral. Lint rule (h) guards this. @see 2026-07-13 test1 deploy incident.
+             EXPIRY_DATE = '29991231';
     PRINT 'Certificate [RoboticoOpsSigning] created in RoboticoOps.';
 END
 GO

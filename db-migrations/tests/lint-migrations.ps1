@@ -176,6 +176,17 @@ foreach ($f in $sqlFiles) {
             }
         }
     }
+
+    # (h) no ambiguous dashed date literal. A 'YYYY-MM-DD' string is parsed against the
+    # session's language / DATEFORMAT, so on a non-US login (German test1 = dmy) it is
+    # read year-day-month and throws (error 190 on CREATE CERTIFICATE EXPIRY_DATE — the
+    # 2026-07-13 test1 incident, which passed the us_english E2E container silently).
+    # The basic ISO form 'YYYYMMDD' is language-neutral. (Comments are already stripped,
+    # so header/@see dates never trip this.)
+    foreach ($m in [regex]::Matches($code, "'(\d{4})-(\d{2})-(\d{2})'")) {
+        $iso = $m.Groups[1].Value + $m.Groups[2].Value + $m.Groups[3].Value
+        Add-Error $rel 'h' "ambiguous dashed date literal $($m.Value) — use the language-neutral basic ISO form '$iso' (a dashed 'YYYY-MM-DD' is reparsed under DATEFORMAT dmy)"
+    }
 }
 
 # --------------------------------------------------------------------------
