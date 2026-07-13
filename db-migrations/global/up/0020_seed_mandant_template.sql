@@ -48,10 +48,14 @@ WHEN NOT MATCHED BY TARGET THEN
 -- (D4) and the reset would report 'succeeded' with nobody able to open the mandant.
 -- A per-mandant login can still be set later via the runbook.
 --
--- TODO(verify login on target server): this login lives on PROD (VM-SQL2); it is NOT
--- present on the bare vm-sql-test1 instance, so it could not be confirmed read-only
--- during QG2. Confirm the exact name on the deploy target before the first real reset:
---   sqlcmd -S VM-SQL2 -E -C -Q "SELECT name FROM sys.server_principals WHERE name LIKE 'dbuser_dev%'"
+-- Login name VERIFIED 2026-07-13 via a read-only catalog query against PROD (VM-SQL2):
+--   SELECT name FROM sys.server_principals WHERE name LIKE 'dbuser_dev%'
+-- returned dbuser_dev_dana_for_development, dbuser_dev_dana_for_jtl and
+-- dbuser_dev_lukas_claude. This seed uses the first — confirmed correct and matching the
+-- legacy setup-test-environment.ps1 default. Caveat: the login exists on PROD out of the
+-- box but is NOT present on a bare vm-sql-test1 instance, so a reset THERE must override
+-- @LoginName (or the login be created first) for internal_GrantAccess to grant db_owner;
+-- otherwise the grant is skipped (D4) and the clone opens for nobody.
 MERGE ops.Mandant AS tgt
 USING (VALUES
     (N'tm2', N'eazybusiness_tm2', N'Testmandant 2', N'(confirm in runbook)', N'dbuser_dev_dana_for_development', N'https://tm2.staging.local', N'<SET-VIA-RUNBOOK>'),
