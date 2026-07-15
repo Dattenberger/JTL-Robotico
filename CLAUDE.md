@@ -62,6 +62,16 @@ This repository contains SQL scripts only - no build processes, package managers
 - UTF-8 BOM encoding in files (visible as special characters at start)
 - Custom workflows extend base JTL functionality
 
+## Database Object Documentation — update contract
+
+`docs/SQL/MSSQL-OPS-DATA-MODEL.md` is the column-level reference for the
+`ops.*` tables of the RoboticoOps reset infrastructure. **Any edit to the
+table DDL** (`db-migrations/global/up/0002_ops_schema_tables.sql`,
+`db-migrations/global/up/0021_reset_step_registry.sql`, or any future `up/`
+script that adds/alters an `ops.*` table or column) **must update that
+document in the same commit** — new/changed columns get a row in the
+matching table, removed columns are deleted there.
+
 ## Important Notes
 
 - The system manages e-commerce operations including Amazon marketplace integration

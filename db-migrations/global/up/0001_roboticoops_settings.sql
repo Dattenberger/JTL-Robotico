@@ -11,7 +11,9 @@
 --   * TRUSTWORTHY = OFF  (the reset security model uses module signing, never
 --     TRUSTWORTHY — see adr-module-signing-reset / research/3).
 -- Hardening:
---   * RECOVERY SIMPLE  (this DB holds only ops metadata; no point-in-time recovery).
+--   * RECOVERY FULL  (transactional/point-in-time recovery for the ops metadata —
+--     requires the instance backup plan to include RoboticoOps log backups, or the
+--     log will grow unbounded).
 --   * Owner = sa        (stable, well-known owner; avoids an accidental personal owner).
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§2)
@@ -33,8 +35,8 @@ BEGIN
 END
 
 -- --- Recovery model --------------------------------------------------------------
-IF (SELECT recovery_model FROM sys.databases WHERE name = @db) <> 3  -- 3 = SIMPLE
-    ALTER DATABASE CURRENT SET RECOVERY SIMPLE;
+IF (SELECT recovery_model FROM sys.databases WHERE name = @db) <> 1  -- 1 = FULL
+    ALTER DATABASE CURRENT SET RECOVERY FULL;
 
 -- --- Owner = sa ------------------------------------------------------------------
 -- Only re-authorize if the current owner is not already sa (idempotent, avoids noise).
@@ -57,5 +59,5 @@ IF (SELECT is_trustworthy_on FROM sys.databases WHERE name = @db) = 1
 IF (SELECT is_trustworthy_on FROM sys.databases WHERE name = @db) = 1
     THROW 50002, N'RoboticoOps is still TRUSTWORTHY ON after ALTER — aborting.', 1;
 
-PRINT 'RoboticoOps settings verified: collation OK, RECOVERY SIMPLE, owner sa, TRUSTWORTHY OFF.';
+PRINT 'RoboticoOps settings verified: collation OK, RECOVERY FULL, owner sa, TRUSTWORTHY OFF.';
 GO
