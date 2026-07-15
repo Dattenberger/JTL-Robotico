@@ -476,22 +476,21 @@ BEGIN
             cPasswort = ''InkassoPass_'' + CAST(kInkassoUser AS NVARCHAR(30))
         WHERE kInkassoUser IS NOT NULL;
 
-        -- pf_user presence AND shape are an open question in prod clones (O4). Guard
-        -- every referenced column (CQG-10, matching spInternal_NeutralizeWorker), so a
-        -- schema difference makes this block a no-op instead of THROWing and failing the
-        -- whole reset. (Token columns are additionally cleared server-side elsewhere.)
+        -- pf_user PII placeholders ONLY. The security-critical secret-token clearing
+        -- (cAuthToken / cAmazonAuthToken) was moved to spInternal_NeutralizeWorker (D-14),
+        -- where it runs UNCONDITIONALLY and per-column-guarded — it must never hang off this
+        -- block''s all-or-nothing guard, or a single missing column would skip the token wipe
+        -- and leave real Amazon credentials in the clone. pf_user shape is an open question in
+        -- prod clones (O4), so guard only the columns THIS UPDATE still references; a missing
+        -- (now-removed) token column can no longer skip the PII anonymisation.
         IF OBJECT_ID(''dbo.pf_user'', ''U'') IS NOT NULL
            AND COL_LENGTH(''dbo.pf_user'', ''kUser'')                IS NOT NULL
            AND COL_LENGTH(''dbo.pf_user'', ''cName'')                IS NOT NULL
-           AND COL_LENGTH(''dbo.pf_user'', ''cAuthToken'')           IS NOT NULL
-           AND COL_LENGTH(''dbo.pf_user'', ''cAmazonAuthToken'')     IS NOT NULL
            AND COL_LENGTH(''dbo.pf_user'', ''cFBAVersandmailKopie'') IS NOT NULL
            AND COL_LENGTH(''dbo.pf_user'', ''cFBAKommentar'')        IS NOT NULL
            AND COL_LENGTH(''dbo.pf_user'', ''cAnmerkung'')           IS NOT NULL
         UPDATE dbo.pf_user SET
             cName = ''PfUser_'' + CAST(kUser AS NVARCHAR(30)),
-            cAuthToken = NULL,
-            cAmazonAuthToken = NULL,
             cFBAVersandmailKopie = ''fba_'' + CAST(kUser AS NVARCHAR(30)) + ''@test.local'',
             cFBAKommentar = ''Kommentar_'' + CAST(kUser AS NVARCHAR(30)),
             cAnmerkung = ''Anmerkung_'' + CAST(kUser AS NVARCHAR(30))
