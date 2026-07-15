@@ -184,6 +184,10 @@ jedem Trigger fehl (bzw. werden in `spArticleUpdateAllHistory` zu Severity-10-Ra
 
 ### B8 — PayPal-Token-Procs: Transaktions-Leak und permanent „vergifteter“ Token nach einem fehlgeschlagenen Auth-Call
 
+> **Status: deferred — superseded by PayPal removal.** Entscheidung Team-Lead/Lukas
+> (2026-07-15): die PayPal-Mechanik wird als nächster Schritt komplett ausgebaut; ein
+> Fix hier wäre Wegwerfarbeit. Kein Code-Fix in QG3.
+
 **Dateien:** `Robotico.spPaypalGetAccessToken.sql:19-31`, `Robotico.spPaypalCreateAccessToken.sql:21-109`
 
 **Szenario (a) — TRAN-Leak:** Beide Procs machen `BEGIN TRANSACTION … COMMIT` ohne

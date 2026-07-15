@@ -16,8 +16,8 @@
 --
 -- The canonical default pipeline is SEEDED here, so git — not just a live table — is
 -- the source of truth for the out-of-the-box order. Idempotent: the table is guarded by
--- IF OBJECT_ID and the seed MERGEs by cProcName, so a re-run against a fresh instance is
--- harmless and never disturbs an order an admin has already tuned.
+-- IF OBJECT_ID and the seed inserts keyed by cProcName, so a re-run against a fresh
+-- instance is harmless and never disturbs an order an admin has already tuned.
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md
@@ -56,20 +56,40 @@ GO
 
 -- --- seed the canonical pipeline order -------------------------------------------
 -- Matches the sequence reset.spProcessNextResetRequest ran as a hard-coded list before
--- EXT-1. MERGE by cProcName so a re-deploy adds only genuinely new steps and never
+-- EXT-1. Keyed by cProcName so a re-deploy adds only genuinely new steps and never
 -- overwrites an order/enabled/critical value an admin has adjusted.
-MERGE ops.tResetStep AS tgt
-USING (VALUES
-    (10, N'spInternal_CloneDatabase',         N'COPY_ONLY backup + restore-with-move'),
-    (20, N'spInternal_PostRestoreSecurity',   N'owner->sa, orphan remap, TRUSTWORTHY OFF'),
-    (30, N'spInternal_InvalidateCredentials', N'clear secrets, repoint JS-Shop to staging'),
-    (40, N'spInternal_NeutralizeWorker',      N'lock pf_user/ebay, empty worker queues'),
-    (50, N'spInternal_AnonymizeCustomerData', N'11 PII priority blocks'),
-    (60, N'spInternal_GrantAccess',           N'developer login -> db_owner in the clone'),
-    (70, N'spInternal_RegisterMandant',       N'tMandant upsert + tBenutzerFirma seed'),
-    (80, N'spInternal_ApplyJtlRoles',         N'JTL_Reader/JTL_Writer roles + members')
-) AS src (nStepOrder, cProcName, cNotes)
-    ON tgt.cProcName = src.cProcName
-WHEN NOT MATCHED BY TARGET THEN
-    INSERT (nStepOrder, cProcName, cNotes) VALUES (src.nStepOrder, src.cProcName, src.cNotes);
+--
+-- Seeded row-by-row instead of one MERGE (QG3 B12): if an admin re-ordered the live
+-- table onto a number a LATER seed row uses, a set-based insert would break the whole
+-- deploy with a UQ_tResetStep_nStepOrder violation. Per row, a taken nStepOrder falls
+-- back to MAX+10 (appended at the end) — the admin's tuning wins, the new step still
+-- lands, and its order can then be tuned like any other row.
+DECLARE @seedOrder int, @seedProc sysname, @seedNotes nvarchar(400);
+DECLARE seedcur CURSOR LOCAL FAST_FORWARD FOR
+    SELECT v.nStepOrder, v.cProcName, v.cNotes FROM (VALUES
+        (10, N'spInternal_CloneDatabase',         N'COPY_ONLY backup + restore-with-move'),
+        (20, N'spInternal_PostRestoreSecurity',   N'owner->sa, orphan remap, TRUSTWORTHY OFF'),
+        (30, N'spInternal_InvalidateCredentials', N'clear secrets, repoint JS-Shop to staging'),
+        (40, N'spInternal_NeutralizeWorker',      N'lock pf_user/ebay, auth tokens cleared, empty worker queues'),
+        (50, N'spInternal_AnonymizeCustomerData', N'11 PII priority blocks'),
+        (60, N'spInternal_GrantAccess',           N'developer login -> db_owner in the clone'),
+        (70, N'spInternal_RegisterMandant',       N'tMandant upsert + tBenutzerFirma seed'),
+        (80, N'spInternal_ApplyJtlRoles',         N'JTL_Reader/JTL_Writer roles + members')
+    ) v (nStepOrder, cProcName, cNotes)
+    ORDER BY v.nStepOrder;
+OPEN seedcur;
+FETCH NEXT FROM seedcur INTO @seedOrder, @seedProc, @seedNotes;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM ops.tResetStep WHERE cProcName = @seedProc)
+    BEGIN
+        IF EXISTS (SELECT 1 FROM ops.tResetStep WHERE nStepOrder = @seedOrder)
+            SELECT @seedOrder = MAX(nStepOrder) + 10 FROM ops.tResetStep;
+        INSERT INTO ops.tResetStep (nStepOrder, cProcName, cNotes)
+        VALUES (@seedOrder, @seedProc, @seedNotes);
+    END
+    FETCH NEXT FROM seedcur INTO @seedOrder, @seedProc, @seedNotes;
+END
+CLOSE seedcur;
+DEALLOCATE seedcur;
 GO

@@ -19,9 +19,13 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- ISNULL on @Message is load-bearing (QG3 B9): '+' propagates NULL, so a single
+    -- NULL message would otherwise set cStepLog itself to NULL and wipe the request's
+    -- entire log history. Current callers build messages NULL-safely, but this helper
+    -- is the SSoT for FUTURE steps too.
     UPDATE ops.tResetRequest
        SET cStepLog    = ISNULL(cStepLog, N'') + CONVERT(nvarchar(19), SYSUTCDATETIME(), 126)
-                      + N' ' + @Message + NCHAR(10),
+                      + N' ' + ISNULL(@Message, N'(null message)') + NCHAR(10),
            dModified = SYSUTCDATETIME()
      WHERE kResetRequest = @RequestId;
 END

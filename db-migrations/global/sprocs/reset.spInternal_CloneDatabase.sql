@@ -63,13 +63,32 @@ BEGIN
        OR NOT EXISTS (SELECT 1 FROM sys.master_files WHERE database_id = DB_ID(@SourceDb) AND type_desc = N'LOG')
         THROW 51013, 'spInternal_CloneDatabase: source has no ROWS or no LOG file.', 1;
 
-    -- Kick out any users so RESTORE ... REPLACE can proceed.
+    -- Prepare an existing target for RESTORE ... REPLACE.
     -- (EXEC() does not accept a function call in its concatenated argument, so build the
     -- statement into @sql first, then EXEC(@sql).)
     IF DB_ID(@TargetDb) IS NOT NULL
     BEGIN
-        SET @sql = N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE;';
-        EXEC (@sql);
+        -- QG3 B10/I5: a leftover clone stuck in RESTORING/OFFLINE (previous run killed
+        -- mid-RESTORE) cannot be set SINGLE_USER — the ALTER fails with an error that
+        -- points the operator at the wrong cause. Such a corpse has no diagnostic value
+        -- (unlike a failed-but-ONLINE clone, which the pipeline deliberately keeps), and
+        -- RESTORE recreates the database anyway, so drop it and log why.
+        DECLARE @targetState nvarchar(60) =
+            (SELECT state_desc FROM sys.databases WHERE name = @TargetDb);
+        IF @targetState <> N'ONLINE'
+        BEGIN
+            SET @log = CONCAT(N'clone: target ', @TargetDb, N' found in state ', @targetState,
+                              N' (leftover from a dead run) — dropping it before restore');
+            EXEC reset.spInternal_LogStep @RequestId, @log;
+            SET @sql = N'DROP DATABASE ' + QUOTENAME(@TargetDb) + N';';
+            EXEC (@sql);
+        END
+        ELSE
+        BEGIN
+            -- Kick out any users so RESTORE ... REPLACE can proceed.
+            SET @sql = N'ALTER DATABASE ' + QUOTENAME(@TargetDb) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE;';
+            EXEC (@sql);
+        END
     END
 
     -- Ensure the data directory exists (RESTORE creates no folders).
