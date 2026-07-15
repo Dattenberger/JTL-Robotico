@@ -38,8 +38,10 @@ BEGIN
     -- reset is queued/running would cancel the backup/restore mid-clone and leave the
     -- request stuck in 'running' until the stale-reclaim in reset.spProcessNextResetRequest.
     -- Fail the deploy instead; rerun once the active reset has finished.
+    -- 50010, not 50001: that number is taken by up/0001's collation assert (0001 is
+    -- applied and immutable, so this side moved). Allocation table: README §4 rule (k).
     IF EXISTS (SELECT 1 FROM ops.tResetRequest WHERE cStatus IN (N'queued', N'running'))
-        THROW 50001, N'reset.spEnsureAgentJob: a reset request is queued or running. Recreating the agent job now would cancel it mid-clone. Wait until ops.tResetRequest has no queued/running row (check reset.spPub_GetResetStatus), then rerun the global deploy.', 1;
+        THROW 50010, N'reset.spEnsureAgentJob: a reset request is queued or running. Recreating the agent job now would cancel it mid-clone. Wait until ops.tResetRequest has no queued/running row (check reset.spPub_GetResetStatus), then rerun the global deploy.', 1;
 
     -- OPS-4: resolve the optional failure-notification operator. Only wire the email if
     -- the configured operator actually exists in msdb — passing an unknown operator name

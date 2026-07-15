@@ -12,9 +12,10 @@ runbook that owns its detail — this file is the **spine**.
 
 - **Applies to:** first full rollout of the plan `2026-07-10 - mssql-ops-infrastruktur`.
 - **Actors:** Lukas (admin/deployer). Colleagues only ever call the reset SPs.
-- **Prerequisites:** grate on `PATH` (`dotnet tool install --global grate`); Windows auth
-  to both servers; the certificate password ready to enter (never stored in git —
-  `~/.claude-secrets.md`, plan O5).
+- **Prerequisites:** grate on `PATH` (`dotnet tool install --global grate`) — or Docker,
+  to which `deploy.ps1` falls back automatically (`erikbra/grate` image); Windows auth
+  to both servers; the certificate password available to `deploy.ps1` (never stored in
+  git — `~/.claude-secrets.md`, plan O5; resolution model in Phase 2).
 - **References:** [`db-migrations/README.md`](../../db-migrations/README.md),
   [architecture doc](../SQL/MSSQL-OPS-ARCHITECTURE.md), runbook index
   [`README.md`](README.md).
@@ -62,9 +63,29 @@ pwsh db-migrations/deploy.ps1 -Scope global -Environment TEST
 
 grate creates `RoboticoOps` if absent; `0001` asserts collation
 `Latin1_General_CI_AS` and fails hard on mismatch (fix per its message before retrying).
-You will be prompted for the certificate password (`{{CertPassword}}` →
-`Read-Host -AsSecureString` or `GRATE_CERT_PASSWORD`). Then make sure the SQL-Agent
-service is running on test1 (Survey found it stopped) — the agent job needs it.
+
+**Certificate password — there is NO interactive prompt.** `deploy.ps1` resolves the
+`{{CertPassword}}` token in three tiers (full detail: `db-migrations/README.md` §7):
+
+1. `$env:GRATE_CERT_PASSWORD` — explicit session override;
+2. the persisted per-environment store (`GRATE_CERT_PASSWORD_TEST` — a Windows *User*
+   env var, or `~/.robotico-ops/grate-cert.env` on Linux/macOS);
+3. auto-generate (CSPRNG) + persist — **only** when the target instance has no
+   `RoboticoOpsSigning` certificate yet. If the cert exists but no password is known, or
+   the safety probe cannot reach the server, the deploy **aborts** with instructions
+   instead of minting a value that could never unlock the existing private key.
+
+Then make sure the SQL-Agent service is running on test1 (Survey found it stopped) — the
+agent job needs it.
+
+> [!IMPORTANT]
+> **Backup plan: add RoboticoOps LOG backups.** `up/0001` puts `RoboticoOps` on
+> `RECOVERY FULL` (point-in-time recovery for the ops metadata). FULL **without log
+> backups is strictly worse than SIMPLE** — the transaction log grows unbounded. As part
+> of this phase, add `RoboticoOps` to the instance backup plan with regular **LOG**
+> backups (on top of the usual FULL/DIFF). This applies to `RoboticoOps` only; the
+> throwaway `eazybusiness_tmN` clones are deliberately switched to SIMPLE by the reset
+> pipeline (`spInternal_CloneDatabase`) and stay that way.
 
 ## Phase 3 — Validate the reset end-to-end on test1
 
@@ -87,15 +108,27 @@ pwsh db-migrations/deploy.ps1 -Scope global -Environment PROD
 
 > [!CAUTION]
 > `-Environment PROD` prompts Y/N and lists targets. Confirm the server is
-> `vm-sql2.zdbikes.local` and the scope is `RoboticoOps` only. Enter the certificate
-> password when prompted. Confirm the SQL-Agent service is running on prod.
+> `vm-sql2.zdbikes.local` and the scope is `RoboticoOps` only. Confirm the SQL-Agent
+> service is running on prod.
+>
+> **Certificate password:** same three-tier resolution as Phase 2 — no prompt. On the
+> **first** PROD global deploy the instance has no `RoboticoOpsSigning` cert yet, so tier 3
+> auto-generates a fresh password, persists it under `GRATE_CERT_PASSWORD_PROD`, and shows
+> it **once** — file it in the password manager / `~/.claude-secrets.md` immediately (the
+> private key is otherwise unrecoverable; rotation means drop + recreate the cert via a new
+> `up/` script). Also repeat the Phase-2 backup-plan step: add prod's `RoboticoOps` LOG
+> backups.
 
 > [!WARNING]
 > Do not run a global deploy while a test-mandant reset is queued or running: if
 > `reset.spEnsureAgentJob.sql` changed, its drop/recreate would cancel the running agent
 > job mid-clone. The script guards this itself (it THROWs when `ops.tResetRequest` has a
 > `queued`/`running` row) — if the deploy fails with that message, wait for the reset to
-> finish (check `reset.spPub_GetResetStatus`) and rerun.
+> finish (check `reset.spPub_GetResetStatus`) and rerun. If the blocking `running` row
+> belongs to a **dead** job run (nothing actually executing), do not wait for the
+> `StaleRunningHours` reclaim — run `EXEC reset.spPub_CancelResetRequest @RequestId = <id>;`
+> (it refuses while the job really runs; see
+> [`testmandant-reset-validierung.md`](testmandant-reset-validierung.md) §Failure modes).
 
 ## Phase 5 — Seed real keys (never via git)
 

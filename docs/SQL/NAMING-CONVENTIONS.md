@@ -171,7 +171,8 @@ journal tables in `Robotico`.
 ## 9. The `RoboticoOps` admin database (Ebene B)
 
 Instance administration lives in a **separate database**, `RoboticoOps` (collation
-`Latin1_General_CI_AS`, recovery SIMPLE, owner `sa`) — deliberately outside the
+`Latin1_General_CI_AS`, recovery FULL — requires log backups, see the rollout runbook —
+owner `sa`) — deliberately outside the
 `eazybusiness_*` namespace so it can never be confused with a mandant clone. It carries two
 schemas we own:
 

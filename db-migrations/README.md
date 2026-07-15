@@ -140,8 +140,37 @@ match `tests/lint-migrations.ps1`.
   session's language / `DATEFORMAT`, so on a non-US login (German = `dmy`) it is read
   year-day-month and throws (error 190 on `CREATE CERTIFICATE … EXPIRY_DATE` — a real
   test1 deploy failure that passed the `us_english` E2E container silently). Use the
-  language-neutral basic ISO form `'YYYYMMDD'`. (Comments are stripped first, so header /
-  `@see` dates never trip this.)
+  language-neutral basic ISO form `'YYYYMMDD'`. The same applies to dashed **datetime**
+  literals with a space separator (`'YYYY-MM-DD hh:mm[:ss]'`); only the ISO-8601 `T` form
+  (`'YYYY-MM-DDThh:mm:ss'`) is language-neutral and therefore allowed. (Comments are
+  stripped first, so header / `@see` dates never trip this.)
+- **(i) `up/` scripts are immutable — no uncommitted edits to a tracked `up/` file.**
+  The lint ERRORs when a git-tracked `up/*.sql` has working-tree/index modifications:
+  that is exactly the shape of the QG3-C1 incident (an applied one-time script edited in
+  place → grate hash-mismatch on the next deploy). The correct move is always a **new**
+  `NNNN_…` script (§2 CAUTION). Escape hatch for a script that has provably never been
+  applied anywhere (still in authoring): `$env:LINT_ALLOW_UP_EDITS = '1'`, or an entry
+  in the lint's `$upEditAcknowledged` allowlist with a reason. Deliberately NOT checked:
+  commit history on the feature branch (pre-first-apply iteration is legitimate); grate's
+  own hash check remains the hard deploy-time backstop.
+- **(j) Ebene-B pipeline steps carry guard + uniform contract.** Every
+  `global/sprocs/reset.spInternal_*.sql` (except the `spInternal_LogStep` helper) must
+  declare the uniform signature `(@TargetDb sysname, @RequestId int, @MandantKey sysname)`
+  and contain the clone guard (`NOT LIKE N'eazybusiness[_]%'` + `THROW`) **before** the
+  first write/EXEC — the §9 recipe, mechanically enforced (D6).
+- **(k) `THROW` numbers are unique per chain.** The 5-digit user-error numbers double as
+  step identifiers in errors/logs; a duplicate across two files makes a grep ambiguous
+  (the QG3 50001 collision). Allocation (Ebene B): `50001–50002` up/0001 asserts ·
+  `50010` spEnsureAgentJob deploy-guard · `50900–50901` 900_resign ·
+  `51001–51008` spPub_\*/orchestrator · `51010–51014` CloneDatabase ·
+  `51020–51021` PostRestoreSecurity · `51030` InvalidateCredentials ·
+  `51040` NeutralizeWorker · `51050` AnonymizeCustomerData · `51060` GrantAccess ·
+  `51070–51071` RegisterMandant · `51080` ApplyJtlRoles · `51090–51094` CreateTestmandant.
+  Ebene A: `50000` spGebindeErstellen. New steps take the next free `510x0` block.
+- **(l) Every `global/` proc is registered in the structure test.** Each file under
+  `global/sprocs/` and `global/runAfterOtherAnyTimeScripts/` must appear in the
+  required-objects list of `tests/global/validate_structure.sql` (§9 step 3 — a deployed
+  but unregistered proc would silently escape the rollout gate).
 
 Beyond the lint, two conventions the lint cannot fully check:
 
@@ -263,6 +292,8 @@ The repo-root `package.json` exposes the whole infrastructure surface via `npm r
 | `npm run db:e2e:copy-logins` | copy real server logins into the container (see below) |
 | `npm run db:mandant:create -- -Environment … -MandantKey tmN -DisplayName "…"` | create a new test mandant (registers + kicks the first reset, which **builds** the clone). Admin-only |
 | `npm run db:mandant:list -- -Environment …` | list mandants (wraps `reset.spPub_ListMandants`) |
+| `npm run db:validate -- -Environment …` | generic rollout gate `tests/validate-rollout.ps1` (structure + rollout checks + consumer roundtrip; `-FullReset` opts into a real reset) |
+| `npm run db:validate:test` / `db:validate:e2e` | the same gate pinned to TEST / the E2E container |
 
 Add `-- -DryRun` to any deploy variant for a no-op run (e.g. `npm run db:deploy:test -- -DryRun`).
 The two `Deploy Test Environment:*` legacy entries are kept as the D12 PowerShell fallback.
@@ -277,10 +308,12 @@ The two `Deploy Test Environment:*` legacy entries are kept as the D12 PowerShel
 > STDIN, never written to a file. `-WhatIf` previews without applying.
 
 Targets (servers, DB lists) are resolved from `targets.config.json` — no secrets there
-(Windows authentication only). `deploy.ps1` requires grate on the `PATH`
-(`dotnet tool install --global grate`) and **prompts for interactive Y/N confirmation on
-`-Environment PROD`**, listing the exact target DBs first (a `-DryRun` against PROD
-changes nothing and therefore skips the confirmation).
+(Windows authentication only). `deploy.ps1` runs grate from the `PATH`
+(`dotnet tool install --global grate`) or — when no binary is installed — automatically
+falls back to the official Docker image (`erikbra/grate`, see `tests/docker/README.md`
+§4), and **prompts for interactive Y/N confirmation on `-Environment PROD`**, listing the
+exact target DBs first (a `-DryRun` against PROD changes nothing and therefore skips the
+confirmation).
 
 > [!NOTE]
 > **Ebene B resolves the module-signing certificate password automatically.** `-Scope global`
@@ -353,7 +386,7 @@ changes nothing and therefore skips the confirmation).
 
 | File | Kind | Checks |
 |---|---|---|
-| `tests/lint-migrations.ps1` | static lint | rules (a)–(g) above; exit ≠ 0 on any violation |
+| `tests/lint-migrations.ps1` | static lint | rules (a)–(l) above + unique `up/` number prefixes per chain; exit ≠ 0 on any violation |
 | `tests/compare-objects.sql` | read-only integration | **DB↔DB** object-hash drift (run against two databases, diff the outputs — baseline pre-check, post-update smoke). Not a file↔DB compare: it hashes `OBJECT_DEFINITION` (engine-normalized text), which never byte-matches a file's raw source. |
 | `tests/eazybusiness/*.sql` | manual integration | ported `*_Tests.sql` — run against a **test mandant**, never prod |
 

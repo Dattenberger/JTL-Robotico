@@ -97,7 +97,9 @@ synchronous reset / Service Broker / pure-certificate signing / least-privilege 
 - **Purpose:** create and maintain the one-per-instance admin objects.
 - **Location:** `db-migrations/global/{up,sprocs,runAfterOtherAnyTimeScripts,permissions}/`.
 - **Journal:** `ops.ScriptsRun` in `RoboticoOps`.
-- **RoboticoOps** (collation `Latin1_General_CI_AS`, recovery SIMPLE, owner `sa`) holds
+- **RoboticoOps** (collation `Latin1_General_CI_AS`, recovery FULL — the instance backup
+  plan must include RoboticoOps LOG backups or the log grows unbounded, see
+  `rollout-mssql-ops.md`; owner `sa`) holds
   two schemas:
   - `ops` — registry & state: `ops.tMandant` (config incl. column-protected `cShopLicense`),
     `ops.tConfig` (paths, source DB, reference mandant), `ops.tResetRequest` (the queue /
@@ -189,7 +191,7 @@ line before each step so a mid-step failure is attributable in `cStepLog`.
 | Reset pipeline | `db-migrations/global/sprocs/reset.{spProcessNextResetRequest,spInternal_*}.sql` | whitelist-guarded loop over `ops.tResetStep`; uniform-contract steps; `spInternal_LogStep` cStepLog helper |
 | Agent-job wrapper | `db-migrations/global/runAfterOtherAnyTimeScripts/reset.spEnsureAgentJob.sql` | idempotent job (re)install, owner `sa` |
 | Re-signing | `db-migrations/global/permissions/900_resign_procedures.sql` | everytime; heals dropped signatures |
-| Lint | `db-migrations/tests/lint-migrations.ps1` | rules (a)–(g), the executable contract |
+| Lint | `db-migrations/tests/lint-migrations.ps1` | rules (a)–(l) + up/-number uniqueness, the executable contract |
 
 ## 4. The excel_ekl boundary
 

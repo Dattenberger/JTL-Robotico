@@ -209,7 +209,14 @@ Optionally clear the `tm9` `ops.tResetRequest` history. For routine retention (n
 throwaway run) an admin can trim the audit log with `EXEC reset.spPub_PurgeOldRequests
 @KeepPerMandant = 20;` — it keeps the newest N rows per mandant and never deletes a
 `queued`/`running` row (OPS-5; run with `@WhatIf = 1` first to preview the count). Set the
-`ops.tMandant` `tm9` row `bActive = 0` (or delete it) so it can't be reset again by accident.
+`ops.tMandant` `tm9` row `bActive = 0` so it can't be reset again by accident — that is
+the preferred end state. Actually **deleting** the `ops.tMandant` row fails with an FK
+error (`FK_tResetRequest_tMandant`) while any `ops.tResetRequest` history for `tm9`
+exists; `spPub_PurgeOldRequests` cannot clear it fully either (it always keeps the newest
+rows per mandant). If a hard delete is really wanted: first manually `DELETE
+ops.tResetRequest WHERE cMandantKey = N'tm9'` (needs a sysadmin/dbo session — `ops_admin`
+deliberately has no direct DELETE on the audit table; reviewed, this erases the audit
+trail), then delete the mandant row.
 Stop the SQL-Agent again if test1 should return to its Stopped/Manual baseline.
 
 ---

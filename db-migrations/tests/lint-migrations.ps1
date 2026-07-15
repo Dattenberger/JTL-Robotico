@@ -5,12 +5,15 @@
 
 .DESCRIPTION
     Recursively checks every *.sql under db-migrations/eazybusiness and
-    db-migrations/global against the hard rules (a)-(g) documented in
-    db-migrations/README.md §4, plus the §6 cleanup-script rule (f) against
-    Berechtigungen/cleanup (when that directory exists).
+    db-migrations/global against the hard rules (a)-(l) documented in
+    db-migrations/README.md §4 (incl. up/-number uniqueness per chain), plus the
+    §6 cleanup-script rule (f) against Berechtigungen/cleanup (when that
+    directory exists).
 
     Runs under Linux `pwsh` and Windows PowerShell. Exit code 0 = clean,
     1 = at least one ERROR (WARNINGs alone do not fail the run).
+    Rule (i) additionally needs `git` and a work tree; it degrades silently to
+    a no-op when either is absent (e.g. linting an exported copy via -Path).
 
 .EXAMPLE
     pwsh db-migrations/tests/lint-migrations.ps1
@@ -76,6 +79,18 @@ function Get-FolderClass([string] $relativeDir) {
 }
 
 $forbiddenTokens = @('spCMArtikelNeu', 'spCMArtikel', 'RoboticoEKL')
+
+# Rule (i) escape hatch: repo-relative up/ paths (as `git status --porcelain` prints
+# them) that are ACKNOWLEDGED as edited although already tracked — permissible ONLY for
+# scripts that have provably never been applied anywhere (still in authoring). Each entry
+# carries its reason and is reported as a WARNING instead of an ERROR. Bulk local
+# iteration can alternatively set $env:LINT_ALLOW_UP_EDITS = '1'.
+$upEditAcknowledged = @{
+    # 'db-migrations/global/up/0042_example.sql' = 'authoring 2026-07-…; not yet deployed anywhere'
+}
+
+# Rule (k) collector: THROW numbers per chain (key "<chain>|<number>" -> set of files).
+$throwNumbers = @{}
 
 # --------------------------------------------------------------------------
 # Main chains: eazybusiness/ + global/
@@ -177,15 +192,56 @@ foreach ($f in $sqlFiles) {
         }
     }
 
-    # (h) no ambiguous dashed date literal. A 'YYYY-MM-DD' string is parsed against the
-    # session's language / DATEFORMAT, so on a non-US login (German test1 = dmy) it is
-    # read year-day-month and throws (error 190 on CREATE CERTIFICATE EXPIRY_DATE — the
-    # 2026-07-13 test1 incident, which passed the us_english E2E container silently).
-    # The basic ISO form 'YYYYMMDD' is language-neutral. (Comments are already stripped,
-    # so header/@see dates never trip this.)
-    foreach ($m in [regex]::Matches($code, "'(\d{4})-(\d{2})-(\d{2})'")) {
+    # (h) no ambiguous dashed date/datetime literal. A 'YYYY-MM-DD' string is parsed
+    # against the session's language / DATEFORMAT, so on a non-US login (German test1 =
+    # dmy) it is read year-day-month and throws (error 190 on CREATE CERTIFICATE
+    # EXPIRY_DATE — the 2026-07-13 test1 incident, which passed the us_english E2E
+    # container silently). The same DATEFORMAT trap hits the space-separated datetime
+    # form 'YYYY-MM-DD hh:mm[:ss]'. Language-neutral and therefore allowed: the basic
+    # ISO form 'YYYYMMDD' and the ISO-8601 'T' form 'YYYY-MM-DDThh:mm:ss'. (Comments are
+    # already stripped, so header/@see dates never trip this.)
+    foreach ($m in [regex]::Matches($code, "'(\d{4})-(\d{2})-(\d{2})([^']*)'")) {
         $iso = $m.Groups[1].Value + $m.Groups[2].Value + $m.Groups[3].Value
-        Add-Error $rel 'h' "ambiguous dashed date literal $($m.Value) — use the language-neutral basic ISO form '$iso' (a dashed 'YYYY-MM-DD' is reparsed under DATEFORMAT dmy)"
+        $rest = $m.Groups[4].Value
+        if ($rest -eq '') {
+            Add-Error $rel 'h' "ambiguous dashed date literal $($m.Value) — use the language-neutral basic ISO form '$iso' (a dashed 'YYYY-MM-DD' is reparsed under DATEFORMAT dmy)"
+        }
+        elseif ($rest -match '^ \d{1,2}:\d{2}') {
+            Add-Error $rel 'h' "ambiguous dashed datetime literal $($m.Value) — the space-separated form is reparsed under DATEFORMAT dmy; use the ISO-8601 'T' form ('YYYY-MM-DDThh:mm:ss') or the basic form ('$iso hh:mm:ss')"
+        }
+        # 'YYYY-MM-DDThh:mm:ss' (ISO 8601 with 'T') is language-neutral — allowed.
+    }
+
+    # (j) Ebene-B pipeline steps: uniform contract + clone guard before the first
+    # write/EXEC (README §9 recipe; D6). Applies to global/sprocs/reset.spInternal_*
+    # except the spInternal_LogStep helper (no @TargetDb, writes only ops.tResetRequest).
+    if ($f.FullName -match '[\\/]global[\\/]sprocs[\\/]reset\.spInternal_[^\\/]+\.sql$' -and
+        $baseName -ne 'reset.spInternal_LogStep') {
+
+        if ($code -notmatch '(?is)@TargetDb\s+sysname\s*,\s*@RequestId\s+int\s*,\s*@MandantKey\s+sysname') {
+            Add-Error $rel 'j' "pipeline step lacks the uniform contract (@TargetDb sysname, @RequestId int, @MandantKey sysname) — the orchestrator calls every step exactly this way (README §9)"
+        }
+
+        $guard = [regex]::Match($code, "(?i)NOT\s+LIKE\s+N'eazybusiness\[_\]%'")
+        if (-not $guard.Success) {
+            Add-Error $rel 'j' "pipeline step lacks the clone guard (IF @TargetDb = N'eazybusiness' OR @TargetDb NOT LIKE N'eazybusiness[_]%' THROW 51xxx) — a step without it runs against ANY database under job sysadmin rights (README §9, D6)"
+        }
+        else {
+            $firstWrite = [regex]::Match($code, '(?im)^\s*(UPDATE|DELETE|INSERT|MERGE|EXEC(?:UTE)?)\b')
+            if ($firstWrite.Success -and $firstWrite.Index -lt $guard.Index) {
+                Add-Error $rel 'j' "clone guard appears AFTER the first write/EXEC ('$($firstWrite.Groups[1].Value)') — the guard must be the first executable statement (README §9, D6)"
+            }
+        }
+    }
+
+    # (k) collect THROW numbers for the per-chain uniqueness check below.
+    $chainName = ($f.FullName.Substring($migrationsRoot.Length).TrimStart('/', '\') -split '[\\/]')[0]
+    foreach ($m in [regex]::Matches($code, '(?i)\bTHROW\s+(\d{5})\b')) {
+        $key = "$chainName|$($m.Groups[1].Value)"
+        if (-not $throwNumbers.ContainsKey($key)) {
+            $throwNumbers[$key] = New-Object System.Collections.Generic.HashSet[string]
+        }
+        [void]$throwNumbers[$key].Add($rel)
     }
 }
 
@@ -207,6 +263,89 @@ foreach ($d in $chainDirs) {
             }
             else {
                 $seenPrefixes[$prefix] = $rel
+            }
+        }
+    }
+}
+
+# --------------------------------------------------------------------------
+# (i) up/ immutability: no uncommitted edits to a git-TRACKED up/ script.
+# This is exactly the QG3-C1 incident shape: an applied one-time script edited in
+# place breaks the next deploy with a grate hash-mismatch — the correct move is a
+# NEW NNNN script (README §2 CAUTION). Untracked/staged-new files are authoring and
+# fine. Commit history is deliberately NOT checked: pre-first-apply iteration on a
+# feature branch is legitimate, and grate's hash check stays the deploy-time backstop.
+# Degrades to a no-op when git or a work tree is unavailable (-Path exports).
+# --------------------------------------------------------------------------
+$gitTop = $null
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    $gitTop = & git -C $migrationsRoot rev-parse --show-toplevel 2>$null
+    if ($LASTEXITCODE -ne 0) { $gitTop = $null }
+}
+if ($gitTop) {
+    $gitTopNorm = "$gitTop" -replace '\\', '/'
+    $upPathspecs = @()
+    foreach ($d in $chainDirs) {
+        $upDir = Join-Path $d 'up'
+        if (Test-Path $upDir) {
+            $upNorm = (Resolve-Path $upDir).Path -replace '\\', '/'
+            if ($upNorm.StartsWith($gitTopNorm)) {
+                $upPathspecs += $upNorm.Substring($gitTopNorm.Length).TrimStart('/')
+            }
+        }
+    }
+    if ($upPathspecs.Count -gt 0) {
+        $porcelain = & git -C $gitTop status --porcelain -- @upPathspecs 2>$null
+        foreach ($line in @($porcelain)) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $xy = $line.Substring(0, 2)
+            if ($xy -eq '??') { continue }              # untracked: new script in authoring
+            if ($xy -notmatch '[MDR]') { continue }     # staged-new (A) etc.: fine
+            $p = $line.Substring(3).Trim('"')
+            if ($p -match '->') { $p = ($p -split '->')[-1].Trim().Trim('"') }
+            $msg = "tracked up/ script has uncommitted modifications ($($xy.Trim())) — up/ scripts are immutable once applied; add a NEW NNNN_… script instead (README §4 rule i / §2 CAUTION)"
+            if ($upEditAcknowledged.ContainsKey($p)) {
+                Add-Warning $p 'i' "acknowledged up/ edit ($($upEditAcknowledged[$p])) — ensure the script has NEVER been applied anywhere"
+            }
+            elseif ($env:LINT_ALLOW_UP_EDITS -eq '1') {
+                Add-Warning $p 'i' "$msg [downgraded: LINT_ALLOW_UP_EDITS=1]"
+            }
+            else {
+                Add-Error $p 'i' $msg
+            }
+        }
+    }
+}
+
+# --------------------------------------------------------------------------
+# (k) THROW numbers unique per chain (numbers double as step identifiers in
+# errors/logs — allocation table: README §4 rule k). Re-use of the same number
+# WITHIN one file is fine; the same number in two files is the ambiguity.
+# --------------------------------------------------------------------------
+foreach ($entry in ($throwNumbers.GetEnumerator() | Sort-Object Key)) {
+    if ($entry.Value.Count -gt 1) {
+        $chainName, $num = $entry.Key -split '\|'
+        $files = ($entry.Value | Sort-Object) -join ', '
+        Add-Error $files 'k' "THROW number $num is used in multiple files of the '$chainName' chain — numbers must be unique per chain (README §4 rule k)"
+    }
+}
+
+# --------------------------------------------------------------------------
+# (l) every global/ proc is registered in tests/global/validate_structure.sql —
+# a deployed but unregistered proc silently escapes the rollout gate (README §9
+# step 3). Skipped when the structure test is absent (-Path exports).
+# --------------------------------------------------------------------------
+$structureSql = Join-Path $migrationsRoot 'tests/global/validate_structure.sql'
+if (Test-Path $structureSql) {
+    $structText = Get-Content -Raw -Path $structureSql
+    foreach ($dirName in @('sprocs', 'runAfterOtherAnyTimeScripts')) {
+        $dir = Join-Path (Join-Path $migrationsRoot 'global') $dirName
+        if (-not (Test-Path $dir)) { continue }
+        foreach ($f in (Get-ChildItem -Path $dir -Filter '*.sql' -File)) {
+            $obj = $f.BaseName
+            $rel = $f.FullName.Substring($repoRoot.Length).TrimStart('/', '\')
+            if ($structText -notmatch [regex]::Escape("N'$obj'")) {
+                Add-Error $rel 'l' "object '$obj' is missing from the required-objects list in tests/global/validate_structure.sql (README §9 step 3)"
             }
         }
     }
