@@ -285,10 +285,11 @@ function Test-SigningCertExists {
     $q = "SET NOCOUNT ON; IF DB_ID('$GlobalDb') IS NULL SELECT 0 ELSE " +
          "SELECT COUNT(*) FROM [$GlobalDb].sys.certificates WHERE name='RoboticoOpsSigning';"
     $a = @('-S', $Server, '-C', '-h', '-1', '-W', '-b', '-Q', $q)
-    if ($AuthMode -eq 'sql') { $a += @('-U', $SqlUser, '-P', $SqlPassword) } else { $a += '-E' }
-    $out = & $sqlcmdPath @a 2>&1
-    if ($LASTEXITCODE -ne 0) { return $null }
-    $n = ($out | Where-Object { $_ -match '^\s*\d+\s*$' } | Select-Object -First 1)
+    if ($AuthMode -eq 'sql') { $a += @('-U', $SqlUser) } else { $a += '-E' }
+    # Password via SQLCMDPASSWORD (Invoke-RoboticoSqlcmd), never `-P` on argv (Sec-I2).
+    $r = Invoke-RoboticoSqlcmd -SqlcmdPath $sqlcmdPath -Arguments $a -Password $SqlPassword
+    if ($r.Exit -ne 0) { return $null }
+    $n = ($r.Raw | Where-Object { $_ -match '^\s*\d+\s*$' } | Select-Object -First 1)
     if ($null -eq $n) { return $null }
     return ([int]($n.Trim()) -gt 0)
 }
@@ -309,38 +310,79 @@ if ($Scope -eq 'global') {
         }
     }
 
-    # Tier 3: auto-generate — guarded by the cert-absence safety invariant.
+    # Tier 3: auto-generate — guarded by the cert-absence safety invariant AND serialized
+    # across processes (B13). Two concurrent first-time global deploys would otherwise both
+    # see "no cert", each mint a DIFFERENT password, and persist over one another — after
+    # which every later re-sign fails against the one immutable private key (up/0011). An
+    # exclusive lock file makes the whole check→generate→persist window atomic; inside the
+    # lock we RE-READ the persisted store first, so a run that lost the race adopts the
+    # winner's password instead of generating a second one.
     if ([string]::IsNullOrEmpty($certPassword)) {
-        $certExists = Test-SigningCertExists -Server $server -GlobalDb $globalDb `
-            -AuthMode $authMode -SqlUser $sqlUser -SqlPassword $sqlPassword
-
-        if ($certExists -eq $true) {
-            throw ("Certificate RoboticoOpsSigning already exists on $server / $globalDb, but no " +
-                   "password is known (not in `$env:GRATE_CERT_PASSWORD nor the persisted store " +
-                   "'$(Get-CertStoreKey $Environment)'). Refusing to auto-generate: a new password " +
-                   "would NOT match the immutable private key from up/0011 and every re-sign would " +
-                   "fail. Obtain the original password (password manager / ~/.claude-secrets.md) and " +
-                   "set it via `$env:GRATE_CERT_PASSWORD or the persisted store.")
+        $lockDir = Join-Path $HOME '.robotico-ops'
+        if (-not (Test-Path $lockDir)) {
+            New-Item -ItemType Directory -Path $lockDir -Force | Out-Null
+            & chmod 700 $lockDir 2>$null
         }
-        if ($null -eq $certExists) {
-            throw ("Cannot verify whether RoboticoOpsSigning already exists on $server / $globalDb " +
-                   "(sqlcmd missing or server unreachable). Refusing to auto-generate a cert password " +
-                   "blind — set `$env:GRATE_CERT_PASSWORD explicitly, or run where sqlcmd can reach the " +
-                   "target so the safety check can confirm the certificate is absent.")
+        # Per-environment lock so TEST / PROD / E2E first-deploys never block each other.
+        # FileShare::None ⇒ a second pwsh process blocks here until the first releases.
+        $lockPath = Join-Path $lockDir "grate-cert-$Environment.lock"
+        $lock = $null
+        $lockDeadline = (Get-Date).AddSeconds(120)
+        while ($null -eq $lock) {
+            try {
+                $lock = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate,
+                                               [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            }
+            catch {
+                if ((Get-Date) -gt $lockDeadline) {
+                    throw "Could not acquire the cert-password lock '$lockPath' within 120s (another global deploy is generating it). Retry once that deploy has finished."
+                }
+                Start-Sleep -Milliseconds 250
+            }
         }
+        try {
+            # RE-READ tier 2 inside the lock: a concurrent deploy may have generated +
+            # persisted the password while we were blocked acquiring the lock.
+            $certPassword = Read-PersistedCertPassword -Environment $Environment
+            if (-not [string]::IsNullOrEmpty($certPassword)) {
+                $certSource = "persisted store (adopted from a concurrent first deploy, $(Get-CertStoreKey $Environment))"
+            }
+            else {
+                $certExists = Test-SigningCertExists -Server $server -GlobalDb $globalDb `
+                    -AuthMode $authMode -SqlUser $sqlUser -SqlPassword $sqlPassword
 
-        # $certExists -eq $false → greenfield instance, safe to mint a fresh password.
-        $certPassword = New-CertPassword
-        $savedTo = Save-PersistedCertPassword -Environment $Environment -Password $certPassword
-        $certSource = "auto-generated (first run) + persisted"
-        Write-Host ''
-        Write-Host "No cert password found and RoboticoOpsSigning is absent on the target — generated a new one." -ForegroundColor Yellow
-        Write-Host "  Persisted to : $savedTo" -ForegroundColor Yellow
-        Write-Host "  Password     : $certPassword" -ForegroundColor Yellow
-        Write-Host "  ^ Shown ONCE. Also save it in your password manager: up/0011 is immutable, so this" -ForegroundColor Yellow
-        Write-Host "    is the only key to the RoboticoOpsSigning private key. A lost password means" -ForegroundColor Yellow
-        Write-Host "    dropping + recreating the certificate via a new up/ script." -ForegroundColor Yellow
-        Write-Host ''
+                if ($certExists -eq $true) {
+                    throw ("Certificate RoboticoOpsSigning already exists on $server / $globalDb, but no " +
+                           "password is known (not in `$env:GRATE_CERT_PASSWORD nor the persisted store " +
+                           "'$(Get-CertStoreKey $Environment)'). Refusing to auto-generate: a new password " +
+                           "would NOT match the immutable private key from up/0011 and every re-sign would " +
+                           "fail. Obtain the original password (password manager / ~/.claude-secrets.md) and " +
+                           "set it via `$env:GRATE_CERT_PASSWORD or the persisted store.")
+                }
+                if ($null -eq $certExists) {
+                    throw ("Cannot verify whether RoboticoOpsSigning already exists on $server / $globalDb " +
+                           "(sqlcmd missing or server unreachable). Refusing to auto-generate a cert password " +
+                           "blind — set `$env:GRATE_CERT_PASSWORD explicitly, or run where sqlcmd can reach the " +
+                           "target so the safety check can confirm the certificate is absent.")
+                }
+
+                # $certExists -eq $false → greenfield instance, safe to mint a fresh password.
+                $certPassword = New-CertPassword
+                $savedTo = Save-PersistedCertPassword -Environment $Environment -Password $certPassword
+                $certSource = "auto-generated (first run) + persisted"
+                Write-Host ''
+                Write-Host "No cert password found and RoboticoOpsSigning is absent on the target — generated a new one." -ForegroundColor Yellow
+                Write-Host "  Persisted to : $savedTo" -ForegroundColor Yellow
+                Write-Host "  Password     : $certPassword" -ForegroundColor Yellow
+                Write-Host "  ^ Shown ONCE. Also save it in your password manager: up/0011 is immutable, so this" -ForegroundColor Yellow
+                Write-Host "    is the only key to the RoboticoOpsSigning private key. A lost password means" -ForegroundColor Yellow
+                Write-Host "    dropping + recreating the certificate via a new up/ script." -ForegroundColor Yellow
+                Write-Host ''
+            }
+        }
+        finally {
+            $lock.Dispose()
+        }
     }
 
     # The token is substituted TEXTUALLY into a single-quoted SQL literal in 0011/900 —

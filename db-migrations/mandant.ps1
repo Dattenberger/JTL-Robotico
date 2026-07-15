@@ -92,11 +92,13 @@ $sqlcmdPath = Get-RoboticoSqlcmd
 $baseArgs = (Get-SqlcmdAuthArgs -Target $target) + @('-d', $target.GlobalDb, '-b')
 
 function Invoke-OpsSql([string] $Query, [switch] $NoHeader) {
-    $a = $baseArgs + @('-Q', $Query)
+    $a = $baseArgs
     if ($NoHeader) { $a += @('-h', '-1', '-W') }
-    $out = & $sqlcmdPath @a 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "sqlcmd failed:`n$out" }
-    return $out
+    # Query piped via stdin (not -Q) + password via SQLCMDPASSWORD (Invoke-RoboticoSqlcmd),
+    # so a shop license inside the EXEC never lands on the process command line (Sec-I2).
+    $r = Invoke-RoboticoSqlcmd -SqlcmdPath $sqlcmdPath -Arguments $a -Password $target.SqlPassword -StdinText $Query
+    if ($r.Exit -ne 0) { throw "sqlcmd failed:`n$($r.Out)" }
+    return $r.Raw
 }
 
 # T-SQL single-quote escape for a literal value.

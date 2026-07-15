@@ -86,20 +86,21 @@ function Fail([string] $msg) { $script:failures += $msg; Write-Host "  FAIL: $ms
 function Pass([string] $msg) { Write-Host "  PASS: $msg" -ForegroundColor Green }
 
 # Run an -i file against RoboticoOps; -b makes sqlcmd exit non-zero on a RAISERROR sev>=11.
+# The SQL-auth password (E2E) goes via SQLCMDPASSWORD, never `-P` on argv (Sec-I2).
 function Invoke-SqlFile([string] $File, [string] $Label) {
     Write-Host "==> $Label" -ForegroundColor Cyan
     $a = $authArgs + @('-d', $target.GlobalDb, '-C', '-b', '-i', $File)
-    $out = & $sqlcmdPath @a 2>&1
-    $out | ForEach-Object { Write-Host "     $_" }
-    if ($LASTEXITCODE -ne 0) { Fail "$Label reported failures (exit $LASTEXITCODE)." } else { Pass $Label }
+    $r = Invoke-RoboticoSqlcmd -SqlcmdPath $sqlcmdPath -Arguments $a -Password $target.SqlPassword
+    $r.Raw | ForEach-Object { Write-Host "     $_" }
+    if ($r.Exit -ne 0) { Fail "$Label reported failures (exit $($r.Exit))." } else { Pass $Label }
 }
 
 # Run a -Q query against a chosen DB; returns the raw output, throws on connect error.
 function Invoke-Query([string] $Query, [string] $Db, [string[]] $ExtraArgs) {
     $a = $authArgs + @('-d', $Db, '-C', '-b', '-h', '-1', '-W', '-Q', $Query)
     if ($ExtraArgs) { $a += $ExtraArgs }
-    $out = & $sqlcmdPath @a 2>&1
-    return [pscustomobject]@{ Exit = $LASTEXITCODE; Out = ($out -join "`n") }
+    $r = Invoke-RoboticoSqlcmd -SqlcmdPath $sqlcmdPath -Arguments $a -Password $target.SqlPassword
+    return [pscustomobject]@{ Exit = $r.Exit; Out = $r.Out }
 }
 
 Write-Host ""
@@ -124,9 +125,11 @@ if ($RightsTestLogin) {
         Fail "RightsTestLogin given but no password in env '$RightsTestPasswordEnv' — cannot run the negative test."
     }
     else {
-        $a = @('-S', $target.Server, '-U', $RightsTestLogin, '-P', $pw, '-d', $target.GlobalDb, '-C', '-b', '-h', '-1', '-W',
+        # Password via SQLCMDPASSWORD (Invoke-RoboticoSqlcmd), never `-P` on argv (Sec-I2).
+        $a = @('-S', $target.Server, '-U', $RightsTestLogin, '-d', $target.GlobalDb, '-C', '-b', '-h', '-1', '-W',
                '-Q', 'SET NOCOUNT ON; SELECT TOP 1 cShopLicense FROM ops.tMandant;')
-        $out = (& $sqlcmdPath @a 2>&1) -join "`n"
+        $rt = Invoke-RoboticoSqlcmd -SqlcmdPath $sqlcmdPath -Arguments $a -Password $pw
+        $out = $rt.Out
         if ($out -match 'permission was denied|SELECT permission') { Pass "column DENY enforced ($RightsTestLogin cannot read cShopLicense)" }
         else { Fail "expected a SELECT-permission-denied error, got: $out" }
     }

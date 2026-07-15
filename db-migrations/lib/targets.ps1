@@ -78,12 +78,54 @@ function Get-RoboticoSqlcmd {
 
 # Base sqlcmd argument array (server + auth) for a resolved target. Callers append
 # -d / -Q / -i etc. Uses the ODBC-build sqlcmd path passed in (Kerberos needs mssql-tools18).
+#
+# SECRETS (Sec-I2): the SQL-auth USERNAME (-U) is placed on argv, but the PASSWORD is
+# deliberately NOT. It would otherwise be world-readable via `ps` / /proc/<pid>/cmdline for
+# the lifetime of the sqlcmd process. Hand the password to Invoke-RoboticoSqlcmd instead — it
+# exports it to the SQLCMDPASSWORD environment variable only for the duration of the call.
 function Get-SqlcmdAuthArgs {
     [CmdletBinding()]
     param([Parameter(Mandatory)] $Target)
 
     $a = @('-S', $Target.Server, '-C')
-    if ($Target.AuthMode -eq 'sql') { $a += @('-U', $Target.SqlUser, '-P', $Target.SqlPassword) }
+    if ($Target.AuthMode -eq 'sql') { $a += @('-U', $Target.SqlUser) }
     else { $a += '-E' }
     return $a
+}
+
+# Single choke point for running sqlcmd WITHOUT leaking secrets onto the process command
+# line (Sec-I2). Two hazards are handled here so no caller has to reinvent them:
+#   * Password  — exported to the SQLCMDPASSWORD environment variable for the duration of the
+#                 call only (restored/removed in finally), instead of a `-P <plaintext>` argv
+#                 entry that `ps` / /proc exposes to any local user.
+#   * StdinText — T-SQL that itself carries a secret (e.g. a shop license inside an EXEC) is
+#                 piped via stdin so it never reaches argv (-Q) or disk (-i). Callers using
+#                 -StdinText must NOT also pass -Q/-i in $Arguments (sqlcmd would ignore stdin).
+# Returns Exit (sqlcmd exit code) / Out (joined string) / Raw (line array).
+function Invoke-RoboticoSqlcmd {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]   $SqlcmdPath,
+        [Parameter(Mandatory)] [string[]] $Arguments,
+        [string] $Password,
+        [string] $StdinText
+    )
+
+    $hadPw  = Test-Path Env:SQLCMDPASSWORD
+    $prevPw = if ($hadPw) { $env:SQLCMDPASSWORD } else { $null }
+    try {
+        if (-not [string]::IsNullOrEmpty($Password)) { $env:SQLCMDPASSWORD = $Password }
+        if ($PSBoundParameters.ContainsKey('StdinText')) {
+            $raw = $StdinText | & $SqlcmdPath @Arguments 2>&1
+        }
+        else {
+            $raw = & $SqlcmdPath @Arguments 2>&1
+        }
+        $code = $LASTEXITCODE
+        return [pscustomobject]@{ Exit = $code; Out = ($raw -join "`n"); Raw = $raw }
+    }
+    finally {
+        if ($hadPw) { $env:SQLCMDPASSWORD = $prevPw }
+        else { Remove-Item Env:SQLCMDPASSWORD -ErrorAction SilentlyContinue }
+    }
 }

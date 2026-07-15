@@ -57,11 +57,11 @@ Set-StrictMode -Version Latest
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # --- sqlcmd (ODBC build for Kerberos -E against the source) ------------------
-$sqlcmd = @('/opt/mssql-tools18/bin/sqlcmd', '/opt/mssql-tools/bin/sqlcmd', 'sqlcmd') |
-    ForEach-Object { Get-Command $_ -ErrorAction SilentlyContinue } |
-    Select-Object -First 1
-if (-not $sqlcmd) { throw 'No sqlcmd found (need /opt/mssql-tools18/bin/sqlcmd for Kerberos -E).' }
-$sqlcmdPath = $sqlcmd.Source
+# Shared resolver + secret-safe invoker from lib/targets.ps1 (SSoT — no local copy that can
+# drift in candidate order). Get-RoboticoSqlcmd prefers the ODBC build the Kerberos -E read
+# below needs; Invoke-RoboticoSqlcmd keeps the sa password off argv (Sec-I2).
+. (Join-Path $scriptRoot '..' '..' 'lib' 'targets.ps1')
+$sqlcmdPath = Get-RoboticoSqlcmd
 
 # --- target sa password -----------------------------------------------------
 $saPassword = [Environment]::GetEnvironmentVariable($SaPasswordEnv)
@@ -114,9 +114,13 @@ WHERE sp.type IN ('S','U','G')
   AND sp.sid NOT IN (0x010100000000000512000000, 0x010100000000000513000000, 0x010100000000000514000000)
 ORDER BY sp.name;
 "@
-$rows = & $sqlcmdPath -S $SourceServer -E -C -l 30 -h -1 -W -b -Q $q 2>&1
-if ($LASTEXITCODE -ne 0) { throw "Failed to read logins from ${SourceServer}: $rows" }
-$rows = @($rows | Where-Object { $_ -match '\|' })
+# -y 0 / -Y 0 (B5): SQLCMDMAXVARTYPEWIDTH / MAXFIXEDTYPEWIDTH = unlimited. The password
+# hash and SID are CONVERT(varchar(max), …, 1) hex strings that exceed sqlcmd's default
+# 256-char width — a truncated hash would recreate the login WITH A GARBLED PASSWORD.
+$srcRead = Invoke-RoboticoSqlcmd -SqlcmdPath $sqlcmdPath `
+    -Arguments @('-S', $SourceServer, '-E', '-C', '-l', '30', '-h', '-1', '-W', '-b', '-y', '0', '-Y', '0', '-Q', $q)
+if ($srcRead.Exit -ne 0) { throw "Failed to read logins from ${SourceServer}: $($srcRead.Out)" }
+$rows = @($srcRead.Raw | Where-Object { $_ -match '\|' })
 Write-Host "  $($rows.Count) eligible login(s) found." -ForegroundColor Cyan
 
 # --- 2. build CREATE LOGIN statements ---------------------------------------
@@ -182,19 +186,25 @@ if ($WhatIf) {
 }
 
 # --- 3. apply to the container via STDIN (no secrets on disk / argv) ---------
+# STDIN carries the hashes/passwords; the sa password goes via SQLCMDPASSWORD, never `-P`
+# on argv (Sec-I2). Both are handled by Invoke-RoboticoSqlcmd.
 Write-Host ''
 Write-Host "Applying to $TargetServer ..." -ForegroundColor Cyan
-$applyOut = $batch.ToString() | & $sqlcmdPath -S $TargetServer -U sa -P $saPassword -C -b 2>&1
-if ($LASTEXITCODE -ne 0) { throw "Applying logins failed: $applyOut" }
-$applyOut | Where-Object { $_ -match 'created:|skipped' } | ForEach-Object { Write-Host "  $_" }
+$apply = Invoke-RoboticoSqlcmd -SqlcmdPath $sqlcmdPath `
+    -Arguments @('-S', $TargetServer, '-U', 'sa', '-C', '-b') -Password $saPassword -StdinText $batch.ToString()
+if ($apply.Exit -ne 0) { throw "Applying logins failed: $($apply.Out)" }
+$apply.Raw | Where-Object { $_ -match 'created:|skipped' } | ForEach-Object { Write-Host "  $_" }
 
 # --- 4. verify SIDs on 3 samples --------------------------------------------
 Write-Host ''
 Write-Host 'Verifying SIDs (source vs container) on up to 3 samples:' -ForegroundColor Cyan
 foreach ($s in ($summary | Select-Object -First 3)) {
-    $tgtSid = & $sqlcmdPath -S $TargetServer -U sa -P $saPassword -C -h -1 -W -b -Q `
-        "SET NOCOUNT ON; SELECT CONVERT(varchar(max), sid, 1) FROM sys.server_principals WHERE name = N'$($s.Target.Replace("'","''"))';" 2>&1
-    $tgtSid = ($tgtSid | Where-Object { $_ -match '^0x' } | Select-Object -First 1)
+    # -y 0 / -Y 0 (B5): the SID hex is CONVERT(varchar(max), …, 1); do not truncate at 256.
+    $vr = Invoke-RoboticoSqlcmd -SqlcmdPath $sqlcmdPath `
+        -Arguments @('-S', $TargetServer, '-U', 'sa', '-C', '-h', '-1', '-W', '-b', '-y', '0', '-Y', '0', '-Q',
+            "SET NOCOUNT ON; SELECT CONVERT(varchar(max), sid, 1) FROM sys.server_principals WHERE name = N'$($s.Target.Replace("'","''"))';") `
+        -Password $saPassword
+    $tgtSid = ($vr.Raw | Where-Object { $_ -match '^0x' } | Select-Object -First 1)
     $ok = ($tgtSid -eq $s.Sid)
     Write-Host ("  {0,-45} {1}" -f $s.Source, $(if ($ok) { "MATCH ($tgtSid)" } else { "MISMATCH src=$($s.Sid) tgt=$tgtSid" })) `
         -ForegroundColor $(if ($ok) { 'Green' } else { 'Red' })
