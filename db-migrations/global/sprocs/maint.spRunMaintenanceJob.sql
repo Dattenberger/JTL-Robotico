@@ -71,6 +71,9 @@ BEGIN
         ELSE
             -- bUpdateStatistics = 0 is the deliberate exception: the parameter is
             -- omitted entirely (Ola default = no statistics maintenance).
+            -- NB (L-B1-3): a stats-off IndexOptimize has NO guaranteed per-run CommandLog
+            -- heartbeat (no UPDATE_STATISTICS rows; ALTER_INDEX only above the reorg
+            -- threshold) — revisit maint.spCheckMaintenanceLiveness before enabling such a row.
             EXECUTE RoboticoOps.dbo.IndexOptimize
                 @Databases = @cDatabases,
                 @FragmentationMedium = 'INDEX_REORGANIZE',

@@ -42,7 +42,7 @@ BEGIN
          @name = N'RoboticoOps-Maint',
          @enabled = 1,
          @email_address = N'lukas@dattenberger.com';
-    PRINT '260: created SQL-Agent operator [RoboticoOps-Maint].';
+    PRINT 'Created SQL-Agent operator [RoboticoOps-Maint].';
 END
 GO
 
@@ -53,7 +53,7 @@ GO
 -- same philosophy as the operator-EXISTS guard in the sync proc.
 DECLARE @cProfile sysname = N'Standard SMTP';
 IF NOT EXISTS (SELECT 1 FROM msdb.dbo.sysmail_profile WHERE name = @cProfile)
-    PRINT '! 260: Database-Mail profile [Standard SMTP] does not exist on this instance — agent mail profile NOT set. Maintenance-failure mails stay silent until Database Mail is configured.';
+    PRINT '! Database-Mail profile [Standard SMTP] does not exist on this instance — agent mail profile NOT set. Maintenance-failure mails stay silent until Database Mail is configured.';
 ELSE
 BEGIN
     DECLARE @cCurrentProfile nvarchar(256);
@@ -75,7 +75,7 @@ BEGIN
              N'SOFTWARE\Microsoft\MSSQLServer\SQLServerAgent',
              N'DatabaseMailProfile',
              N'REG_SZ', @cProfile;
-        PRINT '! 260: agent mail profile set to [Standard SMTP] — takes effect only after a SQL-AGENT RESTART (runbook step, never a deploy side effect).';
+        PRINT '! Agent mail profile set to [Standard SMTP] — takes effect only after a SQL-AGENT RESTART (runbook step, never a deploy side effect).';
     END
     -- else: already set — never overwrite an admin-chosen profile.
 END
@@ -87,5 +87,5 @@ GO
 IF OBJECT_ID(N'maint.spEnsureMaintenanceJobs', N'P') IS NOT NULL
     EXEC maint.spEnsureMaintenanceJobs;
 ELSE
-    PRINT '! 260: maint.spEnsureMaintenanceJobs missing — maintenance sync skipped.';
+    PRINT '! maint.spEnsureMaintenanceJobs missing — maintenance sync skipped.';
 GO

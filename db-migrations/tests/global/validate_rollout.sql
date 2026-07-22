@@ -136,6 +136,27 @@ BEGIN
                           WHERE cKey = N'MaintenanceSchedulesEnabled' AND cValue = N'0')
              THEN 0 ELSE 1 END;
 
+    -- Registry completeness: the six canonical seed rows (plan §3.2 = SSoT, mirrored
+    -- from the spApplyMaintenance MERGE) must ALL be present. The operability loop
+    -- below drives FROM ops.tMaintenanceJob, so an empty/partial registry would leave
+    -- it with nothing to iterate and report OK — assert the expected set here first,
+    -- analog to the reset-step block above (drives from a named `expected` CTE).
+    ;WITH expected (cJobKey, cDisplayName) AS (
+        SELECT v.cJobKey, v.cDisplayName FROM (VALUES
+            (N'checkdb',               N'RoboticoOps - Maint - checkdb'),
+            (N'index-optimize',        N'RoboticoOps - Maint - index-optimize'),
+            (N'cleanup-commandlog',    N'RoboticoOps - Maint - cleanup-commandlog'),
+            (N'cleanup-backuphistory', N'RoboticoOps - Maint - cleanup-backuphistory'),
+            (N'cleanup-jobhistory',    N'RoboticoOps - Maint - cleanup-jobhistory'),
+            (N'backup-watchdog',       N'RoboticoOps - Maint - backup-watchdog')
+        ) v(cJobKey, cDisplayName)
+    )
+    INSERT INTO @problems (Check_)
+    SELECT N'MAINT REGISTRY: ' + e.cDisplayName + N' (key ' + e.cJobKey + N') missing from ops.tMaintenanceJob (spApplyMaintenance MERGE never ran?)'
+    FROM expected e
+    LEFT JOIN ops.tMaintenanceJob m ON m.cJobKey = e.cJobKey
+    WHERE m.cJobKey IS NULL;
+
     INSERT INTO @problems (Check_)
     SELECT N'MAINT JOB: ' + m.cDisplayName + N' '
          + CASE

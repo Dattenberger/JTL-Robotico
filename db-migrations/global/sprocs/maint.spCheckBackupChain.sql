@@ -58,7 +58,11 @@ BEGIN
         THROW 51100, @cMsgTargets, 1;
     END
 
-    -- Freshness (local time base, D32; >= threshold alarms, D27/AC5).
+    -- Freshness (local time base, D32; age >= threshold alarms, boundary included, D27/AC5).
+    -- Age test is an ELAPSED-time cutoff (dLast <= now - threshold), NOT DATEDIFF(HOUR, ...):
+    -- DATEDIFF(HOUR) counts clock-hour boundaries crossed, not elapsed hours, so a log backup
+    -- only minutes old but in the previous clock-hour would score 1 >= 1 and false-alarm on the
+    -- hourly cadence (nLogMaxHours=1). Mirrors the DATEADD cutoff in spCheckMaintenanceLiveness.
     DECLARE @dNow datetime2(0) = SYSDATETIME();
     DECLARE @tProblem TABLE (cProblem nvarchar(300) NOT NULL);
 
@@ -74,7 +78,7 @@ BEGIN
                    AND bs.type = 'D'
                    AND bs.is_copy_only = 0) f
     WHERE f.dLastFull IS NULL
-       OR DATEDIFF(HOUR, f.dLastFull, @dNow) >= @FullMaxHours;
+       OR f.dLastFull <= DATEADD(HOUR, -@FullMaxHours, @dNow);
 
     -- Log: only log-based recovery models (<> SIMPLE covers FULL + BULK_LOGGED, D27).
     INSERT INTO @tProblem (cProblem)
@@ -89,7 +93,7 @@ BEGIN
                    AND bs.type = 'L') l
     WHERE d.recovery_model_desc <> N'SIMPLE'
       AND (l.dLastLog IS NULL
-           OR DATEDIFF(HOUR, l.dLastLog, @dNow) >= @LogMaxHours);
+           OR l.dLastLog <= DATEADD(HOUR, -@LogMaxHours, @dNow));
 
     IF EXISTS (SELECT 1 FROM @tProblem)
     BEGIN

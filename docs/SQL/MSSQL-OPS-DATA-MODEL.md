@@ -123,7 +123,7 @@ job steps are constant, values travel as real proc parameters). Defined in
 | `cFrequency` | `nvarchar(10)`, NOT NULL | `daily` \| `weekly` \| `hourly` (CHECK). Typed schedule instead of a cron string; the sync maps 1:1 onto `msdb.dbo.sysschedules` (D31 mapping table in `spEnsureMaintenanceJobs`). `hourly` = every hour from the `tStartTime` anchor (D35). |
 | `nWeekdayMask` | `tinyint`, NULL | `weekly` only (CHECK `CK_…_Schedule`): bitmask 1=Sun … 64=Sat, OR-able (Sun+Wed = 9); identical to `sysschedules.freq_interval`. |
 | `tStartTime` | `time(0)`, NOT NULL | **Local server time**; for `hourly` the day anchor of the first run (watchdog: 00:00 → around the clock). `t` prefix = `time` column (micro-convention, see NAMING-CONVENTIONS §9). |
-| `bUpdateStatistics` | `bit`, NULL | `IndexOptimize` only, and **mandatory there** (D33 — NULL would mean "sync decides", which reproduced F8): `1` → `@UpdateStatistics='ALL'`, `0` → parameter omitted (deliberate exception). |
+| `bUpdateStatistics` | `bit`, NULL | `IndexOptimize` only, and **mandatory there** (D33 — NULL would mean "sync decides", which reproduced F8): `1` → `@UpdateStatistics='ALL'`, `0` → parameter omitted (deliberate exception). Liveness (D36) depends on this: `1` guarantees a per-run `UPDATE_STATISTICS` `CommandLog` heartbeat, so `spCheckMaintenanceLiveness` can see the run; `0` removes that heartbeat (and reintroduces F8) — a stats-off `IndexOptimize` row is a liveness blind edge, revisit `spCheckMaintenanceLiveness` before adding one (L-B1-3). |
 | `cCleanupTarget` | `nvarchar(20)`, NULL | `Cleanup` only (mandatory there): `CommandLog` \| `BackupHistory` \| `JobHistory` (CHECK). |
 | `nRetentionDays` | `int`, NULL, > 0 | `Cleanup` only (mandatory there): retention in days. Cutoff is computed **at run time** by the dispatcher. |
 | `nFullMaxHours` | `int`, NULL, > 0 | `BackupWatchdog` only (mandatory there): max age of the newest non-copy-only FULL backup. |
@@ -132,7 +132,7 @@ job steps are constant, values travel as real proc parameters). Defined in
 | `bNotifyOnFail` | `bit`, NOT NULL, default `1` | `1` → the job is wired to email operator `RoboticoOps-Maint` on failure (guarded: only when the operator exists in msdb; `permissions/260` converges the first deploy). |
 | `cNotes` | `nvarchar(400)`, NULL | Short description; becomes the agent job description. |
 | `dCreated` | `datetime2(0)`, NOT NULL, default UTC now | Audit: row creation (UTC). |
-| `dModified` | `datetime2(0)`, NOT NULL, default UTC now | Audit: last real change (UTC) — the value-guarded MERGE leaves it untouched on no-op deploys (AC7 audit signal). |
+| `dModified` | `datetime2(0)`, NOT NULL, default UTC now | Audit: last real change (UTC) — the value-guarded MERGE leaves it untouched on no-op deploys (AC7 audit signal). Also load-bearing: `spCheckMaintenanceLiveness` uses it as the first-run grace anchor (a row enabled less than one schedule window ago is not yet expected to have run, L-B1-2), so the MERGE must keep bumping it on the `bEnabled 0→1` flip. |
 
 The CHECK `CK_tMaintenanceJob_OperationKnobs` makes the registry
 self-validating: every operation must carry its mandatory knobs and leave
