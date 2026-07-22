@@ -1,0 +1,65 @@
+{
+  "plan": "docs/plans/2026-07-21 - mssql-wartung-ola/mssql-wartung-ola.md",
+  "blocks": [
+    { "id": "B1", "name": "Wartungssuite (Ola in RoboticoOps) — B1–B5 komplett", "chunk_ids": ["C1"] }
+  ],
+  "chunks": [
+    {
+      "id": "C1",
+      "name": "SQL-Server-Wartung als Code — Vendor + Registry + Sync/Dispatch/Watchdog + Doku + test1-Deploy",
+      "plan_sections": [
+        "§2 Acceptance Criteria (L36-56)",
+        "§3.1 B1: Vendor + Schema + Registry — up/0022, up/0023 (L62-163)",
+        "§3.2 B2: Sync-Prozeduren anytime — spEnsureMaintenanceJobs, spRunMaintenanceJob, spCheckBackupChain, spCheckMaintenanceLiveness, Soll-Registry-Tabelle (L165-226)",
+        "§3.3 B3: Reconcile + Ensure + Alerting — runAfter/spApplyMaintenance, permissions/260 (L228-237)",
+        "§3.4 B4: Doku-Verträge — DATA-MODEL, NAMING-CONVENTIONS, ARCHITECTURE (L239-249)",
+        "§3.5 B5: test1-Deploy + Validierungs-Prüfliste (L251-268)",
+        "§4 Directory Layout + Datei-Delta (L294-320)"
+      ],
+      "files_expected": [
+        "db-migrations/global/up/0022_maintenance_ola_vendor.sql",
+        "db-migrations/global/up/0023_maintenance_registry.sql",
+        "db-migrations/global/sprocs/maint.spEnsureMaintenanceJobs.sql",
+        "db-migrations/global/sprocs/maint.spRunMaintenanceJob.sql",
+        "db-migrations/global/sprocs/maint.spCheckBackupChain.sql",
+        "db-migrations/global/sprocs/maint.spCheckMaintenanceLiveness.sql",
+        "db-migrations/global/runAfterOtherAnyTimeScripts/maint.spApplyMaintenance.sql",
+        "db-migrations/global/permissions/260_maintenance_operator.sql",
+        "db-migrations/tests/global/validate_structure.sql",
+        "db-migrations/tests/global/validate_rollout.sql",
+        "db-migrations/README.md",
+        "docs/SQL/MSSQL-OPS-DATA-MODEL.md",
+        "docs/SQL/NAMING-CONVENTIONS.md",
+        "docs/SQL/MSSQL-OPS-ARCHITECTURE.md",
+        "docs/runbooks/rollout-mssql-ops.md"
+      ],
+      "depends_on": [],
+      "candidates": {
+        "knowledge_skills": ["knowledge-jtl-sql", "knowledge-sql"],
+        "modules": [
+          "db-migrations/global/up/0021_reset_step_registry.sql",
+          "db-migrations/global/up/0002_ops_schema_tables.sql",
+          "db-migrations/global/runAfterOtherAnyTimeScripts/reset.spEnsureAgentJob.sql",
+          "db-migrations/global/permissions/200_ensure_agent_job.sql",
+          "db-migrations/global/permissions/250_jobstartuser_mapping.sql",
+          "db-migrations/global/sprocs/ (reset.* Hungarian-Muster, CREATE OR ALTER)",
+          "db-migrations/README.md §4 (Lint-Regeln a-l, THROW-Allokation §4-(k))",
+          "docs/SQL/MSSQL-OPS-DATA-MODEL.md (ops.tResetStep-Sektion als Vorlage)"
+        ]
+      },
+      "integration_targets": [
+        "db-migrations/tests/global/validate_structure.sql",
+        "db-migrations/tests/global/validate_rollout.sql",
+        "db-migrations/README.md",
+        "docs/SQL/MSSQL-OPS-DATA-MODEL.md",
+        "docs/SQL/NAMING-CONVENTIONS.md",
+        "docs/SQL/MSSQL-OPS-ARCHITECTURE.md",
+        "docs/runbooks/rollout-mssql-ops.md"
+      ],
+      "context_notes": "Gesamter Umsetzungs-Scope in EINEM Chunk (harte Nutzer-Vorgabe — keine Analyse-Splittung). Scope = Plan-Bausteine B1-B5 inkl. test1-Deploy (deploy.ps1 -Scope global -Environment TEST) + B5-Prüfliste. AUSSERHALB DES SCOPES: §3.6 B6 (Prod-Cutover vm-sql2) ist human-gated und wird NIE von Agents ausgeführt; vm-sql2 ist strikt read-only. Die 2 plan-scoped ADRs (adrs/) tragen die Architektur — ADR-Promotion erst bei Plan-Archivierung, nicht in diesem Run. Kernmuster: reset.spEnsureAgentJob (Sync), up/0002 (Schema+AUTHORIZATION dbo), up/0021 (Registry-DDL), permissions/200 (unbedingter Ensure-Self-Heal), permissions/250 (Präfix-Ordnung vor 900). Kritische Entscheidungen: D28 (konstanter Dispatch-Step + Runtime-Dispatcher, kein dyn. SQL in Job-Steps), D30 (NULL-sicher IS DISTINCT FROM im MERGE + WHEN NOT MATCHED BY SOURCE DELETE), D31 (kanonische Normalform-Vergleich Registry↔msdb), D32 (lokale SYSDATETIME()-Zeitbasis im Watchdog, Ziel-Validierung THROW 51100), D34 (Instanz-Schalter ops.tConfig('MaintenanceSchedulesEnabled')='0' auf test1 → Jobs disabled aber existent), D36 (spCheckMaintenanceLiveness). Same-Commit-Verträge: validate_structure (5 maint.*-Procs + ops.tMaintenanceJob), README §4-(k) THROW-Allokation 51100/51105/51110/51120 + Guidance 'Reset ab 51130', DATA-MODEL-Vertrags-Box (0023), CLAUDE.md ops-Tabellen-Vertrag. Inline-Anchor-Pflicht (Header + @see auf Plan §3.x + tragende ADR) für jede neue Ebene-B-Datei (README §3). Lint-Vorab-Check der vendorten Ola-Dateien VOR erstem Apply (up/ ist danach immutable); bekannte bewusste Byte-Brüche: OBJECT_ID-Wrapper um CommandLog CREATE TABLE (FT-13).",
+      "agent_recommendation": "fable-low",
+      "agent_rationale": "Nutzer-Vorgabe",
+      "agent": "fable-low"
+    }
+  ]
+}
