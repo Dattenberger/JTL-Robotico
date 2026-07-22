@@ -4,7 +4,7 @@ author: Lukas + Claude Code
 status: Accepted
 context: How the MSSQL ops infrastructure fits together — the two migration chains, the RoboticoOps admin DB, the server-side test-mandant reset, the excel_ekl boundary, and the standing operating rules.
 related-plan: ../plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md
-related-adrs: adr-grate-migration-runner, adr-two-chain-migration-paths, adr-module-signing-reset, adr-reset-step-registry (plan-scoped — pending promotion)
+related-adrs: adr-grate-migration-runner, adr-two-chain-migration-paths, adr-module-signing-reset, adr-reset-step-registry, adr-maintenance-as-code-roboticoops (ADR-A), adr-backups-cbb-retained (ADR-B) (all plan-scoped — pending promotion)
 ---
 
 # MSSQL Ops Architecture
@@ -345,6 +345,10 @@ interactive Y/N confirmation and lists the exact target DBs first.
   [`adr-two-chain-migration-paths`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-two-chain-migration-paths.md),
   [`adr-module-signing-reset`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md),
   [`adr-reset-step-registry`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md)
+- **Maintenance suite (plan + ADR-A/ADR-B, plan-scoped — pending promotion):**
+  [`mssql-wartung-ola.md`](../plans/2026-07-21%20-%20mssql-wartung-ola/mssql-wartung-ola.md),
+  [`adr-maintenance-as-code-roboticoops`](../plans/2026-07-21%20-%20mssql-wartung-ola/adrs/adr-maintenance-as-code-roboticoops.md) (ADR-A — Ola vendored + declarative registry),
+  [`adr-backups-cbb-retained`](../plans/2026-07-21%20-%20mssql-wartung-ola/adrs/adr-backups-cbb-retained.md) (ADR-B — backups stay with CBB, chain monitored)
 - **Migration contract:** [`db-migrations/README.md`](../../db-migrations/README.md)
 - **Naming / ownership:** [`NAMING-CONVENTIONS.md`](NAMING-CONVENTIONS.md)
 - **Custom-action prerequisite:** [`JTL-CUSTOM-WORKFLOWS.md`](JTL-CUSTOM-WORKFLOWS.md)
