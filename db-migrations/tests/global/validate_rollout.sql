@@ -119,6 +119,43 @@ BEGIN
         INSERT INTO @problems (Check_) VALUES (N'MASTER LOGIN: jobstartuser lacks DENY CONNECT SQL');
 END
 
+-- --- maintenance operability (AC12, D23 — plan 2026-07-21 - mssql-wartung-ola) ----
+-- Analog to the reset-job block above: for EVERY ops.tMaintenanceJob row the matching
+-- 'RoboticoOps - Maint - ' agent job exists (D34: the sync creates bEnabled=0 rows as
+-- disabled jobs too); the job-enabled state must equal the D34 equation
+--   bEnabled = 1 AND ops.tConfig('MaintenanceSchedulesEnabled') <> '0'
+-- (the assertion checks the EQUATION, not blanket "enabled" — green on test1
+-- (switch '0') and on prod (no entry) alike); every bNotifyOnFail=1 job carries the
+-- operator wiring; and the operator RoboticoOps-Maint exists.
+IF OBJECT_ID(N'ops.tMaintenanceJob', N'U') IS NULL
+    INSERT INTO @problems (Check_) VALUES (N'MAINT REGISTRY: ops.tMaintenanceJob missing (up/0023 never applied)');
+ELSE
+BEGIN
+    DECLARE @bMaintSchedulesEnabled bit =
+        CASE WHEN EXISTS (SELECT 1 FROM ops.tConfig
+                          WHERE cKey = N'MaintenanceSchedulesEnabled' AND cValue = N'0')
+             THEN 0 ELSE 1 END;
+
+    INSERT INTO @problems (Check_)
+    SELECT N'MAINT JOB: ' + m.cDisplayName + N' '
+         + CASE
+             WHEN sj.job_id IS NULL THEN N'not found in msdb (run maint.spEnsureMaintenanceJobs)'
+             WHEN sj.enabled <> (CASE WHEN m.bEnabled = 1 AND @bMaintSchedulesEnabled = 1 THEN 1 ELSE 0 END)
+                 THEN N'enabled state (' + CONVERT(nvarchar(1), sj.enabled) + N') does not match the D34 equation (bEnabled AND MaintenanceSchedulesEnabled)'
+             WHEN m.bNotifyOnFail = 1 AND (sj.notify_level_email <> 2 OR op.name IS DISTINCT FROM N'RoboticoOps-Maint')
+                 THEN N'lacks operator wiring (bNotifyOnFail=1 but notify_level/operator wrong — rerun the deploy so 260 converges)'
+             ELSE N'?' END
+    FROM ops.tMaintenanceJob m
+    LEFT JOIN msdb.dbo.sysjobs sj ON sj.name = m.cDisplayName
+    LEFT JOIN msdb.dbo.sysoperators op ON op.id = sj.notify_email_operator_id
+    WHERE sj.job_id IS NULL
+       OR sj.enabled <> (CASE WHEN m.bEnabled = 1 AND @bMaintSchedulesEnabled = 1 THEN 1 ELSE 0 END)
+       OR (m.bNotifyOnFail = 1 AND (sj.notify_level_email <> 2 OR op.name IS DISTINCT FROM N'RoboticoOps-Maint'));
+
+    IF NOT EXISTS (SELECT 1 FROM msdb.dbo.sysoperators WHERE name = N'RoboticoOps-Maint')
+        INSERT INTO @problems (Check_) VALUES (N'MAINT OPERATOR: RoboticoOps-Maint missing in msdb (permissions/260 never ran?)');
+END
+
 -- --- report ----------------------------------------------------------------------
 IF EXISTS (SELECT 1 FROM @problems)
 BEGIN
@@ -127,5 +164,5 @@ BEGIN
     RAISERROR('validate_rollout: %d problem(s) found.', 16, 1, @n);
 END
 ELSE
-    PRINT 'validate_rollout: OK — journals populated, reset-step registry seeded, entry procs signed, agent job enabled, signing/impersonation principals correct.';
+    PRINT 'validate_rollout: OK — journals populated, reset-step registry seeded, entry procs signed, agent job enabled, signing/impersonation principals correct, maintenance jobs/operator wired.';
 GO

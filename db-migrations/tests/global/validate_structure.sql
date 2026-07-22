@@ -40,7 +40,14 @@ DECLARE @problems TABLE (Check_ nvarchar(200));
         (N'reset.spInternal_GrantAccess',       N'P'),
         (N'reset.spInternal_RegisterMandant',   N'P'),
         (N'reset.spInternal_ApplyJtlRoles',     N'P'),
-        (N'reset.spEnsureAgentJob',             N'P')
+        (N'reset.spEnsureAgentJob',             N'P'),
+        -- maintenance suite (plan 2026-07-21 - mssql-wartung-ola, lint rule (l)):
+        (N'ops.tMaintenanceJob',                N'U'),
+        (N'maint.spEnsureMaintenanceJobs',      N'P'),
+        (N'maint.spRunMaintenanceJob',          N'P'),
+        (N'maint.spCheckBackupChain',           N'P'),
+        (N'maint.spCheckMaintenanceLiveness',   N'P'),
+        (N'maint.spApplyMaintenance',           N'P')
     ) v(name, type)
 )
 INSERT INTO @problems (Check_)
@@ -61,7 +68,14 @@ WHERE OBJECT_ID(r.name, r.type) IS NULL;
         (N'ops.tResetRequest', N'cErrorMessage'), (N'ops.tResetRequest', N'dStarted'),
         (N'ops.tResetRequest', N'dFinished'),
         (N'ops.tResetStep', N'nStepOrder'), (N'ops.tResetStep', N'cProcName'),
-        (N'ops.tResetStep', N'bEnabled'), (N'ops.tResetStep', N'bCritical')
+        (N'ops.tResetStep', N'bEnabled'), (N'ops.tResetStep', N'bCritical'),
+        (N'ops.tMaintenanceJob', N'cJobKey'), (N'ops.tMaintenanceJob', N'cDisplayName'),
+        (N'ops.tMaintenanceJob', N'cOperation'), (N'ops.tMaintenanceJob', N'cDatabases'),
+        (N'ops.tMaintenanceJob', N'cFrequency'), (N'ops.tMaintenanceJob', N'nWeekdayMask'),
+        (N'ops.tMaintenanceJob', N'tStartTime'), (N'ops.tMaintenanceJob', N'bUpdateStatistics'),
+        (N'ops.tMaintenanceJob', N'cCleanupTarget'), (N'ops.tMaintenanceJob', N'nRetentionDays'),
+        (N'ops.tMaintenanceJob', N'nFullMaxHours'), (N'ops.tMaintenanceJob', N'nLogMaxHours'),
+        (N'ops.tMaintenanceJob', N'bEnabled'), (N'ops.tMaintenanceJob', N'bNotifyOnFail')
     ) v(tbl, col)
 )
 INSERT INTO @problems (Check_)
@@ -114,5 +128,5 @@ BEGIN
     RAISERROR('validate_structure: %d problem(s) found.', 16, 1, @n);
 END
 ELSE
-    PRINT 'validate_structure: OK — all reset.*/ops.* objects, columns, signature and roles present.';
+    PRINT 'validate_structure: OK — all reset.*/maint.*/ops.* objects, columns, signature and roles present.';
 GO

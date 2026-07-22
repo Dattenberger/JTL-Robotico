@@ -1,12 +1,15 @@
 # RoboticoOps Data Model — `ops.*` tables
 
-Column-level reference for the four registry tables of the test-mandant reset
-infrastructure (Ebene B, database `RoboticoOps`).
+Column-level reference for the five registry tables of the RoboticoOps
+infrastructure (Ebene B, database `RoboticoOps`): four tables of the
+test-mandant reset plus the maintenance-job registry of the SQL-Server
+maintenance suite.
 
 > [!IMPORTANT]
 > **Maintenance contract:** every edit to the table DDL in
-> `db-migrations/global/up/0002_ops_schema_tables.sql` or
-> `db-migrations/global/up/0021_reset_step_registry.sql` (or any future `up/`
+> `db-migrations/global/up/0002_ops_schema_tables.sql`,
+> `db-migrations/global/up/0021_reset_step_registry.sql` or
+> `db-migrations/global/up/0023_maintenance_registry.sql` (or any future `up/`
 > script that alters an `ops.*` table) MUST update this document in the same
 > commit. This rule is anchored in the repository `CLAUDE.md`.
 
@@ -95,9 +98,52 @@ Seeded default pipeline (order → proc): 10 `spInternal_CloneDatabase`,
 
 ---
 
+## `ops.tMaintenanceJob` — declarative maintenance-job registry
+
+One row = one SQL-Agent maintenance job. `maint.spEnsureMaintenanceJobs`
+synchronizes msdb from this table (create / converge / remove by the
+`RoboticoOps - Maint - ` name prefix); `maint.spRunMaintenanceJob` reads the row
+at run time and dispatches to the vendored Ola Hallengren procedures (D28 —
+job steps are constant, values travel as real proc parameters). Defined in
+`up/0023`; **rows are reconciled by the value-guarded MERGE in
+`runAfterOtherAnyTimeScripts/maint.spApplyMaintenance.sql`**, not seeded in `up/`.
+
+> [!IMPORTANT]
+> This registry is **repo-owned** (deliberate deviation from `ops.tResetStep`):
+> the MERGE enforces all desired columns on every deploy — live edits are
+> overwritten. Maintenance tuning goes exclusively through git + deploy.
+> `ops_admin` therefore has SELECT only.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `cJobKey` | `sysname`, PK | Stable key (`checkdb`, `index-optimize`, `cleanup-commandlog`, `cleanup-backuphistory`, `cleanup-jobhistory`, `backup-watchdog`). The constant job step passes exactly this key to `maint.spRunMaintenanceJob`. |
+| `cDisplayName` | `nvarchar(128)`, NOT NULL, UNIQUE | Agent job name. CHECK-enforced prefix `RoboticoOps - Maint - ` — create **and** remove hang on this prefix window (a prefix-less row would create a ghost job outside the managed window). |
+| `cOperation` | `nvarchar(20)`, NOT NULL | `IntegrityCheck` \| `IndexOptimize` \| `Cleanup` \| `BackupWatchdog` (CHECK). A **new operation kind** is deliberately not "just a row": new CHECK value + knob columns (new `up/`), new CASE branch in `spRunMaintenanceJob`, doc rows here. |
+| `cDatabases` | `nvarchar(400)`, NOT NULL | **Two grammars, decided by `cOperation`** (the one column whose grammar is enforced by doc, not CHECK): an **Ola `@Databases` expression** (`IntegrityCheck`/`IndexOptimize`/`Cleanup`, e.g. `ALL_DATABASES, -eazybusiness_tm%`) or a **literal comma list** (`BackupWatchdog` — Ola tokens are invalid there; the watchdog TRIMs each token and THROWs 51100 on any non-ONLINE match, D32). Values reach Ola at run time as real proc parameters, never as step-text literals (D28). |
+| `cFrequency` | `nvarchar(10)`, NOT NULL | `daily` \| `weekly` \| `hourly` (CHECK). Typed schedule instead of a cron string; the sync maps 1:1 onto `msdb.dbo.sysschedules` (D31 mapping table in `spEnsureMaintenanceJobs`). `hourly` = every hour from the `tStartTime` anchor (D35). |
+| `nWeekdayMask` | `tinyint`, NULL | `weekly` only (CHECK `CK_…_Schedule`): bitmask 1=Sun … 64=Sat, OR-able (Sun+Wed = 9); identical to `sysschedules.freq_interval`. |
+| `tStartTime` | `time(0)`, NOT NULL | **Local server time**; for `hourly` the day anchor of the first run (watchdog: 00:00 → around the clock). `t` prefix = `time` column (micro-convention, see NAMING-CONVENTIONS §9). |
+| `bUpdateStatistics` | `bit`, NULL | `IndexOptimize` only, and **mandatory there** (D33 — NULL would mean "sync decides", which reproduced F8): `1` → `@UpdateStatistics='ALL'`, `0` → parameter omitted (deliberate exception). |
+| `cCleanupTarget` | `nvarchar(20)`, NULL | `Cleanup` only (mandatory there): `CommandLog` \| `BackupHistory` \| `JobHistory` (CHECK). |
+| `nRetentionDays` | `int`, NULL, > 0 | `Cleanup` only (mandatory there): retention in days. Cutoff is computed **at run time** by the dispatcher. |
+| `nFullMaxHours` | `int`, NULL, > 0 | `BackupWatchdog` only (mandatory there): max age of the newest non-copy-only FULL backup. |
+| `nLogMaxHours` | `int`, NULL, > 0 | `BackupWatchdog` only (mandatory there): max age of the newest LOG backup (checked for `recovery_model_desc <> 'SIMPLE'`, D27). |
+| `bEnabled` | `bit`, NOT NULL, default `1` | Effective job-enabled state = `bEnabled = 1` AND `ops.tConfig('MaintenanceSchedulesEnabled') <> '0'` (D34). Pausing = disabling, never deleting. |
+| `bNotifyOnFail` | `bit`, NOT NULL, default `1` | `1` → the job is wired to email operator `RoboticoOps-Maint` on failure (guarded: only when the operator exists in msdb; `permissions/260` converges the first deploy). |
+| `cNotes` | `nvarchar(400)`, NULL | Short description; becomes the agent job description. |
+| `dCreated` | `datetime2(0)`, NOT NULL, default UTC now | Audit: row creation (UTC). |
+| `dModified` | `datetime2(0)`, NOT NULL, default UTC now | Audit: last real change (UTC) — the value-guarded MERGE leaves it untouched on no-op deploys (AC7 audit signal). |
+
+The CHECK `CK_tMaintenanceJob_OperationKnobs` makes the registry
+self-validating: every operation must carry its mandatory knobs and leave
+foreign knobs NULL.
+
+---
+
 ## References
 
-- DDL: `db-migrations/global/up/0002_ops_schema_tables.sql`, `db-migrations/global/up/0021_reset_step_registry.sql`
+- DDL: `db-migrations/global/up/0002_ops_schema_tables.sql`, `db-migrations/global/up/0021_reset_step_registry.sql`, `db-migrations/global/up/0023_maintenance_registry.sql`
+- Maintenance-row reconcile: `db-migrations/global/runAfterOtherAnyTimeScripts/maint.spApplyMaintenance.sql`
 - Roles/grants: `db-migrations/global/up/0003_roles.sql`, `db-migrations/global/permissions/100_grants.sql`
 - Architecture: [`MSSQL-OPS-ARCHITECTURE.md`](MSSQL-OPS-ARCHITECTURE.md)
 - Naming convention (Hungarian, EKL): `docs/plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-ebene-b-hungarian-naming.md`

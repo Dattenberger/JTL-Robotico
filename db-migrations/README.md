@@ -165,8 +165,13 @@ match `tests/lint-migrations.ps1`.
   `51001–51008` spPub_\*/orchestrator · `51010–51014` CloneDatabase ·
   `51020–51021` PostRestoreSecurity · `51030` InvalidateCredentials ·
   `51040` NeutralizeWorker · `51050` AnonymizeCustomerData · `51060` GrantAccess ·
-  `51070–51071` RegisterMandant · `51080` ApplyJtlRoles · `51090–51094` CreateTestmandant.
-  Ebene A: `50000` spGebindeErstellen. New steps take the next free `510x0` block.
+  `51070–51071` RegisterMandant · `51080` ApplyJtlRoles · `51090–51094` CreateTestmandant ·
+  `51100` maint.spCheckBackupChain (stale chain + invalid watch target, D32) ·
+  `51105` maint.spCheckMaintenanceLiveness (stale maintenance, D36) ·
+  `51110` maint.spEnsureMaintenanceJobs (guard/error path, reserved) ·
+  `51120` maint.spRunMaintenanceJob (unknown `cJobKey`).
+  Ebene A: `50000` spGebindeErstellen. `51100–51129` are reserved for the `maint.*`
+  suite; new reset steps take the next free `510x0` block **starting at `51130`**.
 - **(l) Every `global/` proc is registered in the structure test.** Each file under
   `global/sprocs/` and `global/runAfterOtherAnyTimeScripts/` must appear in the
   required-objects list of `tests/global/validate_structure.sql` (§9 step 3 — a deployed
@@ -375,6 +380,7 @@ confirmation).
 > | `StaleRunningHours` | `4` | Age after which `spProcessNextResetRequest` reclaims a still-`running` request as `failed` |
 > | `AgentJobName` | `RoboticoOps - Testmandant Reset` | SQL Agent job name; single-sourced for `spPub_StartTestmandantReset` / `spEnsureAgentJob` / `200_ensure_agent_job` |
 > | `NotifyOperator` | *(empty)* | Optional SQL-Agent operator emailed when the reset job **fails** (OPS-4). Empty ⇒ failures are pull-only (poll `spPub_GetResetStatus`). Requires Database Mail + an existing operator; wired by `reset.spEnsureAgentJob` |
+> | `MaintenanceSchedulesEnabled` | *(unset)* | Instance switch for the maintenance suite (D34): `'0'` ⇒ `maint.spEnsureMaintenanceJobs` creates all `RoboticoOps - Maint - *` jobs **disabled** (test1 — `sp_start_job` still works for manual validation); missing key or any other value ⇒ jobs follow their registry `bEnabled`. Not seeded — prod needs no entry |
 
 > [!CAUTION]
 > This repository never writes to a SQL Server autonomously. PROD deployment is always a

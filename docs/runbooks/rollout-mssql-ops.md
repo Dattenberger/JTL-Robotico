@@ -100,7 +100,42 @@ Do not proceed to Phase 4 until the validation runbook's checks all pass (status
 
 ## Phase 4 — Deploy the global chain on prod (human gate)
 
-Only after Phase 3 is green:
+Only after Phase 3 is green.
+
+### Phase 4a — remove the old Ola install (BEFORE the deploy)
+
+The global chain now also carries the maintenance suite (plan
+`2026-07-21 - mssql-wartung-ola` §3.6): the Phase-4 deploy creates the six
+`RoboticoOps - Maint - *` agent jobs **immediately enabled and scheduled**. The broken
+legacy Ola install in `eazybusiness.dbo` must therefore be removed **before** the
+deploy — otherwise two IndexOptimize jobs run against different object sets (ADR-A
+failure mode). Manual runbook step, not a migration (`dbo` is never touched by a
+migration):
+
+1. Inventory: confirm the Ola objects in `eazybusiness.dbo` and the 11 legacy Ola jobs
+   (query `sys.objects` for `CommandLog`/`CommandExecute`/`DatabaseIntegrityCheck`/
+   `IndexOptimize`/`DatabaseBackup`; `msdb.dbo.sysjobs` for the old job names).
+2. **Archive the old CommandLog before dropping** (D39 — 9,218 rows, the only primary
+   evidence of the 2025-11-27 failure pattern and the last real maintenance runs):
+   `SELECT * INTO RoboticoOps.dbo.CommandLog_legacy_eazybusiness FROM eazybusiness.dbo.CommandLog;`
+3. Delete the 11 legacy Ola jobs; drop `CommandLog`, `CommandExecute`,
+   `DatabaseIntegrityCheck` and any remains of `IndexOptimize`/`DatabaseBackup` and Ola
+   tables from `eazybusiness.dbo`. No coverage is lost: the old jobs have been
+   ineffective since ~2025-11 (IndexOptimize failing nightly, last CHECKDB 2024).
+
+Preconditions: the RoboticoOps prod cutover itself (this runbook's Phases 1–3); the
+foreign prod DBs stay deliberately in the active maintenance scope (D40 — no exclusion
+expressions).
+
+> [!CAUTION]
+> **Order is binding (D26):** Phase 4a runs before the Phase-4 deploy, and Phase 4a
+> through the maintenance verification below are executed **outside the 00:30–03:00
+> window**, so the alert path and verification are provably complete BEFORE the first
+> scheduled run (e.g. a deploy Sun 00:45 would meet checkdb at 01:00 unverified).
+> The instance switch `MaintenanceSchedulesEnabled` stays **unset on prod** (= enabled;
+> a forgotten `'0'` would silently kill maintenance). "Deploy disabled → verify →
+> delete switch + `EXEC maint.spEnsureMaintenanceJobs`" is a documented emergency
+> lever, not the standard path.
 
 ```powershell
 pwsh db-migrations/deploy.ps1 -Scope global -Environment PROD
@@ -117,7 +152,58 @@ pwsh db-migrations/deploy.ps1 -Scope global -Environment PROD
 > it **once** — file it in the password manager / `~/.claude-secrets.md` immediately (the
 > private key is otherwise unrecoverable; rotation means drop + recreate the cert via a new
 > `up/` script). Also repeat the Phase-2 backup-plan step: add prod's `RoboticoOps` LOG
-> backups.
+> backups — **this LOG-backup activation also ends the hourly `backup-watchdog` alarm for
+> RoboticoOps** (until it happens, the watchdog fires hourly for RoboticoOps — that alarm
+> IS the detector for the missing coverage; finish this on the cutover day itself).
+> While there, **re-verify CBB coverage of the system DBs** (D37/D41): newest
+> non-copy-only full per `msdb`/`master` in `msdb.dbo.backupset` — verified healthy
+> 2026-07-22; if it diverged, reopen plan §5 Gap 6 before proceeding.
+
+### Phase 4b — maintenance go-live (after the deploy)
+
+The deploy created the maintenance jobs (Phase 4a made that collision-free). Now, still
+outside the 00:30–03:00 window:
+
+1. **Restart the SQL Agent once**, so the freshly assigned Database-Mail profile
+   (`permissions/260`) takes effect in the alert system — no alarm test counts before
+   that. **Guard:** verify no agent job is currently running (the restart kills running
+   jobs, and the agent is shared with the reset infrastructure — check
+   `reset.spPub_GetResetStatus` / `msdb.dbo.sysjobactivity`).
+2. **Verify** (pure checks — the jobs exist since the deploy): schedules correct; each
+   job's single step is the constant, fully qualified dispatch
+   `EXECUTE RoboticoOps.maint.spRunMaintenanceJob @cJobKey = …` (D28); operator wiring on
+   every `bNotifyOnFail=1` job (260 pulled it in after operator creation);
+   `MaintenanceSchedulesEnabled` NOT set on prod (jobs enabled, D34). Easiest:
+   `sqlcmd … -i db-migrations/tests/global/validate_rollout.sql`.
+3. **Raise the agent job-history limit (D38):** the default (1,000 rows total / 100 per
+   job) rolls `sysjobhistory` far before the declared 365-day retention —
+   `EXEC msdb.dbo.sp_set_sqlagent_properties @jobhistory_max_rows = 10000, @jobhistory_max_rows_per_job = 1000;`
+   (instance state, admin-owned — not a migration). Only then is the
+   `cleanup-jobhistory` retention the real one.
+4. **Watch the first night run — and measure runtimes:** CHECKDB (Sun/Wed 01:00) and
+   IndexOptimize (02:00) must really finish before the 03:00 full; the staggering is
+   asserted by start time, not enforced — on overlap, adjust times in the registry
+   (git + deploy). **Alert-path acceptance via the natural alarm:** as long as
+   RoboticoOps is not yet in CBB, the hourly `backup-watchdog` stale mail (THROW 51100 →
+   operator) MUST really arrive at `lukas@dattenberger.com` within an hour of the agent
+   restart — the side-effect-free proof the reporting path works; no artificial job
+   failure on prod needed. Watch for false alarms in the 03:00-full window: if CBB
+   serializes log backups during the big eazybusiness full, the hourly log check can
+   slip just over the 1-h threshold — then adjust `nLogMaxHours` to 2 (repo-owned, one
+   deploy).
+
+> [!NOTE]
+> **Database-Mail health is unmonitored for now** — if Database Mail fails, maintenance
+> and watchdog alarms fall silent together (owner: follow-up task in the parent
+> mssql-ops program).
+
+**Rollback/abort (maintenance part):** if a new job stays red after cutover, no
+teardown is needed — no coverage is lost (the old state was ineffective anyway); a
+faulty sync/step is healed by a corrected deploy (registry + procs idempotent); manual
+CHECKDB / statistics updates remain the stopgap. If the Phase-4 deploy aborts AFTER
+Phase 4a already removed the old install: likewise no teardown — fix the deploy cause
+(cert password, reachability — see the Phase-4 CAUTION) and rerun; until then the
+manual stopgap applies.
 
 > [!WARNING]
 > Do not run a global deploy while a test-mandant reset is queued or running: if

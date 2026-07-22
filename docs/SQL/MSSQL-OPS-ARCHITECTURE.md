@@ -100,13 +100,25 @@ synchronous reset / Service Broker / pure-certificate signing / least-privilege 
 - **RoboticoOps** (collation `Latin1_General_CI_AS`, recovery FULL — the instance backup
   plan must include RoboticoOps LOG backups or the log grows unbounded, see
   `rollout-mssql-ops.md`; owner `sa`) holds
-  two schemas:
+  three schemas:
   - `ops` — registry & state: `ops.tMandant` (config incl. column-protected `cShopLicense`),
     `ops.tConfig` (paths, source DB, reference mandant), `ops.tResetRequest` (the queue /
-    audit log), `ops.tResetStep` (the ordered pipeline definition — see §1a.3), and the
+    audit log), `ops.tResetStep` (the ordered pipeline definition — see §1a.3),
+    `ops.tMaintenanceJob` (the declarative maintenance-job registry — see below), and the
     grate journal.
   - `reset` — the reset SPs (entry, status, orchestrator, the `spInternal_*` steps, and the
     `spInternal_LogStep` cStepLog helper).
+  - `maint` — the SQL-Server maintenance suite (plan `2026-07-21 - mssql-wartung-ola`,
+    ADR-A/ADR-B): the registry `ops.tMaintenanceJob` declares 6 agent jobs
+    (`RoboticoOps - Maint - *`: CHECKDB, IndexOptimize+statistics, 3 cleanups, backup
+    watchdog); `maint.spEnsureMaintenanceJobs` syncs msdb from it (per-job canonical
+    normal-form comparison, running-job guard); every job carries the constant dispatch
+    step `EXECUTE RoboticoOps.maint.spRunMaintenanceJob @cJobKey = …` (D28 — values are
+    runtime proc parameters, never step-text); the vendored Ola Hallengren objects
+    (`CommandLog`, `CommandExecute`, `DatabaseIntegrityCheck`, `IndexOptimize` — **no**
+    `DatabaseBackup`) live in `RoboticoOps.dbo`; `maint.spCheckBackupChain` +
+    `maint.spCheckMaintenanceLiveness` are the hourly read-only watchdog (stale CBB
+    backup chain / "never runs" maintenance, THROW → operator mail).
 
 ### 1a.3 The reset control path
 
@@ -191,6 +203,14 @@ line before each step so a mid-step failure is attributable in `cStepLog`.
 | Reset pipeline | `db-migrations/global/sprocs/reset.{spProcessNextResetRequest,spInternal_*}.sql` | whitelist-guarded loop over `ops.tResetStep`; uniform-contract steps; `spInternal_LogStep` cStepLog helper |
 | Agent-job wrapper | `db-migrations/global/runAfterOtherAnyTimeScripts/reset.spEnsureAgentJob.sql` | idempotent job (re)install, owner `sa` |
 | Re-signing | `db-migrations/global/permissions/900_resign_procedures.sql` | everytime; heals dropped signatures |
+| Maintenance registry | `db-migrations/global/up/0023_maintenance_registry.sql` | `maint` schema + `ops.tMaintenanceJob` DDL (rows via `maint.spApplyMaintenance` MERGE) |
+| Vendored Ola objects | `db-migrations/global/up/0022_maintenance_ola_vendor.sql` | pinned `dbo.CommandLog`/`CommandExecute`/`DatabaseIntegrityCheck`/`IndexOptimize`; **no `DatabaseBackup`** (ADR-B) |
+| Maintenance sync | `db-migrations/global/sprocs/maint.spEnsureMaintenanceJobs.sql` | registry → agent jobs (constant dispatch step, D28/D31) |
+| Maintenance dispatcher | `db-migrations/global/sprocs/maint.spRunMaintenanceJob.sql` | runtime command matrix: registry row → Ola/system call |
+| Backup watchdog | `db-migrations/global/sprocs/maint.spCheckBackupChain.sql` | read-only CBB-chain freshness (local time base, target validation, THROW 51100) |
+| Liveness check | `db-migrations/global/sprocs/maint.spCheckMaintenanceLiveness.sql` | registry desired-state vs. CommandLog freshness (D36, THROW 51105) |
+| Maintenance reconcile | `db-migrations/global/runAfterOtherAnyTimeScripts/maint.spApplyMaintenance.sql` | value-guarded MERGE of the desired rows + ensure call |
+| Maintenance operator | `db-migrations/global/permissions/260_maintenance_operator.sql` | everytime: operator + agent mail profile (guarded) + unconditional ensure self-heal (D29) |
 | Lint | `db-migrations/tests/lint-migrations.ps1` | rules (a)–(l) + up/-number uniqueness, the executable contract |
 
 ## 4. The excel_ekl boundary
@@ -274,7 +294,25 @@ pick up a new mandant immediately?) is not yet answered, so "worker stopped" is 
 gate. See [`testmandant-reset-validierung.md`](../runbooks/testmandant-reset-validierung.md)
 Step 0.
 
-### 6.5 Never write to a server autonomously
+### 6.5 Backups stay with CBB — the maintenance suite never creates a backup job
+
+Backups are owned by Cloudberry Backup (CBB), full stop (ADR-B, plan
+`2026-07-21 - mssql-wartung-ola`). The maintenance suite deliberately does **not**
+vendor `dbo.DatabaseBackup`, and `ops.tMaintenanceJob` has no backup operation kind —
+what is not deployed cannot be scheduled. **Rule:** nobody folds backups "for
+tidiness" into Ola/the maintenance registry; the suite only *watches* the CBB chain
+(`maint.spCheckBackupChain`, hourly).
+
+### 6.6 Maintenance tuning exclusively via git + deploy
+
+`ops.tMaintenanceJob` is **repo-owned** (D11): the `maint.spApplyMaintenance` MERGE
+enforces all desired columns on every deploy — live edits to the registry (and manual
+edits to the `RoboticoOps - Maint - *` agent jobs, via the ensure sync) are
+overwritten. **Rule:** schedule/threshold/scope changes are made in
+`maint.spApplyMaintenance.sql` and deployed, never edited live. (Instance *state*
+stays admin-owned in `ops.tConfig`: `MaintenanceSchedulesEnabled = '0'` on test1.)
+
+### 6.7 Never write to a server autonomously
 
 No process in this repo writes to a SQL Server on its own. Read-only catalog queries
 against test1/prod are fine; every deploy/reset against **prod** is a human-gated runbook

@@ -173,13 +173,14 @@ journal tables in `Robotico`.
 Instance administration lives in a **separate database**, `RoboticoOps` (collation
 `Latin1_General_CI_AS`, recovery FULL — requires log backups, see the rollout runbook —
 owner `sa`) — deliberately outside the
-`eazybusiness_*` namespace so it can never be confused with a mandant clone. It carries two
+`eazybusiness_*` namespace so it can never be confused with a mandant clone. It carries three
 schemas we own:
 
 | Schema | Owner | Purpose |
 |---|---|---|
-| `ops.*` | this project | registry & state: `ops.tMandant`, `ops.tConfig`, `ops.tResetRequest`, `ops.tResetStep`, grate journal |
+| `ops.*` | this project | registry & state: `ops.tMandant`, `ops.tConfig`, `ops.tResetRequest`, `ops.tResetStep`, `ops.tMaintenanceJob`, grate journal |
 | `reset.*` | this project | reset procedures: `reset.spPub_StartTestmandantReset`, `reset.spPub_GetResetStatus`, `reset.spProcessNextResetRequest`, `reset.spEnsureAgentJob`, `reset.spInternal_*` |
+| `maint.*` | this project | maintenance procedures: `maint.spEnsureMaintenanceJobs`, `maint.spRunMaintenanceJob`, `maint.spCheckBackupChain`, `maint.spCheckMaintenanceLiveness`, `maint.spApplyMaintenance` (the vendored Ola Hallengren objects live in `RoboticoOps.dbo`, upstream-named) |
 
 ### Naming: the JTL / RoboticoEKL Hungarian convention (aligned with §2–4)
 
@@ -201,6 +202,7 @@ the `Robotico.*` objects in §2–4: `t`-prefixed tables, Hungarian column prefi
 | Column (INT key) | `k<Table>` | `kResetRequest`, `kResetStep` |
 | Column (BIT flag) | `b<Name>` | `bActive`, `bEnabled`, `bCritical` |
 | Column (DATE/DATETIME) | `d<Name>` | `dCreated`, `dModified`, `dStarted`, `dFinished`, `dRequested` |
+| Column (TIME) | `t<Name>` | `ops.tMaintenanceJob.tStartTime` |
 | Column (non-key INT) | `n<Name>` | `nStepOrder` |
 | Parameter | PascalCase with `@` (marks a value, not a stored column) | `@TargetDb`, `@RequestId`, `@MandantKey` |
 | Public procedure | `spPub_<ActionName>` | `reset.spPub_StartTestmandantReset`, `reset.spPub_GetResetStatus` |
@@ -219,6 +221,13 @@ already unambiguous):
 | Check | `CK_<Table>_<Col>` | `CK_tMandant_cTargetDb` |
 | Default | `DF_<Table>_<Col>` | `DF_tMandant_bActive` |
 | Standalone (filtered) unique index | `IX_<Table>_<Purpose>` | `IX_tResetRequest_Active` |
+
+> [!NOTE]
+> **`t` prefix is deliberately double-booked (D20):** `t<Singular>` names a *table*
+> (`ops.tMaintenanceJob`), while a leading `t` on a *column* marks a `time`-typed column
+> (`ops.tMaintenanceJob.tStartTime`) — a documented micro-convention so `tStartTime` is
+> not read as a typo. The context (table name vs. column name) disambiguates.
+> See ADR-A §D-A2 (plan `2026-07-21 - mssql-wartung-ola`).
 
 > [!NOTE]
 > `IX_tResetRequest_Active` — the filtered "at most one active request per `cTargetDb`" index
