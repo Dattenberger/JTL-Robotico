@@ -54,10 +54,13 @@ Beide Instanzen erreichbar: `vm-sql-test1.zdbikes.local`, `vm-sql2.zdbikes.local
 | | test1 | prod |
 |---|---|---|
 | Dienst | **Stopped / Manual** | Running / Automatic |
-| Jobs | nur syspolicy_purge_history | **11 Ola-Hallengren-Jobs** (DatabaseBackup FULL/DIFF/LOG USER+SYSTEM, IndexOptimize, IntegrityCheck, Cleanups) |
+| Jobs | nur syspolicy_purge_history | 11 Ola-Hallengren-Jobs *installiert* (DatabaseBackup FULL/DIFF/LOG USER+SYSTEM, IndexOptimize, IntegrityCheck, Cleanups) |
 | Proxies | keine | keine |
 
-→ Prod hat eine funktionierende Backup-Kette; test1 hat keinerlei Wartung/Backups.
+> [!WARNING]
+> **Korrektur 2026-07-21 (Live-Nachprüfung):** Die obige Zeile zählt Job-*Existenz*, nicht -Ausführung. Tatsächlich hat von den 11 Ola-Jobs **genau einer** einen Schedule (`IndexOptimize`, täglich 04:00) — und der **schlägt seit ~2025-11-27 täglich fehl** (`dbo.IndexOptimize` existiert nicht mehr). `DatabaseIntegrityCheck`/CHECKDB lief zuletzt **2024-06-24** (einmalig), Backups laufen extern via CBB (nicht Ola). Vollständige IST-Analyse: [`6-wartung-ist-analyse`](../6-wartung-ist-analyse/6-wartung-ist-analyse.md).
+
+→ Backups auf Prod laufen (extern via CBB); **wirksame SQL-Wartung existiert faktisch nicht** (s. Korrektur oben). test1 hat keinerlei Wartung/Backups.
 
 ## 5. Zertifikate (master)
 
