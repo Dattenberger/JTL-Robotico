@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Recursively checks every *.sql under db-migrations/eazybusiness and
-    db-migrations/global against the hard rules (a)-(l) documented in
+    db-migrations/global against the hard rules (a)-(m) documented in
     db-migrations/README.md §4 (incl. up/-number uniqueness per chain), plus the
     §6 cleanup-script rule (f) against Berechtigungen/cleanup (when that
     directory exists).
@@ -63,6 +63,23 @@ function Remove-SqlComments([string] $text) {
     return $sb.ToString()
 }
 
+# Inverse of Remove-SqlComments: return ONLY the comment text (block /* … */ + line
+# -- … comments). Rule (m) checks comment *language* and must not see string-literal
+# data, where German business terms (N'…') can legitimately appear. Same pragmatic
+# stance as Remove-SqlComments: string literals are not modelled — acceptable, umlauts
+# in a data string that also holds '--' is a vanishingly rare, grandfatherable case.
+function Get-SqlCommentText([string] $text) {
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($m in [regex]::Matches($text, '(?s)/\*.*?\*/')) {
+        [void]$sb.AppendLine($m.Value)
+    }
+    foreach ($line in ($text -split "`n")) {
+        $idx = $line.IndexOf('--')
+        if ($idx -ge 0) { [void]$sb.AppendLine($line.Substring($idx)) }
+    }
+    return $sb.ToString()
+}
+
 # Folder → grate class, derived from the immediate parent directory name.
 function Get-FolderClass([string] $relativeDir) {
     $leaf = ($relativeDir -split '[\\/]') | Where-Object { $_ } | Select-Object -Last 1
@@ -88,6 +105,19 @@ $forbiddenTokens = @('spCMArtikelNeu', 'spCMArtikel', 'RoboticoEKL')
 $upEditAcknowledged = @{
     # 'db-migrations/global/up/0042_example.sql' = 'authoring 2026-07-…; not yet deployed anywhere'
 }
+
+# Rule (m) grandfather set: already-APPLIED up/ scripts whose comments carry German
+# umlauts. An applied up/ script is immutable (rule i / §2 CAUTION) — its comments can
+# never be corrected via a new NNNN_ script — so rule (m) must never error on them.
+# Both entries verified applied on test1 via the grate ledger (Robotico.ScriptsRun /
+# ops.ScriptsRun, 2026-07-13 / 2026-07-22). This list is a DIFFERENT axis from
+# $upEditAcknowledged (which acknowledges *edits to never-applied* scripts) and is
+# closed to never-applied files: a NEW up/ script must ship English comments, and its
+# only fixable window is before first apply — which is exactly when rule (m) fires.
+$germanCommentGrandfathered = @(
+    'db-migrations/eazybusiness/up/0002_robotico_paypal_tables.sql',  # applied 2026-07-13
+    'db-migrations/global/up/0023_maintenance_registry.sql'           # applied 2026-07-22
+)
 
 # Rule (k) collector: THROW numbers per chain (key "<chain>|<number>" -> set of files).
 $throwNumbers = @{}
@@ -210,6 +240,23 @@ foreach ($f in $sqlFiles) {
             Add-Error $rel 'h' "ambiguous dashed datetime literal $($m.Value) — the space-separated form is reparsed under DATEFORMAT dmy; use the ISO-8601 'T' form ('YYYY-MM-DDThh:mm:ss') or the basic form ('$iso hh:mm:ss')"
         }
         # 'YYYY-MM-DDThh:mm:ss' (ISO 8601 with 'T') is language-neutral — allowed.
+    }
+
+    # (m) up/ comments must be English. A German comment slipped 0023 all the way to
+    # *apply* because no rule checked comment language — and once applied, an up/ script
+    # is immutable (rule i / §2 CAUTION), so its comments can never be corrected. The
+    # only fixable window is BEFORE first apply, while the file is still editable; this
+    # gate closes it. Signal: German umlauts [äöüßÄÖÜ] in the COMMENTS (zero false
+    # positives — no English/SQL token carries them; string-literal data is excluded via
+    # Get-SqlCommentText so legitimately-German N'…' values don't trip it). Already-applied
+    # German scripts are grandfathered (immutable ⇒ uncorrectable ⇒ erroring is unactionable).
+    if ($dirClass -eq 'one-time' -and
+        $germanCommentGrandfathered -notcontains ($rel -replace '\\', '/')) {
+        $commentText = Get-SqlCommentText $raw
+        $umlauts = [regex]::Matches($commentText, '[äöüßÄÖÜ]')
+        if ($umlauts.Count -gt 0) {
+            Add-Error $rel 'm' "up/ comments contain German-language characters ($($umlauts.Count) umlaut/ß marker(s)) — comments must be English (language convention). Fix BEFORE first apply; an applied up/ script is immutable (rule i / §2 CAUTION) and cannot be corrected. If it is already applied and thus uncorrectable, add it to the lint's `$germanCommentGrandfathered set with the applied-date reason"
+        }
     }
 
     # (j) Ebene-B pipeline steps: uniform contract + clone guard before the first

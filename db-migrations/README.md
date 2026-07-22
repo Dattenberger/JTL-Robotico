@@ -176,6 +176,19 @@ match `tests/lint-migrations.ps1`.
   `global/sprocs/` and `global/runAfterOtherAnyTimeScripts/` must appear in the
   required-objects list of `tests/global/validate_structure.sql` (§9 step 3 — a deployed
   but unregistered proc would silently escape the rollout gate).
+- **(m) `up/` comments must be English.** Comments and identifiers are English (repo
+  language convention); the lint flags German umlauts (`[äöüßÄÖÜ]`) in the *comments* of
+  a one-time script (string-literal data is excluded, so legitimately-German `N'…'`
+  values are fine). This gate exists because a German comment slipped `up/0023` to *apply*
+  before anyone noticed, and by rule (i) an applied `up/` script is immutable — its
+  comments can never be corrected. So the check only bites in the one fixable window:
+  **before first apply**, while the file is still editable. **Known frozen exceptions
+  (grandfathered in the lint's `$germanCommentGrandfathered`):** `global/up/0023_maintenance_registry.sql`
+  (authored + applied 2026-07-22) and `eazybusiness/up/0002_robotico_paypal_tables.sql`
+  (applied 2026-07-13). Both are immutable (§2 CAUTION); their German comments cannot be
+  fixed by a new `NNNN_` script, so the English-comment convention is permanently waived
+  for these two already-applied files. The grandfather list is closed to never-applied
+  scripts — a new `up/` file must ship English comments.
 
 Beyond the lint, two conventions the lint cannot fully check:
 
