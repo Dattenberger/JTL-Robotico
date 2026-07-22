@@ -227,7 +227,7 @@ already unambiguous):
 > (`ops.tMaintenanceJob`), while a leading `t` on a *column* marks a `time`-typed column
 > (`ops.tMaintenanceJob.tStartTime`) — a documented micro-convention so `tStartTime` is
 > not read as a typo. The context (table name vs. column name) disambiguates.
-> See ADR-A §D-A2 (plan `2026-07-21 - mssql-wartung-ola`).
+> See [ADR-0001 §D-A2](../decisions/0001-maintenance-as-code-roboticoops.md) (ADR-A, maintenance-as-code).
 
 > [!NOTE]
 > `IX_tResetRequest_Active` — the filtered "at most one active request per `cTargetDb`" index

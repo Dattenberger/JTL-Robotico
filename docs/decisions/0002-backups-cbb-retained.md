@@ -1,17 +1,17 @@
-# ADR-NNNN: Backups stay with CBB — SQL maintenance does not own backups, but monitors the chain
+# ADR-0002: Backups stay with CBB — SQL maintenance does not own backups, but monitors the chain
 
-**Status:** Proposed (plan-scoped — pending promotion)
+**Status:** Accepted
 **Subsystem:** RoboticoOps, Testmandant Reset
 **Date:** 2026-07-21
 **Supersedes:** —
 **Author:** Lukas + Claude Code
 
-> **Cooperates with [adr-maintenance-as-code-roboticoops](adr-maintenance-as-code-roboticoops.md).** That ADR owns the maintenance suite and the registry; this ADR fixes one scope boundary within it — backups are explicitly *out*, monitoring is *in*.
+> **Cooperates with [adr-maintenance-as-code-roboticoops](0001-maintenance-as-code-roboticoops.md).** That ADR owns the maintenance suite and the registry; this ADR fixes one scope boundary within it — backups are explicitly *out*, monitoring is *in*.
 
 ## Research
 
-- **[6-wartung-ist-analyse §2 F1 + §3.2](../../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — live evidence that backups already run healthily and **externally via CBB**, not via Ola: `eazybusiness` full daily 03:00 (`copy_only=0`, `NT-AUTORITÄT\SYSTEM`), diff, and log every ~15 min (last log 2026-07-21 11:45). The Ola `DatabaseBackup` jobs have no schedule and have **never run**.
-- **[6-wartung-ist-analyse §2 F2/F6](../../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — the outage pattern that motivates the watchdog: a scheduled job failed silently for ~8 months because nothing checks liveness. Backups deserve the same liveness guard.
+- **[6-wartung-ist-analyse §2 F1 + §3.2](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — live evidence that backups already run healthily and **externally via CBB**, not via Ola: `eazybusiness` full daily 03:00 (`copy_only=0`, `NT-AUTORITÄT\SYSTEM`), diff, and log every ~15 min (last log 2026-07-21 11:45). The Ola `DatabaseBackup` jobs have no schedule and have **never run**.
+- **[6-wartung-ist-analyse §2 F2/F6](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — the outage pattern that motivates the watchdog: a scheduled job failed silently for ~8 months because nothing checks liveness. Backups deserve the same liveness guard.
 - **Backup-time distribution (§3.2)** — the real chain-relevant full is a single daily 03:00 run; the 18:00 run and ad-hoc runs are `copy_only` and do not affect the chain. This is what the maintenance window schedules *around*.
 
 ## Context
@@ -54,9 +54,9 @@ When adding an SQL maintenance suite, the natural temptation is to let Ola own e
 
 ## References
 
-- **Related Plan:** [mssql-wartung-ola](../mssql-wartung-ola.md) (bidirectional).
-- **Research:** [6-wartung-ist-analyse](../../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) §2 (F1), §3.2 (backup-time distribution).
-- **Related ADRs:** [adr-maintenance-as-code-roboticoops](adr-maintenance-as-code-roboticoops.md) (parent suite; owns the registry and the tm-clone maintenance scope).
+- **Related Plan:** [mssql-wartung-ola](../plans/2026-07-21 - mssql-wartung-ola/mssql-wartung-ola.md) (bidirectional).
+- **Research:** [6-wartung-ist-analyse](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) §2 (F1), §3.2 (backup-time distribution).
+- **Related ADRs:** [adr-maintenance-as-code-roboticoops](0001-maintenance-as-code-roboticoops.md) (parent suite; owns the registry and the tm-clone maintenance scope).
 
 ## Decision History
 
@@ -129,3 +129,13 @@ When adding an SQL maintenance suite, the natural temptation is to let Ola own e
 **After:** A read-only `backupset` probe on vm-sql2 (2026-07-22) confirmed `msdb`, `master` and `model` in the real CBB chain (daily 03:00 full, `copy_only=0`). `msdb` is now part of the watched set (registry row `eazybusiness,RoboticoOps,msdb`; plan D41); the cutover step becomes a re-verification. Lukas decided (plan D40) that foreign DBs stay in the active CHECKDB/IndexOptimize scope — the watchdog's watched set is unaffected; foreign-DB *watching* remains a follow-up task, now with evidence (`ersatzteile_prod`/`HbDat001` chain-backed, `EKL`/`ersatzteile_prod_latest` not).
 
 **Reasoning:** Verification beat assumption at the cost of one metadata query — the exact remedy this ADR prescribes for silent gaps. Adding `msdb` now (rather than at cutover) keeps the immutable seed migration complete and makes the watchdog guard the database this whole suite depends on from day one.
+
+### 2026-07-23 — Promoted + Accepted
+
+**Trigger:** Plan `mssql-wartung-ola` implementation completed, E2E-verified and accepted; the plan-scoped ADR is promoted alongside its sister ADR-0001 per `lifecycle-adr.md` §"Plan-scoped ADRs".
+
+**Before:** `Proposed (plan-scoped — pending promotion)`, filename `adrs/adr-backups-cbb-retained.md` inside the plan folder, header carrying the `ADR-NNNN` placeholder.
+
+**After:** Moved to `docs/decisions/0002-backups-cbb-retained.md`, `ADR-NNNN` → `ADR-0002`, `Status: Accepted`. The sister-ADR link (now `0001-maintenance-as-code-roboticoops.md`), the plan link, and the research link were re-based to the `docs/decisions/` depth.
+
+**Reasoning:** The backup-chain watchdog is implemented, deployed to test1, and accepted; the scope boundary (CBB owns backups, maintenance monitors the chain) is in effect and no longer plan-scoped. Promoted together with ADR-0001 so the cooperating pair keeps consistent, navigable addresses.

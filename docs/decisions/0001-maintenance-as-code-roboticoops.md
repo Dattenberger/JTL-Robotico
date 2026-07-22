@@ -1,18 +1,18 @@
-# ADR-NNNN: SQL-Server maintenance as code — Ola Hallengren vendored in RoboticoOps, driven by a declarative job registry
+# ADR-0001: SQL-Server maintenance as code — Ola Hallengren vendored in RoboticoOps, driven by a declarative job registry
 
-**Status:** Proposed (plan-scoped — pending promotion)
+**Status:** Accepted
 **Subsystem:** RoboticoOps, JTL SQL Migrations, Testmandant Reset
 **Date:** 2026-07-21
 **Supersedes:** —
 **Author:** Lukas + Claude Code
 
-> **Cooperates with [adr-reset-step-registry](../../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md) and [adr-module-signing-reset](../../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md).** The reset-step registry owns the "declarative table drives an idempotent ensure-proc" pattern; this ADR reuses it for maintenance jobs. The module-signing ADR owns the Agent-job creation pattern (`reset.spEnsureAgentJob`, sa-owned); `maint.spEnsureMaintenanceJobs` mirrors it.
+> **Cooperates with [adr-reset-step-registry](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md) and [adr-module-signing-reset](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md).** The reset-step registry owns the "declarative table drives an idempotent ensure-proc" pattern; this ADR reuses it for maintenance jobs. The module-signing ADR owns the Agent-job creation pattern (`reset.spEnsureAgentJob`, sa-owned); `maint.spEnsureMaintenanceJobs` mirrors it.
 
 ## Research
 
-- **[6-wartung-ist-analyse](../../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) §2, F1–F9** — live read-only survey of `vm-sql2` (2026-07-21): the only scheduled maintenance job (`IndexOptimize`) **fails every night** (`Fehler 2812: dbo.IndexOptimize not found`, F2); `DatabaseIntegrityCheck`/CHECKDB last ran **2024-06-24** (F3); the Ola objects live in `eazybusiness.dbo` (F5) and were partially wiped ~2025-11-27 — the direct cause of F2; no failure alerting exists, so the daily failure went unnoticed for ~8 months (F6).
-- **[6-wartung-ist-analyse §3.2](../../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — measured fragmentation of `eazybusiness` (22.8 GB): **0 indexes >30 %** after 8 months without maintenance (F7) → index defrag is low-ROI; CHECKDB + statistics are the real lever. The old job never updated statistics (F8, no `@UpdateStatistics`).
-- **[adr-reset-step-registry](../../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md)** — the precedent for a declarative `ops.*` registry table materialised by an idempotent sproc; adopted here as `ops.tMaintenanceJob` + `maint.spEnsureMaintenanceJobs`.
+- **[6-wartung-ist-analyse](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) §2, F1–F9** — live read-only survey of `vm-sql2` (2026-07-21): the only scheduled maintenance job (`IndexOptimize`) **fails every night** (`Fehler 2812: dbo.IndexOptimize not found`, F2); `DatabaseIntegrityCheck`/CHECKDB last ran **2024-06-24** (F3); the Ola objects live in `eazybusiness.dbo` (F5) and were partially wiped ~2025-11-27 — the direct cause of F2; no failure alerting exists, so the daily failure went unnoticed for ~8 months (F6).
+- **[6-wartung-ist-analyse §3.2](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — measured fragmentation of `eazybusiness` (22.8 GB): **0 indexes >30 %** after 8 months without maintenance (F7) → index defrag is low-ROI; CHECKDB + statistics are the real lever. The old job never updated statistics (F8, no `@UpdateStatistics`).
+- **[adr-reset-step-registry](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md)** — the precedent for a declarative `ops.*` registry table materialised by an idempotent sproc; adopted here as `ops.tMaintenanceJob` + `maint.spEnsureMaintenanceJobs`.
 - **Live instance facts (2026-07-21):** Database Mail is enabled (profile `Standard SMTP` via brevo), but **no operator exists** and the **SQL-Agent has no mail profile assigned** — the alerting plumbing is present but the last three wires are missing.
 
 ## Context
@@ -77,7 +77,7 @@ Not one chained job. Each operation is its own job for failure isolation (one br
 
 Two deliberate omissions/limits: **no job output files** (history lives in `CommandLog` + Agent job history; this removes the only filesystem/CmdExec dependency and the output-file cleanup job), and **IndexOptimize runs REORGANIZE-only** (`@FragmentationHigh` without `INDEX_REBUILD_OFFLINE`): Standard Edition cannot rebuild ONLINE, and an offline rebuild at 02:00 would lock tables of a 24/7 ERP. With currently 0 indexes >30 % (F7) this costs nothing; a persistently high-fragmentation index becomes a deliberate manual maintenance-window action instead.
 
-The tm-clone treatment differs by operation, deliberately: **IndexOptimize includes** the `eazybusiness_tm*` clones (`USER_DATABASES`) — they are worked on interactively and benefit from defrag + fresh statistics. **CHECKDB excludes** them (`-eazybusiness_tm%`) — they are throwaway copies recreated by the reset from the integrity-checked source DB, so checking each clone twice a week would be pure cost; the single `ALL_DATABASES`-based job covers user **and** system DBs (incl. `msdb`) in one run, twice weekly (Sun+Wed, each ahead of the 03:00 full). The backup watchdog also excludes the clones (SIMPLE, unbacked-up throwaways). See [adr-backups-cbb-retained](adr-backups-cbb-retained.md).
+The tm-clone treatment differs by operation, deliberately: **IndexOptimize includes** the `eazybusiness_tm*` clones (`USER_DATABASES`) — they are worked on interactively and benefit from defrag + fresh statistics. **CHECKDB excludes** them (`-eazybusiness_tm%`) — they are throwaway copies recreated by the reset from the integrity-checked source DB, so checking each clone twice a week would be pure cost; the single `ALL_DATABASES`-based job covers user **and** system DBs (incl. `msdb`) in one run, twice weekly (Sun+Wed, each ahead of the 03:00 full). The backup watchdog also excludes the clones (SIMPLE, unbacked-up throwaways). See [adr-backups-cbb-retained](0002-backups-cbb-retained.md).
 
 ### D-A5 — Failure alerting is wired end to end
 
@@ -139,9 +139,9 @@ The identical chain deploys to test1 (proves the migration), is validated by one
 
 ## References
 
-- **Related Plan:** [mssql-wartung-ola](../mssql-wartung-ola.md) — the plan that implements this ADR (bidirectional).
-- **Research:** [6-wartung-ist-analyse](../../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)
-- **Related ADRs:** [adr-reset-step-registry](../../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md) (registry pattern reused), [adr-module-signing-reset](../../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md) (Agent-job creation pattern), [adr-two-chain-migration-paths](../../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-two-chain-migration-paths.md) (Ebene-B / global chain), [adr-ebene-b-hungarian-naming](../../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-ebene-b-hungarian-naming.md) (naming convention adopted; the `t` = `time` column prefix in D-A2 is a documented micro-extension of it — at promotion, that ADR gets a reciprocal Decision-History note), [adr-grate-migration-runner](../../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-grate-migration-runner.md) (grate stage/folder-order guarantee that the `260` first-deploy convergence in D-A5 relies on), [adr-backups-cbb-retained](adr-backups-cbb-retained.md) (backup ownership + watchdog).
+- **Related Plan:** [mssql-wartung-ola](../plans/2026-07-21 - mssql-wartung-ola/mssql-wartung-ola.md) — the plan that implements this ADR (bidirectional).
+- **Research:** [6-wartung-ist-analyse](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)
+- **Related ADRs:** [adr-reset-step-registry](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md) (registry pattern reused), [adr-module-signing-reset](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md) (Agent-job creation pattern), [adr-two-chain-migration-paths](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-two-chain-migration-paths.md) (Ebene-B / global chain), [adr-ebene-b-hungarian-naming](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-ebene-b-hungarian-naming.md) (naming convention adopted; the `t` = `time` column prefix in D-A2 is a documented micro-extension of it — at promotion, that ADR gets a reciprocal Decision-History note), [adr-grate-migration-runner](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-grate-migration-runner.md) (grate stage/folder-order guarantee that the `260` first-deploy convergence in D-A5 relies on), [adr-backups-cbb-retained](0002-backups-cbb-retained.md) (backup ownership + watchdog).
 - **Data model:** `docs/SQL/MSSQL-OPS-DATA-MODEL.md` (must gain the `ops.tMaintenanceJob` rows).
 - **External:** [Ola Hallengren Maintenance Solution](https://ola.hallengren.com/)
 
@@ -216,3 +216,13 @@ The identical chain deploys to test1 (proves the migration), is validated by one
 **After:** D-A5 gains the liveness guard `maint.spCheckMaintenanceLiveness` (fifth `maint.*` proc, parameterless, `THROW 51105`): executed as the second step command of the watchdog job, it derives per effectively-enabled Ola-backed registry row the maximum acceptable `CommandLog` age from the declared schedule and alarms when maintenance demonstrably did not run. The impossibility claim is precised to its true scope (run-and-fail immediate, never-ran within derived cadence, both conditional on a running Agent); a new failure mode records the stopped-Agent blind spot and assigns it to the external-monitoring follow-up (plan Gap 2). D-A2/D-A3 gain `cFrequency = 'hourly'` (`freq_subday_type=8`/`freq_subday_interval=1`; subday columns added to the canonical comparison surface), and the D-A4 watchdog row runs hourly from a 00:00 anchor (plan D35).
 
 **Reasoning:** The intention was born from a never-runs outage, so a design whose alerting only covers run-and-fail would leave the original wound open; deriving liveness thresholds from the registry keeps the check declarative and self-configuring instead of adding new knobs. Hourly cadence makes the log-freshness promise real (detection ≤ ~2 h instead of ≤ 24 h) and had to be decided before the immutable `up/` freeze made the schema extension expensive — the mapping table was explicitly built for this additive extension.
+
+### 2026-07-23 — Promoted + Accepted
+
+**Trigger:** Plan `mssql-wartung-ola` implementation completed, E2E-verified and accepted; the plan-scoped ADR is promoted per `lifecycle-adr.md` §"Plan-scoped ADRs".
+
+**Before:** `Proposed (plan-scoped — pending promotion)`, filename `adrs/adr-maintenance-as-code-roboticoops.md` inside the plan folder, header carrying the `ADR-NNNN` placeholder.
+
+**After:** Moved to `docs/decisions/0001-maintenance-as-code-roboticoops.md` (first entry in the newly established decisions index), `ADR-NNNN` → `ADR-0001`, `Status: Accepted`. Relative links to the sister ADR (now `0002-backups-cbb-retained.md`), the plan, the older mssql-ops ADRs, and the research file were re-based to the `docs/decisions/` depth. The `adr-ebene-b-hungarian-naming` back-reference (D20 `t`=time micro-extension) was made bidirectional at the same time.
+
+**Reasoning:** The maintenance suite is implemented, deployed to test1, and accepted; the decision is in effect and no longer plan-scoped. Promotion establishes `docs/decisions/` and makes the decision discoverable independent of the plan that produced it.

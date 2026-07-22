@@ -153,7 +153,7 @@ article-orchestration *apparatus* is not).
 - **Rollout report:** [`reports/test1-rollout-report.md`](../reports/test1-rollout-report.md) — dress rehearsal + rename teardown/redeploy/re-validation.
 - **Convention doc:** [`docs/SQL/NAMING-CONVENTIONS.md`](../../../SQL/NAMING-CONVENTIONS.md) §5, §9 (records the reversal).
 - **Implementation:** commit `72f8c17`; validators `db-migrations/tests/global/validate_structure.sql` + `validate_rollout.sql`.
-- **Related ADRs:** `adr-reset-step-registry.md` — owns the whitelisted-dispatch mechanic whose `internal_`→`spInternal_` marker this ADR renames; `adr-module-signing-reset.md` — owns the signing chain whose teardown caveat appears in Failure Modes.
+- **Related ADRs:** `adr-reset-step-registry.md` — owns the whitelisted-dispatch mechanic whose `internal_`→`spInternal_` marker this ADR renames; `adr-module-signing-reset.md` — owns the signing chain whose teardown caveat appears in Failure Modes; [`../../../decisions/0001-maintenance-as-code-roboticoops.md`](../../../decisions/0001-maintenance-as-code-roboticoops.md) §D-A2 — extends this convention with the `t` = `time`-column micro-use (`ops.tMaintenanceJob.tStartTime`, D20), the deliberate second booking of the `t` prefix beyond `t<Table>`.
 
 ## Decision History
 
@@ -180,3 +180,13 @@ and re-validated green.
 the chosen house standard and Ebene A already aligned with it. The change was safe in place only
 because `RoboticoOps` is disposable — the same rename on the non-disposable Ebene-A chain would
 require a new `sp_rename` migration and is therefore explicitly out of scope.
+
+### 2026-07-23 — `t` prefix micro-extension: `time`-typed columns (D20)
+
+**Trigger:** The `mssql-wartung-ola` plan (now [ADR-0001](../../../decisions/0001-maintenance-as-code-roboticoops.md)) introduced `ops.tMaintenanceJob.tStartTime`, a `time`-typed schedule column, and needed a Hungarian prefix for it. This is a reciprocal note added when ADR-0001 was promoted to `docs/decisions/`, making the cross-reference bidirectional per `lifecycle-adr.md`.
+
+**Before:** The Hungarian type-prefix set recorded here was `c`/`k`/`b`/`d`/`n` (string / int key / bit / datetime / non-key int), and a leading `t` marked only a **table** (`t<Singular>`).
+
+**After:** The `t` prefix is deliberately double-booked: on a **table** it stays `t<Singular>`; on a **column** it marks a `time`-typed column (`tStartTime`). Context (table name vs. column name) disambiguates. Recorded as a micro-convention in `docs/SQL/NAMING-CONVENTIONS.md §9` and owned in detail by ADR-0001 §D-A2.
+
+**Reasoning:** A `time`-typed schedule column needed a prefix; reusing `t` (mnemonic for `time`) with table/column context as the disambiguator was preferred over inventing a new letter or leaving the column unprefixed and inconsistent. The extension is additive — it does not change any existing column or table name recorded above.

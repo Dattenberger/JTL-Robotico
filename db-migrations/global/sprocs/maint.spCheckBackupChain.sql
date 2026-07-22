@@ -29,7 +29,7 @@
 -- THROW allocation (README §4 (k)): 51100 = stale chain AND invalid watch target.
 --
 -- @see docs/plans/2026-07-21 - mssql-wartung-ola (§3.2)
--- @see docs/plans/2026-07-21 - mssql-wartung-ola/adrs/adr-backups-cbb-retained.md
+-- @see docs/decisions/0002-backups-cbb-retained.md
 CREATE OR ALTER PROCEDURE maint.spCheckBackupChain
     @Databases    nvarchar(400),
     @FullMaxHours int,

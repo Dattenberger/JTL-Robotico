@@ -36,7 +36,7 @@
 -- currently unused by design — running jobs are skip-and-report, not errors.
 --
 -- @see docs/plans/2026-07-21 - mssql-wartung-ola (§3.2)
--- @see docs/plans/2026-07-21 - mssql-wartung-ola/adrs/adr-maintenance-as-code-roboticoops.md
+-- @see docs/decisions/0001-maintenance-as-code-roboticoops.md
 CREATE OR ALTER PROCEDURE maint.spEnsureMaintenanceJobs
 AS
 BEGIN

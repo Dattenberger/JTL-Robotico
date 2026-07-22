@@ -62,6 +62,18 @@ This repository contains SQL scripts only - no build processes, package managers
 - UTF-8 BOM encoding in files (visible as special characters at start)
 - Custom workflows extend base JTL functionality
 
+## Subsystems
+
+The canonical list of subsystems that ADRs (`docs/decisions/`) reference in their
+`Subsystem:` header. A new subsystem is added here **first**, then referenced from
+ADRs — this table is the single source of truth for valid `Subsystem:` values.
+
+| Subsystem | Scope |
+|---|---|
+| **RoboticoOps** | The `RoboticoOps` admin database and its owned schemas (`ops` registries, `reset` pipeline, `maint` SQL maintenance) — server-side ops tooling that survives every mandant restore. Home of the reset-step registry, the maintenance suite (Ola vendored + `ops.tMaintenanceJob`), sa-owned Agent jobs, and Database-Mail alerting. |
+| **Testmandant Reset** | The on-demand test-mandant reset mechanic: DROP + restore of the `eazybusiness_tm*` clones driven by `ops.tResetRequest`/`ops.tResetStep` and the `reset.*` pipeline procs, executed by a sa-owned Agent job. |
+| **JTL SQL Migrations** | The `db-migrations/` grate chains (Ebene A `eazybusiness` content + Ebene B `global`/RoboticoOps): the versioned `up/`, anytime `sprocs/`/`runAfter…/`, and `permissions/` scripts, their hand-idempotency rules, and the migration lint (THROW-number allocation, filename↔object matching). |
+
 ## Database Object Documentation — update contract
 
 `docs/SQL/MSSQL-OPS-DATA-MODEL.md` is the column-level reference for the

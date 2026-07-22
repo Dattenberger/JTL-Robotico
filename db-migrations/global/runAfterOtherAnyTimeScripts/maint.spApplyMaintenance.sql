@@ -30,7 +30,7 @@
 -- registry is fully repo-owned — there are no foreign rows to protect.
 --
 -- @see docs/plans/2026-07-21 - mssql-wartung-ola (§3.3)
--- @see docs/plans/2026-07-21 - mssql-wartung-ola/adrs/adr-maintenance-as-code-roboticoops.md
+-- @see docs/decisions/0001-maintenance-as-code-roboticoops.md
 CREATE OR ALTER PROCEDURE maint.spApplyMaintenance
 AS
 BEGIN

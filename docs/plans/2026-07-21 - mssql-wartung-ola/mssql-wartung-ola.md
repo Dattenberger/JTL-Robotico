@@ -5,12 +5,12 @@
 **Repo:** JTL-Robotico
 **Branch / Worktree:** feature/mssql-ops-infrastruktur (in worktrees/feature/mssql-ops-infrastruktur)
 **Complexity:** Small–Medium
-**Modular?:** Nein — Detail flach in §3; die Architektur-Entscheidungen liegen in den beiden plan-scoped ADRs
+**Modular?:** Nein — Detail flach in §3; die Architektur-Entscheidungen liegen in den beiden ADRs
 **archive_target:** 2026-07-21 - mssql-wartung-ola
 
-**Zugehörige ADRs (plan-scoped, pending promotion):**
-- [adrs/adr-maintenance-as-code-roboticoops.md](adrs/adr-maintenance-as-code-roboticoops.md) — Kern: Ola vendored in RoboticoOps, deklarative Registry `ops.tMaintenanceJob`, `maint.spEnsureMaintenanceJobs`-Sync, ein Job pro Operation, Alarmierung.
-- [adrs/adr-backups-cbb-retained.md](adrs/adr-backups-cbb-retained.md) — Backups bleiben bei CBB; kein Ola-Backup; read-only Backup-Ketten-Watchdog.
+**Zugehörige ADRs (promoted → `docs/decisions/`):**
+- [0001-maintenance-as-code-roboticoops.md](../../decisions/0001-maintenance-as-code-roboticoops.md) — Kern: Ola vendored in RoboticoOps, deklarative Registry `ops.tMaintenanceJob`, `maint.spEnsureMaintenanceJobs`-Sync, ein Job pro Operation, Alarmierung.
+- [0002-backups-cbb-retained.md](../../decisions/0002-backups-cbb-retained.md) — Backups bleiben bei CBB; kein Ola-Backup; read-only Backup-Ketten-Watchdog.
 
 **Grundlage:** [research/6-wartung-ist-analyse](../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) (Live-IST der vm-sql2-Wartung).
 
@@ -434,10 +434,10 @@ Die zwei nach der QG-Runde-2-Einarbeitung offenen Punkte geschlossen:
 
 ## 6. References
 
-- **ADRs:** [adr-maintenance-as-code-roboticoops](adrs/adr-maintenance-as-code-roboticoops.md), [adr-backups-cbb-retained](adrs/adr-backups-cbb-retained.md)
+- **ADRs:** [adr-maintenance-as-code-roboticoops](../../decisions/0001-maintenance-as-code-roboticoops.md), [adr-backups-cbb-retained](../../decisions/0002-backups-cbb-retained.md) (promoted → `docs/decisions/`)
 - **Research:** [6-wartung-ist-analyse](../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)
 - **Muster-Vorbild:** `db-migrations/global/runAfterOtherAnyTimeScripts/reset.spEnsureAgentJob.sql` + `permissions/200_ensure_agent_job.sql` (sa-owned Job-Ensure + everytime-Self-Heal), [adr-reset-step-registry](../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md) (Registry-Muster), [adr-module-signing-reset](../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md) (sa-owned-Agent-Job-Muster, Begründung von D3), [adr-two-chain-migration-paths](../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-two-chain-migration-paths.md) (Ebene-B-Platzierung + hand-idempotente `up/`-Regel), [adr-ebene-b-hungarian-naming](../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-ebene-b-hungarian-naming.md) (Naming-Konvention adoptiert; `t`=time ist eine dokumentierte Mikro-Erweiterung, D20), [adr-grate-migration-runner](../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-grate-migration-runner.md) (Stufen-/Folder-Order-Garantie, auf der die `260`-Erst-Deploy-Konvergenz beruht, D17)
-- **Promotions-Aufgaben (bei ADR-Promotion dieses Plans):** (a) Rückverweis/Decision-History-Notiz auf `adr-ebene-b-hungarian-naming` zur `t`=time-Mikro-Erweiterung (macht den Link bidirektional; Enumeration der ADR bleibt sonst still unvollständig); (b) „Subsystems"-Tabelle in `CLAUDE.md` ergänzen (`RoboticoOps`, `Testmandant Reset`, `JTL SQL Migrations`, `DB / Migrations`), damit die `Subsystem:`-Header aller sechs ADRs der Kohorte kanonisch verankert sind.
+- **Promotions-Aufgaben (bei ADR-Promotion dieses Plans) — erledigt 2026-07-23:** (a) Rückverweis/Decision-History-Notiz auf `adr-ebene-b-hungarian-naming` zur `t`=time-Mikro-Erweiterung (macht den Link bidirektional; Enumeration der ADR bleibt sonst still unvollständig) — ✅; (b) „Subsystems"-Tabelle in `CLAUDE.md` ergänzt (`RoboticoOps`, `Testmandant Reset`, `JTL SQL Migrations`), damit die `Subsystem:`-Header der ADR-Kohorte kanonisch verankert sind — ✅. Die beiden Wartungs-ADRs sind nach `docs/decisions/0001`/`0002` promotet; die vier älteren mssql-ops-ADRs bleiben plan-scoped (ihr Plan ist noch aktiv).
 - **Übergeordnetes Programm:** [mssql-ops-infrastruktur](../2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md)
 - **Datenmodell-Vertrag:** `docs/SQL/MSSQL-OPS-DATA-MODEL.md`; CLAUDE.md §„Database Object Documentation"
 - **Extern:** [Ola Hallengren Maintenance Solution](https://ola.hallengren.com/)
