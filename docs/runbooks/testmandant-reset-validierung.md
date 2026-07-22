@@ -81,10 +81,12 @@ seed mechanism the rollout runbook uses; do not hand-edit prod data.
 
 ## Step 2 — Enable the SQL-Agent
 
-test1's SQL-Agent is Stopped/Manual by default (survey §4). The reset job runs
-under the Agent, so start it for the duration of the test:
+test1's baseline is **SQL-Agent Running** with the maintenance switch
+`ops.tConfig('MaintenanceSchedulesEnabled') = '0'` (ADR-A D-A6 / D34): the switch is the
+gate, not the service state. The reset pipeline needs the running Agent for `sp_start_job`,
+so the Agent stays up — the `'0'` switch is what keeps scheduled maintenance idle on test1.
 
-- Start the SQL Server Agent service on the test1 host.
+- Confirm the SQL Server Agent service is running on the test1 host (it is by default).
 - Confirm the reset job exists: job name `RoboticoOps - Testmandant Reset`.
 
 ## Step 3 — Trigger the reset
@@ -217,7 +219,12 @@ rows per mandant). If a hard delete is really wanted: first manually `DELETE
 ops.tResetRequest WHERE cMandantKey = N'tm9'` (needs a sysadmin/dbo session — `ops_admin`
 deliberately has no direct DELETE on the audit table; reviewed, this erases the audit
 trail), then delete the mandant row.
-Stop the SQL-Agent again if test1 should return to its Stopped/Manual baseline.
+The baseline is already restored: the SQL-Agent stays **Running** with
+`ops.tConfig('MaintenanceSchedulesEnabled') = '0'` — the switch, not the service state, is
+what holds scheduled maintenance idle (ADR-A D-A6 / D34), and the reset pipeline needs the
+running Agent for `sp_start_job`. Stopping the Agent service is optional and requires
+Windows service rights (ZDBIKES-Admin via `services.msc`) — it cannot be done from the SQL
+session.
 
 ---
 

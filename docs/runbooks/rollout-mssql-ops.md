@@ -110,7 +110,15 @@ The global chain now also carries the maintenance suite (plan
 legacy Ola install in `eazybusiness.dbo` must therefore be removed **before** the
 deploy — otherwise two IndexOptimize jobs run against different object sets (ADR-A
 failure mode). Manual runbook step, not a migration (`dbo` is never touched by a
-migration):
+migration).
+
+This cleanup covers **both instances in the same step** — prod (`vm-sql2`) and the test
+instance (`vm-sql-test1`). Rationale: prod is the source of every test1 re-seed, so a
+restore drags the legacy remnants back onto test1. Cleaning only one instance means the
+next re-seed re-imports the remnants; only cleaning both together is robust
+(Research: `docs/plans/2026-07-21 - mssql-wartung-ola/reports/followup-R1-legacy-ola-test1.md`).
+
+**On prod (`vm-sql2`) — 11 legacy Ola jobs + `eazybusiness.dbo` remnants:**
 
 1. Inventory: confirm the Ola objects in `eazybusiness.dbo` and the 11 legacy Ola jobs
    (query `sys.objects` for `CommandLog`/`CommandExecute`/`DatabaseIntegrityCheck`/
@@ -122,6 +130,20 @@ migration):
    `DatabaseIntegrityCheck` and any remains of `IndexOptimize`/`DatabaseBackup` and Ola
    tables from `eazybusiness.dbo`. No coverage is lost: the old jobs have been
    ineffective since ~2025-11 (IndexOptimize failing nightly, last CHECKDB 2024).
+
+**On test1 (`vm-sql-test1`) — only 3 DB objects, no msdb jobs:**
+
+test1 carries **no** legacy Ola agent jobs — only three orphaned DB objects, and they are
+already functionally broken (`dbo.CommandExecute` is missing, so nothing can invoke them):
+
+4. **Archive test1's CommandLog before dropping** (D39, same pattern — `dbo.CommandLog`
+   holds 9,218 rows):
+   `SELECT * INTO RoboticoOps.dbo.CommandLog_legacy_eazybusiness FROM eazybusiness.dbo.CommandLog;`
+   (run against the test1 instance's own RoboticoOps).
+5. Drop the three objects from `eazybusiness.dbo`: `CommandLog`, `DatabaseBackup`,
+   `DatabaseIntegrityCheck`. No msdb jobs to delete. Leave the separate
+   `eazybusiness.DBA.spOla*` group (2026-06-13) untouched — it is a different install and
+   out of scope here.
 
 Preconditions: the RoboticoOps prod cutover itself (this runbook's Phases 1–3); the
 foreign prod DBs stay deliberately in the active maintenance scope (D40 — no exclusion
