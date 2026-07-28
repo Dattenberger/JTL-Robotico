@@ -32,6 +32,21 @@ A failing lint means the tree is not deployable. Fix first. Confirm the two serv
 their DB lists in `db-migrations/targets.config.json` are current (test1 = SQL 2025,
 prod = SQL 2022 — restore is old→new only; promotion is script-only).
 
+> [!IMPORTANT]
+> **grate runner setup — use the NATIVE runner for TEST/PROD (Kerberos).** `deploy.ps1`
+> auto-detects the runner: a `grate` binary on `PATH` → **native**; otherwise it falls back
+> to the Docker image `erikbra/grate`. **The Docker runner cannot do Windows/Kerberos auth**
+> and only reaches a `localhost,PORT` container — so against the real TEST/PROD servers you
+> **must** use native grate. The native install (`grate` under `~/.dotnet/tools`) needs the
+> .NET runtime discoverable in the shell, which is **not** persisted across sessions:
+> ```bash
+> export DOTNET_ROOT="$HOME/.dotnet"
+> export PATH="$HOME/.dotnet:$HOME/.dotnet/tools:$PATH"
+> grate --version    # confirm it resolves BEFORE deploying; else deploy.ps1 silently uses Docker
+> ```
+> Verify `deploy.ps1`'s first `==> grate: … runner=native` line on every real-server deploy.
+> The Docker runner is correct **only** for the local E2E container (`-Environment E2E`).
+
 ## Phase 1 — Baseline Ebene A (prod + test1)
 
 Adopt the already-deployed `Robotico.*` / `CustomWorkflows.*` objects into the grate
@@ -293,3 +308,140 @@ of this rollout — they are handled separately and manually:
   To recover sooner without server rights, a colleague runs
   `EXEC reset.spPub_CancelResetRequest @RequestId = <id>;` — it cancels a `queued` request and
   force-reclaims a `running` one only when the job is not actually executing (OPS-2).
+- **Full Ebene-B rebuild (drop + redeploy `RoboticoOps`):** see the **master-certificate**
+  step in the commissioning checklist below — the signing cert + login live in `master` and
+  are NOT re-created by a plain redeploy. Dropping only the DB leaves a broken signature chain.
+
+---
+
+## Commissioning checklist — E2E-verified mandatory steps & new artifacts
+
+This section consolidates the operational steps that the full container E2E (2026-07,
+`docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/migration-testplan/`) proved are
+**mandatory** and easy to miss. It is written for an operator without session context. The
+phases above are the sequence; this is the "don't forget" layer plus the artifacts added by
+the Phase-4 bugfixes.
+
+### New artifacts since the test (verify they deployed)
+
+The bugfix round added three objects the verification block must confirm:
+
+- **`db-migrations/global/permissions/255_reset_cancel_msdb_grants.sql`** (everytime) — grants
+  `jobstartuser` **direct** `SELECT` on `msdb.dbo.syssessions`, `sysjobs`, `sysjobactivity`.
+  Without it `spPub_CancelResetRequest`'s `running`-branch dies with **Msg 229** before the
+  51007 guard (the `SQLAgentOperatorRole` membership does **not** survive the signed cross-DB
+  `EXECUTE AS` hop — only direct object grants do).
+- **`db-migrations/eazybusiness/up/0004_customworkflows_schema_precondition.sql`** (one-time) —
+  fail-fast: if the `CustomWorkflows` schema is absent it raises **THROW 50002** with a clear
+  message instead of a bare `Msg 2760` deep in the anytime pass. On an adopted prod DB (schema
+  present) it is a journaled no-op.
+- **`reset.spInternal_GrantAccess`** now WARN-skips **special principals** (`sa`/`dbo`): never
+  register a mandant with `cLoginName = 'sa'` — use a real, non-special developer login, or the
+  clone gets no `db_owner` (a logged WARN, reset still `succeeded`).
+
+```bash
+# After the Ebene-B deploy, confirm the three msdb grants landed (as sa/sysadmin, on RoboticoOps target server):
+sqlcmd -S <server> -E -C -d msdb -Q "SELECT dp.name AS grantee, o.name AS obj, p.permission_name
+  FROM sys.database_permissions p JOIN sys.objects o ON o.object_id=p.major_id
+  JOIN sys.database_principals dp ON dp.principal_id=p.grantee_principal_id
+  WHERE dp.name='jobstartuser' AND o.name IN ('syssessions','sysjobs','sysjobactivity');"
+# Expect 3 rows, permission_name = SELECT.
+```
+
+### Mandatory steps (order matters)
+
+> [!IMPORTANT]
+> **1. Repoint `ops.tConfig` paths before the first reset (Category C / F2.5).** The seeds
+> (`up/0020`) carry Windows paths (`E:\work\…`, `E:\MSSQL\Data`). On a host whose real paths
+> differ (and on any Linux instance) the first reset fails at `xp_create_subdir`/`BACKUP`.
+> Set them to the target's real paths in a reviewed admin session **before** kicking any reset:
+> ```sql
+> UPDATE ops.tConfig SET cValue = N'<real backup path>'   WHERE cKey = N'BackupFile';
+> UPDATE ops.tConfig SET cValue = N'<real data dir>'      WHERE cKey = N'TargetDataDir';
+> SELECT cKey, cValue FROM ops.tConfig WHERE cKey IN (N'BackupFile',N'TargetDataDir',N'SourceDb');
+> ```
+
+> [!IMPORTANT]
+> **2. `MaintenanceSchedulesEnabled` — setting the config value is not enough; you must
+> re-run the ensure proc (Category C).** The maintenance jobs take their enabled-state from the
+> switch **at creation time**. Changing `ops.tConfig('MaintenanceSchedulesEnabled')` afterwards
+> does **not** retroactively enable/disable already-created jobs — you must run
+> `EXEC maint.spEnsureMaintenanceJobs;` to converge them (it reports `N change(s)` and recreates
+> drifted jobs). On **prod** the switch stays **unset** (= enabled, D34); on a test/staging box
+> where you want them idle, set `'0'` **and** run the ensure. Verify with
+> `db-migrations/tests/global/validate_rollout.sql` (it checks the `bEnabled AND switch<>'0'`
+> equation per job).
+
+> [!CAUTION]
+> **3. A full Ebene-B rebuild must drop the master certificate + signing login too (Category C /
+> F-3).** `up/0011` (the `RoboticoOpsSigning` cert + private key) and the `master`
+> `RoboticoOpsSigningLogin` are one-time / master-scoped; a plain `DROP DATABASE RoboticoOps`
+> followed by redeploy leaves them behind and the msdb signature chain breaks. When you rebuild
+> Ebene B, drop **all** of: the agent job, `RoboticoOps`, `RoboticoOpsSigningLogin`, and the
+> **`master` certificate `RoboticoOpsSigning`**, then redeploy so `up/0011` re-creates a fresh,
+> consistent cert/login pair. (This generalises the test1-teardown note from the dress rehearsal.)
+
+**Commissioning checklist (tick before declaring the instance live):**
+
+- [ ] Native grate resolves (`runner=native`), not the Docker fallback (Phase 0 note).
+- [ ] Both chains deployed; `db-migrations/tests/validate-rollout.ps1 -Environment PROD` green.
+- [ ] The three `permissions/255` msdb grants present (query above).
+- [ ] `up/0004` journaled (no THROW 50002 → `CustomWorkflows` schema present).
+- [ ] `ops.tConfig` paths repointed to real host paths.
+- [ ] `EXEC maint.spEnsureMaintenanceJobs` run after any switch change; `validate_rollout.sql` green.
+- [ ] `RoboticoOps` on the instance backup plan with **LOG** backups (Phase 2/4 note).
+- [ ] Agent job-history limit raised (Phase 4b, D38).
+- [ ] Real mandant `cLoginName` is a non-special login (not `sa`/`dbo`).
+
+---
+
+## Post-deployment checks — open points requiring a real server
+
+Five behaviours the container E2E could **not** settle (platform/domain limits). They are
+**not prod-blocking** per the user's decision, but must be checked on the real server once,
+post-cutover. Concrete commands below; run each and record the outcome.
+
+> [!NOTE]
+> These are **acceptance checks on the running prod/test instance**, not deploy steps. None of
+> them changes the deployment; they confirm the platform-specific behaviour the disposable
+> Linux container could not exercise.
+
+1. **SQL-Agent-down behaviour (22022 swallow).** Hypothesis: with the Agent **stopped**,
+   `spPub_StartTestmandantReset` calls `sp_start_job`, which throws **22022**; the Start proc
+   treats every 22022 as "job already running" and the request stays silently `queued`. Verify
+   on **test1** (never provoke on prod): stop the Agent service, run
+   `EXEC reset.spPub_StartTestmandantReset @MandantKey=N'<test mandant>';`, then
+   `SELECT cStatus FROM ops.tResetRequest WHERE cMandantKey=N'<…>' ORDER BY kResetRequest DESC;`
+   — if it sits at `queued` with no worker, the swallow is confirmed → file a follow-up
+   (text/state check instead of a bare `ERROR_NUMBER()=22022` match). Restart the Agent after.
+2. **Real Database-Mail delivery.** The container only exercised the structure/PRINT path. On
+   prod, the natural `backup-watchdog` alarm is the acceptance path (Phase 4b): until
+   `RoboticoOps` is in CBB, the hourly THROW 51100 → operator mail **must** actually arrive at
+   `lukas@dattenberger.com` within an hour of the Agent restart. If it does not, Database Mail /
+   the operator wiring is broken. Also confirm the profile:
+   `EXEC msdb.dbo.sysmail_help_profile_sp;` and the operator
+   `SELECT name, email_address FROM msdb.dbo.sysoperators WHERE name='RoboticoOps-Maint';`
+3. **Windows Agent mail profile via registry (P-1).** `permissions/260` sets the Agent mail
+   profile with `xp_instance_regwrite` — correct on Windows, **ineffective on Linux** (see
+   `docs/SQL/MSSQL-OPS-ARCHITECTURE.md` §6.7). On the Windows prod box, confirm the Agent picked
+   it up: `EXEC master.dbo.xp_instance_regread N'HKEY_LOCAL_MACHINE',
+   N'SOFTWARE\Microsoft\MSSQLServer\SQLServerAgent', N'DatabaseMailProfile';` should return the
+   assigned profile; and Agent Properties → Alert System shows "Enable mail profile" ticked.
+4. **CEST wall-clock schedules.** The container runs UTC, so absolute schedule times were not
+   verifiable. On prod confirm the maintenance windows fire at the intended **local** time:
+   after the first scheduled night, check `msdb.dbo.sysjobhistory` (run_date/run_time) for
+   `checkdb` (Sun/Wed 01:00) and `index-optimize` (02:00) — they must finish before the 03:00
+   full. Adjust start times in `maint.spApplyMaintenance.sql` (git + deploy) if they drift.
+5. **AD / Windows-auth grant paths.** `100_grants.sql` grants to `ZDBIKES\sql-jtl-users` and
+   `spInternal_ApplyJtlRoles` adds AD members — the container has no domain, so only the
+   skip-path was proven. On prod verify the real membership resolved:
+   `SELECT r.name AS role, m.name AS member FROM sys.database_role_members rm
+   JOIN sys.database_principals r ON r.principal_id=rm.role_principal_id
+   JOIN sys.database_principals m ON m.principal_id=rm.member_principal_id
+   WHERE r.name IN ('JTL_Reader','JTL_Writer');` on a fresh clone after a real reset.
+
+> [!TIP]
+> Full evidence and the per-case results behind these checks live in
+> `docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/migration-testplan/` (`99-gesamttestplan.md`
+> §8.3 open points, and the `ergebnisse/` topic reports). This runbook is the action layer; that
+> folder is the "why".

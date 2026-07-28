@@ -191,6 +191,28 @@ Key observations [DB]:
 
 [INFER] At runtime JTL therefore executes `EXEC CustomWorkflows.<ActionName> @<pk>=<objectPk>, @<extra>=<rendered value>, …`. The engine does not read any RETURN/OUTPUT (see §5).
 
+### 4.4 Guard triggers on JTL write-target tables [DB — verified E2E 2026-07]
+
+Custom actions that **write JTL business tables** must know which target tables carry a
+rollback-guard trigger. A guard trigger silently rolls back (or errors on) a *direct* `INSERT/UPDATE`
+that does not carry the sanctioned `CONTEXT_INFO` bypass marker the JTL vendor SP sets — so the action
+must route its writes through the vendor SP (which sets the marker) instead of writing the table
+directly. Empirically confirmed against a real `eazybusiness` clone:
+
+| Target table | Guard trigger? | Write path a custom action must use |
+|---|---|---|
+| `dbo.tLieferantenBestellungPos` (positions) | **Yes** — `tgr_tlieferantenBestellungPos_INSUPDEL` | Vendor SP `Lieferantenbestellung.spLieferantenBestellungPosBearbeiten`; seed/bypass marker **`CONTEXT_INFO 0x5123`** |
+| `dbo.tLieferantenBestellung` (head) | **Yes** — its *own* guard trigger | bypass marker **`CONTEXT_INFO 0x5121`** (distinct from the position table); the `cFremdbelegnummer` head field was observed writable via a direct `UPDATE` in the live action, so the head guard tolerates that specific column |
+| `dbo.tLagerArtikel` | **No** rollback guard | direct write is accepted (used by `spSeriennummerStandardZuWMS`) |
+| `dbo.tArtikel` | validator trigger present, but a direct write **goes through** | direct write is accepted (used by `spGebindeErstellen`, `spZustandartikelLieferantSetzen`) |
+
+Consequence: `spVpeCheckLieferantenbestellung` writes positions through the vendor SP (guard), the
+head field directly; `spGebindeErstellen` / `spSeriennummerStandardZuWMS` /
+`spZustandartikelLieferantSetzen` write their article/stock tables directly — and their
+functional tests passing is the live proof those direct writes are accepted (no guard blocks them).
+The two `CONTEXT_INFO` bypass constants (**head `0x5121`, position `0x5123`**) are the values to seed
+guarded rows in a test fixture.
+
 ---
 
 ## 5. Conditions vs. actions — can an action return a gating boolean?

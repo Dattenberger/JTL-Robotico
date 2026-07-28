@@ -312,7 +312,20 @@ overwritten. **Rule:** schedule/threshold/scope changes are made in
 `maint.spApplyMaintenance.sql` and deployed, never edited live. (Instance *state*
 stays admin-owned in `ops.tConfig`: `MaintenanceSchedulesEnabled = '0'` on test1.)
 
-### 6.7 Never write to a server autonomously
+### 6.7 Platform note — Agent mail profile: registry (Windows) vs. `mssql-conf` (Linux) [verified E2E 2026-07]
+
+`permissions/260_maintenance_operator.sql` assigns the SQL-Agent Database-Mail profile via
+`xp_instance_regwrite` (`…\SQLServerAgent\DatabaseMailProfile` / `UseDatabaseMail`). This is the
+**correct path on Windows** (prod). On **Linux** the call runs **without error but is ineffective**:
+the written value is not read back by the Agent (verified in the container E2E — `xp_instance_regwrite`
+succeeds, a subsequent `xp_instance_regread` does not return it). On a Linux SQL Server the Agent
+mail profile must instead be set with `mssql-conf set sqlagent.databasemailprofile <name>` (+ Agent
+restart). This is a **platform difference, not a bug** — prod is Windows, where `260` is right. Any
+Linux deployment of the maintenance suite needs the `mssql-conf` step for real mail; the container
+tests exercised only the structure/operator/PRINT path, not real SMTP delivery. See the rollout
+runbook's post-deployment checks for the Windows-side mail-path verification.
+
+### 6.8 Never write to a server autonomously
 
 No process in this repo writes to a SQL Server on its own. Read-only catalog queries
 against test1/prod are fine; every deploy/reset against **prod** is a human-gated runbook
