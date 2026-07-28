@@ -80,6 +80,13 @@ BEGIN
     -- 'running': force-reclaim only if the reset job is not actually executing. Restrict
     -- to the CURRENT Agent session (max agent_start_date) and look for an activity row
     -- that started but has not stopped — the canonical "is this job running now?" probe.
+    --
+    -- GOTCHA (F-1): this proc is EXECUTE AS 'jobstartuser' + signed. When that impersonated
+    -- context crosses into msdb, jobstartuser's DIRECT object grants apply but its ROLE
+    -- membership (SQLAgentOperatorRole) does NOT — so these three catalog tables must be
+    -- SELECT-granted to jobstartuser EXPLICITLY. That is done every deploy by
+    -- permissions/255_reset_cancel_msdb_grants.sql. Without it this EXISTS throws Msg 229
+    -- (denied on syssessions) before the 51007 guard is ever reached.
     IF EXISTS (
         SELECT 1
         FROM msdb.dbo.sysjobactivity ja

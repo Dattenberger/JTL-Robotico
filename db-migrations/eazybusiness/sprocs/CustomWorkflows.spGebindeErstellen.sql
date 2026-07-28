@@ -38,6 +38,25 @@ BEGIN
             FROM dbo.tArtikel
             WHERE kArtikel = @kArtikel;
 
+            -- 1b. Idempotency guard (F4.6): this action is a ONE-TIME migration per
+            -- article. Its own fingerprint is the migration suffix it appends to the
+            -- article's HAN/GTIN below ('-gebinde-umgezogen' or
+            -- '-keine-Lieferanten-angepasst'). Because the whole body is atomic
+            -- (TRY/CATCH + single transaction), that suffix is present iff a prior run
+            -- already created the tGebinde row — so a re-run must be a NO-OP. Without
+            -- this guard a second call inserts a duplicate tGebinde row and doubles the
+            -- suffix. Check both columns because '+' propagates NULL: if cHAN is NULL
+            -- the suffix lands only on cBarcode (and vice versa).
+            IF @cHAN  LIKE N'%-gebinde-umgezogen'
+               OR @cHAN  LIKE N'%-keine-Lieferanten-angepasst'
+               OR @cGTIN LIKE N'%-gebinde-umgezogen'
+               OR @cGTIN LIKE N'%-keine-Lieferanten-angepasst'
+            BEGIN
+                -- Already migrated by a previous run -> nothing to do.
+                COMMIT TRANSACTION;
+                RETURN;
+            END
+
             -- 2. Read Data from tLiefArtikel and validate count
             SELECT @nLieferantenCount = COUNT(*)
             FROM dbo.tLiefArtikel

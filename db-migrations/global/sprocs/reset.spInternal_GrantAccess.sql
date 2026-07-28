@@ -10,6 +10,13 @@
 -- valid; access can be granted later) — the source RAISERROR'd. Uses ALTER ROLE ...
 -- ADD MEMBER instead of the deprecated sp_addrolemember.
 --
+-- Special-principal skip (F4.2/F4): a login that is a sysadmin (e.g. 'sa') already maps
+-- to dbo in every database, so CREATE USER FOR LOGIN cannot run for it (Msg 15405 for
+-- the reserved name 'sa'; Msg 15063 "login already has an account under a different user
+-- name" for other sysadmins). Such a login already HAS full ownership of the clone, so
+-- there is nothing to grant — we log a WARN and skip, exactly like the missing-login case
+-- (PAR-1), instead of letting the pipeline step fail and quarantine an otherwise-good clone.
+--
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 CREATE OR ALTER PROCEDURE reset.spInternal_GrantAccess
     @TargetDb   sysname,
@@ -34,6 +41,15 @@ BEGIN
         -- the reset still 'succeeds', but no developer has db_owner on the clone.
         SET @note = N'WARN access-skipped: login ' + ISNULL(@LoginName, N'(none)')
                   + N' not found on server — developer has NO db_owner on ' + @TargetDb;
+    END
+    ELSE IF IS_SRVROLEMEMBER(N'sysadmin', @LoginName) = 1
+    BEGIN
+        -- Special-principal skip (F4.2/F4): a sysadmin login ('sa' or any sysadmin) already
+        -- maps to dbo in the clone. CREATE USER FOR LOGIN would throw (15405/15063), which
+        -- as a critical step would fail the whole reset. It already has full access, so
+        -- WARN-skip like the missing-login branch rather than create a db_owner user.
+        SET @note = N'WARN access-skipped: login ' + @LoginName
+                  + N' is a sysadmin (already maps to dbo) — no explicit db_owner user created on ' + @TargetDb;
     END
     ELSE
     BEGIN

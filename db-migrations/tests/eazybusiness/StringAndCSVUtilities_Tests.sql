@@ -208,7 +208,7 @@ GO
 PRINT '--- Test 5: fnStringParseGermanDecimal ---';
 
 DECLARE @t5_passed INT = 0;
-DECLARE @t5_total INT = 6;
+DECLARE @t5_total INT = 8;
 
 -- 5a: Einfache Dezimalzahl
 DECLARE @t5a DECIMAL(25,13) = Robotico.fnStringParseGermanDecimal('99,99');
@@ -242,6 +242,19 @@ ELSE PRINT '  x Empty: FAILED';
 IF Robotico.fnStringParseGermanDecimal('abc') IS NULL
 BEGIN PRINT '  + "abc" -> NULL (invalid)'; SET @t5_passed += 1; END
 ELSE PRINT '  x "abc": FAILED (expected NULL)';
+
+-- 5g: US-Format '1,234.56' -> NULL (Regression F4.4: '.' nach ',' ist nicht Deutsch;
+--     ohne Fix wurde still 1.23456 geliefert).
+DECLARE @t5g DECIMAL(25,13) = Robotico.fnStringParseGermanDecimal('1,234.56');
+IF @t5g IS NULL
+BEGIN PRINT '  + "1,234.56" (US format) -> NULL (rejected)'; SET @t5_passed += 1; END
+ELSE PRINT '  x "1,234.56": FAILED (expected NULL, got: ' + CAST(@t5g AS NVARCHAR(30)) + ')';
+
+-- 5h: Deutsche Millionen '1.234.567,89' bleiben korrekt (Fix darf DE nicht brechen).
+DECLARE @t5h DECIMAL(25,13) = Robotico.fnStringParseGermanDecimal('1.234.567,89');
+IF @t5h BETWEEN 1234567.889 AND 1234567.891
+BEGIN PRINT '  + "1.234.567,89" -> ' + CAST(@t5h AS NVARCHAR(30)); SET @t5_passed += 1; END
+ELSE PRINT '  x "1.234.567,89": FAILED (got: ' + ISNULL(CAST(@t5h AS NVARCHAR(30)), 'NULL') + ')';
 
 PRINT '  Result: ' + CAST(@t5_passed AS NVARCHAR(5)) + '/' + CAST(@t5_total AS NVARCHAR(5)) + ' passed';
 INSERT INTO #TestResults VALUES ('fnStringParseGermanDecimal', @t5_passed, @t5_total);

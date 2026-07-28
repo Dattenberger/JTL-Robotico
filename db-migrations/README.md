@@ -170,7 +170,9 @@ match `tests/lint-migrations.ps1`.
   `51105` maint.spCheckMaintenanceLiveness (stale maintenance, D36) ·
   `51110` maint.spEnsureMaintenanceJobs (guard/error path, reserved) ·
   `51120` maint.spRunMaintenanceJob (unknown `cJobKey`).
-  Ebene A: `50000` spGebindeErstellen. `51100–51129` are reserved for the `maint.*`
+  Ebene A: `50000` spGebindeErstellen · `50001` spVpeCheckLieferantenbestellung ·
+  `50002` up/0004 CustomWorkflows-schema precondition.
+  `51100–51129` are reserved for the `maint.*`
   suite; new reset steps take the next free `510x0` block **starting at `51130`**.
 - **(l) Every `global/` proc is registered in the structure test.** Each file under
   `global/sprocs/` and `global/runAfterOtherAnyTimeScripts/` must appear in the
@@ -399,6 +401,25 @@ confirmation).
 > This repository never writes to a SQL Server autonomously. PROD deployment is always a
 > human-gated runbook step. See `docs/runbooks/rollout-mssql-ops.md`.
 
+> [!NOTE]
+> **Verified deploy behaviour (container E2E, 2026-07).** Five grate semantics were confirmed
+> empirically and are load-bearing for the failure model:
+> - **Ebene A `--transaction` is one transaction over the whole run (all-or-nothing).** A failure
+>   in *any* script — including an *anytime* object late in the run — rolls back the **entire**
+>   Ebene-A deploy, including one-time `up/` scripts of the same run (observed: an anytime error
+>   rolled back the `up/0003` PayPal drop). Ebene B has **no** wrapping transaction and commits
+>   **per script** (each `up/` is individually idempotent — §2).
+> - **The grate runner (native and Docker) propagates a SQL error as process exit ≠ 0** — every
+>   failure expectation is reliably observable via the exit code.
+> - **`permissions/` scripts DO write `ScriptsRun` journal rows** (everytime, one per file per run);
+>   the journal row count is therefore *anytime files + everytime permissions files*, not anytime alone.
+> - **A `ScriptsRunErrors` row survives the Ebene-A `--transaction` rollback** (grate records it
+>   outside the rolled-back scope) — the error trail stays readable after a failed run.
+> - **A wrong `{{CertPassword}}` on a later global deploy surfaces first as a grate
+>   `OneTimeScriptChanged` error** (the `up/0011` one-time hash path), *before* the `900` re-sign
+>   reaches its `THROW 50901`. Expect the OneTimeScriptChanged message (exit ≠ 0) as the primary
+>   failure mode.
+
 ---
 
 ## 8. Testing
@@ -416,14 +437,23 @@ pwsh db-migrations/tests/lint-migrations.ps1
 ```
 
 > [!IMPORTANT]
-> **Engine floor for the Ebene-A string/CSV API: SQL Server 2022+.**
+> **Engine floor for the Ebene-A string/CSV API: SQL Server 2022+ (the *engine*, not the
+> database compatibility level).**
 > `Robotico.fnEscapedCSVParseLine` and `Robotico.fnStringTrimToMaxLines` use the
-> 3-argument `STRING_SPLIT(…, 1)` (`enable_ordinal`), introduced in SQL Server 2022 (16.x).
-> Their consumers (the history procs, `fnEscapedCSVGetField`, the duplicate-order flow)
-> inherit that floor. `CREATE` succeeds on older engines, but the functions **fail at
-> runtime** there — and Ebene-A objects travel with mandant clones, which can carry a lower
-> database compatibility level than their host. Before relying on these on a new target,
-> verify its engine version / compat level.
+> 3-argument `STRING_SPLIT(…, 1)` (`enable_ordinal`), which requires the **SQL Server 2022 (16.x)
+> engine or newer**. Their consumers (the history procs, `fnEscapedCSVGetField`, the
+> duplicate-order flow) inherit that floor.
+>
+> **Correction (verified E2E 2026-07, T4-13):** the `enable_ordinal` form is gated by the
+> **engine version, NOT by the database `COMPATIBILITY_LEVEL`.** On a SQL 2022 engine the
+> 3-argument `STRING_SPLIT` runs correctly even when the database is set as low as
+> `COMPATIBILITY_LEVEL = 130` — empirically confirmed down to 130. So a mandant clone that
+> carries a *lower compat level* than its host does **not** break these functions, as long as
+> the host **engine** is 2022+. The earlier wording implied a compat-level floor of 160; that
+> is wrong. What genuinely fails is running them on a **pre-2022 engine** — there `CREATE`
+> still succeeds but the call fails at runtime. Before relying on these on a new target, verify
+> its **engine version** (`SELECT SERVERPROPERTY('ProductMajorVersion')` ≥ 16); the database
+> compat level is not the gate.
 
 ---
 
