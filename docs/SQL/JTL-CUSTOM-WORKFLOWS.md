@@ -194,24 +194,41 @@ Key observations [DB]:
 ### 4.4 Guard triggers on JTL write-target tables [DB — verified E2E 2026-07]
 
 Custom actions that **write JTL business tables** must know which target tables carry a
-rollback-guard trigger. A guard trigger silently rolls back (or errors on) a *direct* `INSERT/UPDATE`
-that does not carry the sanctioned `CONTEXT_INFO` bypass marker the JTL vendor SP sets — so the action
-must route its writes through the vendor SP (which sets the marker) instead of writing the table
-directly. Empirically confirmed against a real `eazybusiness` clone:
+rollback-guard trigger. A guard trigger rolls back (or errors on) a *direct* `INSERT/UPDATE`
+that does not carry a sanctioned `CONTEXT_INFO` bypass marker — so the action must **either**
+route its writes through the vendor SP (which sets the marker itself) **or** set a whitelisted
+`CONTEXT_INFO` value before a direct write and restore the caller's value afterwards.
+Empirically confirmed against a real `eazybusiness` clone:
 
 | Target table | Guard trigger? | Write path a custom action must use |
 |---|---|---|
-| `dbo.tLieferantenBestellungPos` (positions) | **Yes** — `tgr_tlieferantenBestellungPos_INSUPDEL` | Vendor SP `Lieferantenbestellung.spLieferantenBestellungPosBearbeiten`; seed/bypass marker **`CONTEXT_INFO 0x5123`** |
-| `dbo.tLieferantenBestellung` (head) | **Yes** — its *own* guard trigger | bypass marker **`CONTEXT_INFO 0x5121`** (distinct from the position table); the `cFremdbelegnummer` head field was observed writable via a direct `UPDATE` in the live action, so the head guard tolerates that specific column |
+| `dbo.tLieferantenBestellungPos` (positions) | **Yes** — `tgr_tlieferantenBestellungPos_INSUPDEL` | The trigger has **no column list**: it rolls back *every* direct `INSERT/UPDATE/DELETE` unless `CONTEXT_INFO()` is in its whitelist (see below). Either call the vendor SP `Lieferantenbestellung.spLieferantenBestellungPosBearbeiten` (it sets `0x5123` itself) or set a whitelisted marker and write directly. |
+| `dbo.tLieferantenBestellung` (head) | **Yes** — `tgr_tlieferantenBestellung_INSUPDEL` | This head trigger **does** carry a guard-column list; `cFremdbelegnummer` is **not** in it, so a direct `UPDATE` touching only that column passes the trigger's `RETURN` branch **without** any `CONTEXT_INFO` change (verified live). Guard columns need bypass marker **`CONTEXT_INFO 0x5121`**. |
 | `dbo.tLagerArtikel` | **No** rollback guard | direct write is accepted (used by `spSeriennummerStandardZuWMS`) |
 | `dbo.tArtikel` | validator trigger present, but a direct write **goes through** | direct write is accepted (used by `spGebindeErstellen`, `spZustandartikelLieferantSetzen`) |
 
-Consequence: `spVpeCheckLieferantenbestellung` writes positions through the vendor SP (guard), the
-head field directly; `spGebindeErstellen` / `spSeriennummerStandardZuWMS` /
-`spZustandartikelLieferantSetzen` write their article/stock tables directly — and their
-functional tests passing is the live proof those direct writes are accepted (no guard blocks them).
-The two `CONTEXT_INFO` bypass constants (**head `0x5121`, position `0x5123`**) are the values to seed
-guarded rows in a test fixture.
+**Position guard whitelist (verified live E2E 2026-07-29).** `tgr_tlieferantenBestellungPos_INSUPDEL`
+lets a write through iff `CONTEXT_INFO()` is one of:
+
+```
+0x5123, 0x5124, 0x5125, 0x5129,
+HASHBYTES('SHA1', 'spUpdateLieferantenBestellungPosToFreiPosForStuecklistenVaeter')
+```
+
+`0x5123` is the marker the vendor `spLieferantenBestellungPosBearbeiten` sets around its own writes;
+`0x5124`/`0x5125`/`0x5129` correspond to the other JTL position SPs (Erstellen/Loeschen/Stücklisten
+paths). Any other value (including `0x0` / unset) → `ROLLBACK` + `RAISERROR`.
+
+Consequence: `spVpeCheckLieferantenbestellung` (**write-path revised 2026-07-29**) writes positions by
+a **direct set-based `UPDATE` of `cHinweis` under `CONTEXT_INFO 0x5123`** (saving + restoring the
+caller's context, on the error path too), and the head field by a plain direct `UPDATE` with no
+context change. It no longer uses the vendor SP / XML batch — see
+`reports/vpe-workflow-implementation.md` §"Write-path revised" for the rationale (loud-and-harmless
+rollback on a constant change vs. silent column-drift risk of the full-overwrite XML path).
+`spGebindeErstellen` / `spSeriennummerStandardZuWMS` / `spZustandartikelLieferantSetzen` write their
+article/stock tables directly — their functional tests passing is the live proof those direct writes
+are accepted (no guard blocks them). The bypass constants (**head `0x5121`, position `0x5123`**) are
+also the values to seed guarded rows in a test fixture.
 
 ---
 

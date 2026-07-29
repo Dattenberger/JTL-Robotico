@@ -46,30 +46,39 @@
 -- marker. cFremdbelegnummer (255) trims the base number, never the appended marker.
 --
 -- ---------------------------------------------------------------------------
--- Write path (architecture decision): positions are written through the sanctioned JTL SP
---   Lieferantenbestellung.spLieferantenBestellungPosBearbeiten
--- via its XML batch parameter (@xLieferantenbestellungPos), NOT by a direct UPDATE.
--- Reason: dbo.tLieferantenBestellungPos carries the JTL guard trigger
--- tgr_tlieferantenBestellungPos_INSUPDEL, which ROLLBACKs any direct write unless
--- CONTEXT_INFO() holds a JTL magic value. Two ways exist to satisfy it:
---   (A) call the JTL SP, which sets the context itself — verified live: the SP does
---       SET CONTEXT_INFO 0x5123 (the "PosBearbeiten" marker) around its own writes;
---   (B) set CONTEXT_INFO to a magic constant (the research tentatively named 0x5124 for the
---       raw bypass) and issue a direct UPDATE.
--- We use (A). It neither depends on an undocumented constant nor risks a Wawi update breaking
--- it, and its XML form updates all changed positions in ONE set-based call. The SP does full
--- column overwrites, so the XML carries EVERY position column unchanged except cHinweis; and
--- because the SP only touches stock (tlagerbestand) when fMenge / fMengeGeliefert actually
--- change, round-tripping the current values back makes the position write side-effect-free.
--- cFremdbelegnummer is NOT in the head trigger's (tgr_tlieferantenBestellung_INSUPDEL)
--- guard-column list, so the head marker is written by a plain direct UPDATE (verified live).
+-- Write path (architecture decision — CONTEXT_INFO direct write, path B):
+-- dbo.tLieferantenBestellungPos carries the JTL guard trigger
+-- tgr_tlieferantenBestellungPos_INSUPDEL. Verified live (2026-07-29, e2e container): the
+-- trigger has NO per-column list — it ROLLBACKs *every* direct INSERT/UPDATE/DELETE and
+-- only lets the write through when CONTEXT_INFO() matches its whitelist:
+--     0x5123, 0x5124, 0x5125, 0x5129,
+--     HASHBYTES('SHA1', 'spUpdateLieferantenBestellungPosToFreiPosForStuecklistenVaeter').
+-- So we save the caller's CONTEXT_INFO, SET CONTEXT_INFO 0x5123 (the value JTL's own
+-- Lieferantenbestellung.spLieferantenBestellungPosBearbeiten uses), issue ONE set-based
+-- UPDATE of cHinweis only, then restore the saved context (0x0 if the caller had none) —
+-- on the CATCH path too, so the caller never inherits our 0x5123.
 --
--- Consistency: the two writes (positions via SP, head via UPDATE) are intentionally not
--- wrapped in one outer transaction — the SP manages its own transaction and self-rolls-back
--- on error. Because the whole action is idempotent, a partially-applied run is fully
+-- Why B over the earlier decision A (call the vendor SP with its XML full-overwrite batch):
+-- REVISED 2026-07-29. Both paths satisfy the trigger. The failure mode decides it: if a
+-- Wawi update ever changed these magic constants, path B fails LOUD and HARMLESS — the
+-- UPDATE is rolled back, the whole action errors, the workflow log shows it. Path A round-
+-- trips every position column through the vendor SP, so a future SP signature/behaviour
+-- change (or a column we fail to carry) could SILENTLY drift or corrupt row data. A single
+-- cHinweis UPDATE touches exactly the one column we own the value of; nothing else can move.
+-- (The vendor SP also runs stock-recalc side effects we would have to suppress by exact
+-- decimal round-tripping — avoided entirely here.) See reports/vpe-workflow-implementation.md
+-- §"Write-path revised" and vpe-workflow-research.md §"Trigger-Schutz".
+--
+-- cFremdbelegnummer is NOT gated by the head trigger (tgr_tlieferantenBestellung_INSUPDEL
+-- lists guard columns and cFremdbelegnummer is not among them, verified live), so the head
+-- marker is a plain direct UPDATE with NO context change.
+--
+-- Consistency: the two writes (positions, head) are intentionally not wrapped in one outer
+-- transaction. Because the whole action is idempotent, a partially-applied run is fully
 -- repaired by simply running the workflow again.
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/vpe-workflow-research.md
+-- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/vpe-workflow-implementation.md
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§1, D10 — CustomWorkflows is an
 --      additive shared zone co-inhabited by excel_ekl; only touch our own objects)
 -- ============================================================================
@@ -88,6 +97,11 @@ BEGIN
     IF @kLieferantenBestellung IS NULL
         THROW 50001, 'spVpeCheckLieferantenbestellung: @kLieferantenBestellung must not be NULL.', 1;
 
+    -- Saved caller context for the guarded position write (see header). Declared at proc
+    -- scope so the CATCH handler can restore it; @ctxChanged marks that we actually switched.
+    DECLARE @prevCtx VARBINARY(128);
+    DECLARE @ctxChanged BIT = 0;
+
     BEGIN TRY
 
         DECLARE @kLieferant INT;
@@ -99,32 +113,15 @@ BEGIN
         IF @kLieferant IS NULL
             RETURN;
 
-        -- 1. Build the working set: every position of the order, joined to the supplier
-        --    article for VPE + per-piece EK, with the target cHinweis fully computed.
-        --    Layered CROSS APPLYs because T-SQL cannot reference a computed alias in the
-        --    same SELECT list. Non-article positions (no tLiefArtikel match) fall through
-        --    to marker = NULL and are naturally excluded by the change filter below.
+        -- 1. Build the working set: for every position, the computed target note plus the
+        --    price-error flag. #work holds only what the two writes below need — the join key,
+        --    the old note (for the change filter), the new note, and the head-aggregate flag.
+        --    hasError already folds in the VPE precondition (nVPEMenge >= 2), so the marker
+        --    only needs one extra VPE test for the "VPE ok, no error" branch. Layered CROSS
+        --    APPLYs because T-SQL cannot reference a computed alias in the same SELECT list.
         SELECT
             pos.kLieferantenBestellungPos,
-            pos.kLieferantenBestellung,
-            pos.kArtikel,
-            pos.cArtNr,
-            pos.cLieferantenArtNr,
-            pos.cName,
-            pos.cLieferantenBezeichnung,
-            pos.fUST,
-            pos.fMenge,
             pos.cHinweis,
-            pos.fEKNetto,
-            pos.nPosTyp,
-            pos.cNameLieferant,
-            pos.nLiefertage,
-            pos.dLieferdatum,
-            pos.nSort,
-            pos.kLieferscheinPos,
-            pos.fMengeGeliefert,
-            pos.cVPEEinheit,
-            pos.nVPEMenge,
             e.hasError,
             h.newHinweis
         INTO #work
@@ -132,25 +129,22 @@ BEGIN
         LEFT JOIN dbo.tLiefArtikel AS la
             ON la.tArtikel_kArtikel = pos.kArtikel
            AND la.tLieferant_kLieferant = @kLieferant
+        -- Error detection runs on RAW values, independent of the 2-decimal display format
+        -- below. la.fEKNetto > 0 keeps articles with an unset supplier EK (0.0) from a false
+        -- positive; a NULL la (no supplier match) makes nVPEMenge >= 2 UNKNOWN -> 0.
         CROSS APPLY (VALUES (
-            CASE WHEN la.tArtikel_kArtikel IS NOT NULL AND la.nVPEMenge >= 2 THEN 1 ELSE 0 END
-        )) AS v(hasVpe)
-        -- Error detection runs on RAW values (the fEKNetto columns), independent of the
-        -- 2-decimal display formatting below. The la.fEKNetto > 0 guard keeps articles with
-        -- an unset supplier EK (0.0) from producing a false positive against the 1.5x factor.
-        CROSS APPLY (VALUES (
-            CASE WHEN v.hasVpe = 1 AND la.fEKNetto > 0 AND pos.fEKNetto >= 1.5 * la.fEKNetto
+            CASE WHEN la.nVPEMenge >= 2 AND la.fEKNetto > 0 AND pos.fEKNetto >= 1.5 * la.fEKNetto
                  THEN 1 ELSE 0 END
         )) AS e(hasError)
         CROSS APPLY (VALUES (
             CASE
-                WHEN v.hasVpe = 0 THEN NULL
                 WHEN e.hasError = 1 THEN
                     N'{{VPE=' + FORMAT(la.nVPEMenge, '0.##', 'en-US')
                     + N', VPE Error Preis ' + FORMAT(pos.fEKNetto, '0.##', 'en-US')
                     + N'>>' + FORMAT(la.fEKNetto, '0.##', 'en-US') + N'}}'
-                ELSE
+                WHEN la.nVPEMenge >= 2 THEN
                     N'{{VPE=' + FORMAT(la.nVPEMenge, '0.##', 'en-US') + N'}}'
+                ELSE NULL
             END
         )) AS m(marker)
         CROSS APPLY (VALUES (
@@ -164,11 +158,11 @@ BEGIN
                 ELSE pos.cHinweis
             END
         )) AS b(baseHinweis)
-        -- Assemble the final note. Truncation guard: LEFT(marker + note, 2000) — because the
-        -- marker is at the front, an over-length note only ever loses its own tail, never the
-        -- marker. marker = NULL (no VPE) collapses to just the (marker-stripped) base note, so
-        -- losing VPE cleanly restores the original text; NULLIF avoids leaving an empty string.
         CROSS APPLY (VALUES (
+            -- Assemble the final note. Truncation guard: LEFT(marker + note, 2000) — the marker
+            -- is at the front, so an over-length note only loses its own tail, never the marker.
+            -- marker = NULL (no VPE) collapses to just the (marker-stripped) base note, so losing
+            -- VPE cleanly restores the original text; NULLIF avoids leaving an empty string.
             CASE
                 WHEN m.marker IS NULL THEN NULLIF(b.baseHinweis, N'')
                 WHEN NULLIF(b.baseHinweis, N'') IS NULL THEN m.marker
@@ -177,45 +171,30 @@ BEGIN
         )) AS h(newHinweis)
         WHERE pos.kLieferantenBestellung = @kLieferantenBestellung;
 
-        -- 2. Write the positions whose note actually changes, in one batch call through the
-        --    sanctioned SP. The XML carries every position column unchanged except cHinweis
-        --    (full-overwrite SP → unchanged fMenge/fMengeGeliefert keeps it off the stock path,
-        --    see header). The NULL-safe change filter skips positions whose note is unaffected.
-        DECLARE @xPos XML = (
-            SELECT
-                w.kLieferantenBestellungPos AS kLieferantenbestellungPos,
-                w.kLieferantenBestellung    AS kLieferantenbestellung,
-                w.kArtikel                  AS kArtikel,
-                w.cArtNr                    AS cArtNr,
-                w.cLieferantenArtNr         AS cLieferantenArtNr,
-                w.cName                     AS cName,
-                w.cLieferantenBezeichnung   AS cLieferantenBezeichnung,
-                w.fUST                      AS fUST,
-                w.fMenge                    AS fMenge,
-                w.newHinweis                AS cHinweis,
-                w.fEKNetto                  AS fEKNetto,
-                w.nPosTyp                   AS nPosTyp,
-                w.cNameLieferant            AS cNameLieferant,
-                w.nLiefertage               AS nLiefertage,
-                w.dLieferdatum              AS dLieferdatum,
-                w.nSort                     AS nSort,
-                w.kLieferscheinPos          AS kLieferscheinPos,
-                w.fMengeGeliefert           AS fMengeGeliefert,
-                w.cVPEEinheit               AS cVPEEinheit,
-                w.nVPEMenge                 AS nVPEMenge
-            FROM #work AS w
-            WHERE ISNULL(w.newHinweis, N'') <> ISNULL(w.cHinweis, N'')
-            FOR XML PATH('LieferantenbestellungPos'), TYPE
-        );
+        -- 2. Position write. The guard trigger blocks any direct write unless CONTEXT_INFO is
+        --    whitelisted; 0x5123 is the "PosBearbeiten" marker (header). Save + restore the
+        --    caller's context around the single set-based UPDATE; the NULL-safe change filter
+        --    leaves untouched notes alone. @ctxChanged lets the CATCH path undo the switch.
+        SET @prevCtx = CONTEXT_INFO();
+        SET @ctxChanged = 1;
+        SET CONTEXT_INFO 0x5123;
 
-        IF @xPos IS NOT NULL
-            EXEC Lieferantenbestellung.spLieferantenBestellungPosBearbeiten
-                 @xLieferantenbestellungPos = @xPos;
+        UPDATE pos
+        SET pos.cHinweis = w.newHinweis
+        FROM dbo.tLieferantenBestellungPos AS pos
+        JOIN #work AS w ON w.kLieferantenBestellungPos = pos.kLieferantenBestellungPos
+        WHERE ISNULL(w.newHinweis, N'') <> ISNULL(w.cHinweis, N'');
 
-        -- 3. Head marker on cFremdbelegnummer (ungated by the head trigger). Strip any old
-        --    marker first (REPLACE removes every occurrence -> never doubles), then re-append
-        --    when at least one position has a price error. Length-guarded to 255 by trimming
-        --    the base number, never the appended marker.
+        IF @prevCtx IS NULL
+            SET CONTEXT_INFO 0x0;
+        ELSE
+            SET CONTEXT_INFO @prevCtx;
+        SET @ctxChanged = 0;
+
+        -- 3. Head marker on cFremdbelegnummer (ungated by the head trigger -> plain UPDATE, no
+        --    context switch). Strip any old marker first (REPLACE removes every occurrence ->
+        --    never doubles), then re-append when at least one position has a price error.
+        --    Length-guarded to 255 by trimming the base number, never the appended marker.
         DECLARE @headHasError BIT =
             CASE WHEN EXISTS (SELECT 1 FROM #work WHERE hasError = 1) THEN 1 ELSE 0 END;
 
@@ -235,8 +214,7 @@ BEGIN
         SET @newFremd = NULLIF(@newFremd, N'');
 
         -- NULL-safe change detection (a plain <> is UNKNOWN when either side is NULL): only
-        -- touch the head when the number actually changed, so the ungated UPDATE stays a no-op
-        -- on re-runs.
+        -- touch the head when the number actually changed, so the UPDATE stays a no-op on re-runs.
         IF (@newFremd IS NULL AND @curFremd IS NOT NULL)
             OR (@newFremd IS NOT NULL AND @curFremd IS NULL)
             OR (@newFremd <> @curFremd)
@@ -244,20 +222,25 @@ BEGIN
             SET cFremdbelegnummer = @newFremd
             WHERE kLieferantenBestellung = @kLieferantenBestellung;
 
-        DROP TABLE #work;
+        DROP TABLE IF EXISTS #work;
 
     END TRY
     BEGIN CATCH
-        IF OBJECT_ID('tempdb..#work') IS NOT NULL
-            DROP TABLE #work;
+        -- Restore the caller's context if we switched it before failing, so the error path
+        -- never leaks 0x5123 back to the workflow engine.
+        IF @ctxChanged = 1
+        BEGIN
+            IF @prevCtx IS NULL
+                SET CONTEXT_INFO 0x0;
+            ELSE
+                SET CONTEXT_INFO @prevCtx;
+        END
+
+        DROP TABLE IF EXISTS #work;
         IF @@TRANCOUNT > 0
             ROLLBACK TRANSACTION;
 
-        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
-        DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
-        DECLARE @ErrorState INT = ERROR_STATE();
-
-        RAISERROR (@ErrorMessage, @ErrorSeverity, @ErrorState);
+        THROW;
     END CATCH
 END
 GO

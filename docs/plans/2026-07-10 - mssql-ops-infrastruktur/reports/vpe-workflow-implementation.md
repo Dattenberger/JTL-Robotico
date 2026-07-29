@@ -12,6 +12,25 @@ Implementation of the custom workflow action
 `CustomWorkflows.spVpeCheckLieferantenbestellung`, live-verified on test mandant
 `eazybusiness_tm9` (vm-sql-test1). Faktenbasis: `vpe-workflow-research.md`.
 
+> [!IMPORTANT]
+> **Addendum 2026-07-29 — Write-path revised to CONTEXT_INFO (path B).** The position write
+> was changed from the vendor SP `spLieferantenBestellungPosBearbeiten` (XML batch, "path A")
+> to a **direct set-based `UPDATE cHinweis` under `CONTEXT_INFO 0x5123`**, with the caller's
+> context saved and restored (error path included). New fact (live at the e2e container +
+> tm9): `tgr_tlieferantenBestellungPos_INSUPDEL` has **no column list** — it rolls back every
+> direct write and only checks `CONTEXT_INFO()` against a whitelist
+> (`0x5123, 0x5124, 0x5125, 0x5129, HASHBYTES('SHA1','spUpdateLieferantenBestellungPosToFreiPosForStuecklistenVaeter')`).
+> **Why B over A:** the failure mode. If a Wawi update ever changed the whitelist constants,
+> path B fails **loud and harmless** (the `UPDATE` is rolled back, the action errors, the log
+> shows it), whereas path A round-trips every position column through the vendor SP and could
+> **silently drift/corrupt** row data on a future SP-signature/behaviour change. A single
+> `cHinweis` UPDATE also avoids the SP's stock-recalc side effects entirely. The head marker
+> stays a plain direct `UPDATE` (head trigger does not gate `cFremdbelegnummer`). Re-verified
+> a–f on both environments (see Test protocol), plus CONTEXT_INFO restoration and a negative
+> probe (direct write without the marker stays blocked). The sections below describe the
+> current (path B) implementation; the earlier "Update path chosen" text is kept as history
+> with a pointer to this addendum.
+
 ## What was built
 
 A single anytime sproc (`CREATE OR ALTER`, hand-idempotent) that JTL-Wawi calls as a
@@ -41,27 +60,31 @@ re-append. Repeated runs never stack. Field limits guarded: cHinweis via `LEFT(m
 2000)` (marker sits at front → only the note tail is ever trimmed), cFremdbelegnummer by
 trimming the base number, never the appended marker.
 
-## Update path chosen — sanctioned JTL SP via XML batch (path A)
+## Update path chosen — CONTEXT_INFO direct write (path B, revised 2026-07-29)
 
-Positions are written through `Lieferantenbestellung.spLieferantenBestellungPosBearbeiten`
-using its **XML batch parameter** `@xLieferantenbestellungPos`, not a direct UPDATE.
+> Superseded decision below. Until 2026-07-29 positions were written via the vendor SP
+> `spLieferantenBestellungPosBearbeiten` (XML batch, "path A"); see the addendum at the top
+> for why that was revised. This section describes the **current** path B.
 
-Why (over the CONTEXT_INFO-bypass fallback B): `tLieferantenBestellungPos` carries the
-guard trigger `tgr_tlieferantenBestellungPos_INSUPDEL` that rolls back any direct write
-unless `CONTEXT_INFO()` holds a JTL magic value. The SP sets that context itself
-(verified live: it does `SET CONTEXT_INFO 0x5123` — note the research's tentative `0x5124`
-was for the raw bypass; path A sidesteps the magic constant entirely). The XML form
-updates **all changed positions in one set-based call**, is JTL-sanctioned (survives Wawi
-updates), and is side-effect-free here: the SP only touches stock (`tlagerbestand`) when
-`fMenge`/`fMengeGeliefert` actually change, and we round-trip those columns unchanged.
-This makes path A cleaner *and* more maintainable than B — no undocumented constant, no
-per-row cursor. `cFremdbelegnummer` is **not** in the head trigger's guard-column list
-(verified live against `tgr_tlieferantenBestellung_INSUPDEL`), so the head marker is a
-plain direct UPDATE.
+Positions are written by a **single set-based `UPDATE` of `cHinweis`** wrapped in
+`SET CONTEXT_INFO 0x5123` (save caller's context → set marker → UPDATE → restore, restore on
+the CATCH path too). `tLieferantenBestellungPos` carries the guard trigger
+`tgr_tlieferantenBestellungPos_INSUPDEL`, which — verified live (e2e container + tm9,
+2026-07-29) — has **no column list**: it rolls back every direct write and only checks
+`CONTEXT_INFO()` against its whitelist (`0x5123, 0x5124, 0x5125, 0x5129, HASHBYTES('SHA1',
+'spUpdateLieferantenBestellungPosToFreiPosForStuecklistenVaeter')`). `0x5123` is the marker
+JTL's own PosBearbeiten SP uses.
 
-Consistency: the two writes are intentionally not wrapped in one outer transaction (the SP
-owns its own and self-rolls-back on error); the action's full idempotency repairs any
-partially-applied run on the next execution.
+Why B over A: the failure mode (full rationale in the top addendum). A single-column
+`cHinweis` UPDATE cannot silently corrupt other row data and skips the vendor SP's stock
+side effects; if a Wawi update ever changed the whitelist constants, the effect is a loud,
+harmless rollback rather than silent column drift. `cFremdbelegnummer` is **not** in the head
+trigger's guard-column list (verified live against `tgr_tlieferantenBestellung_INSUPDEL`), so
+the head marker is a plain direct UPDATE with no context change.
+
+Consistency: the two writes (positions, head) are intentionally not wrapped in one outer
+transaction; the action's full idempotency repairs any partially-applied run on the next
+execution. The CATCH re-raises with a bare `THROW;` (preserves number/severity/line).
 
 THROW allocation: `50001` (Ebene A) for the NULL-key guard — documented in
 `db-migrations/README.md` §4 rule (k).
@@ -83,8 +106,20 @@ article 48 (`6120001`, nVPEMenge=0). Test order + positions created via CONTEXT_
 | f | existing text preserved | — | base note kept behind marker in a/b/e ✓ |
 | + | full VPE loss (pos1 → non-VPE art), re-run | `{{VPE=10}} Rasenroboter Zubehör; Unhandlich` | `Rasenroboter Zubehör; Unhandlich` (marker fully stripped, base clean) ✓ |
 
-Trigger acceptance confirmed live: the position SP path and the direct
-`cFremdbelegnummer` UPDATE both succeeded against the active guard triggers.
+Trigger acceptance confirmed live: the position write and the direct `cFremdbelegnummer`
+UPDATE both succeeded against the active guard triggers.
+
+**Re-verification 2026-07-29 (path B, both environments).** The full a–f protocol above was
+re-run after the CONTEXT_INFO refactor on **two** servers, each seeded and cleaned up (marker
+`cEigeneBestellnummer = 'CLAUDE-VPE-TEST'`):
+- **e2e container** `robotico-e2e-mssql` (localhost,14330, SQL auth), supplier 2 / article 268
+  (nVPEMenge=100, liefEK=1.0864): a–f all green, e.g. `{{VPE=100, VPE Error Preis 110>>1.09}}`.
+- **test1** `eazybusiness_tm9` (Kerberos), supplier 2 / article 569 (nVPEMenge=10, liefEK=2.2733):
+  a–f all green, `{{VPE=10, VPE Error Preis 110>>2.27}}`.
+- Both: **CONTEXT_INFO restoration** verified (a sentinel value set before EXEC is byte-identical
+  after EXEC → "RESTORED OK"), and a **negative probe** (direct `UPDATE cHinweis` with
+  `CONTEXT_INFO 0x0`) is rolled back by the trigger with the JTL error, cHinweis unchanged.
+- vm-sql2/PROD not touched.
 
 Lint: `npm run db:lint` → **0 errors** (2 pre-existing warnings in
 `reset.spInternal_GrantAccess.sql`, unrelated).
@@ -133,16 +168,20 @@ the recent chain files (the `maint.*` sprocs' dense "why"-first blocks; English 
 convention, German only in the literal marker strings): purpose + Wawi call context, marker
 formats with worked examples, the decimal-point / 2-decimal-trim format decision, the 1.5x
 threshold with its `fEKNetto > 0` guard, the v1 volume-tier exclusion, the trigger write-path
-rationale (JTL SP vs. the CONTEXT_INFO bypass, with the live `0x5123` finding and why no direct
-UPDATE), the idempotent marker parsing, and the 2000 / 255 truncation guards. This is a
-comment-only change (no behaviour change); the proc was re-applied to tm9 by hand (single-file
-sqlcmd, **not** a grate run) so the deployed definition matches the file.
+rationale (the CONTEXT_INFO whitelist and the path-B-over-A decision, both re-verified live),
+the idempotent marker parsing, and the 2000 / 255 truncation guards. (Header updated again in
+the 2026-07-29 path-B refactor; see the top addendum.) The proc was re-applied to the e2e
+container and tm9 by hand (single-file sqlcmd, **not** a grate run) so both deployed definitions
+match the file.
 
 ## Files changed / added
 
 - **NEW** `db-migrations/eazybusiness/sprocs/CustomWorkflows.spVpeCheckLieferantenbestellung.sql`
+  (refactored 2026-07-29 to the CONTEXT_INFO direct write, path B).
 - **EDIT** `db-migrations/README.md` — THROW `50001` allocation (Ebene A, rule k).
 - **EDIT** `WorkflowProcedures/README.md` — new "New actions" section (Wawi linkage hint).
+- **EDIT** `docs/SQL/JTL-CUSTOM-WORKFLOWS.md` §4.4 — full position-trigger whitelist + VPE
+  write-path updated to the CONTEXT_INFO direct write (2026-07-29).
 - **NEW** `docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/vpe-workflow-implementation.md` (this file).
 
 ## Open points
