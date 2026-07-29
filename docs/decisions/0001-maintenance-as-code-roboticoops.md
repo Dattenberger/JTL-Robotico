@@ -6,13 +6,13 @@
 **Supersedes:** —
 **Author:** Lukas + Claude Code
 
-> **Cooperates with [adr-reset-step-registry](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md) and [adr-module-signing-reset](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md).** The reset-step registry owns the "declarative table drives an idempotent ensure-proc" pattern; this ADR reuses it for maintenance jobs. The module-signing ADR owns the Agent-job creation pattern (`reset.spEnsureAgentJob`, sa-owned); `maint.spEnsureMaintenanceJobs` mirrors it.
+> **Cooperates with [ADR-0006](0006-reset-step-registry.md) and [ADR-0005](0005-module-signing-reset.md).** The reset-step registry owns the "declarative table drives an idempotent ensure-proc" pattern; this ADR reuses it for maintenance jobs. The module-signing ADR owns the Agent-job creation pattern (`reset.spEnsureAgentJob`, sa-owned); `maint.spEnsureMaintenanceJobs` mirrors it.
 
 ## Research
 
-- **[6-wartung-ist-analyse](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) §2, F1–F9** — live read-only survey of `vm-sql2` (2026-07-21): the only scheduled maintenance job (`IndexOptimize`) **fails every night** (`Fehler 2812: dbo.IndexOptimize not found`, F2); `DatabaseIntegrityCheck`/CHECKDB last ran **2024-06-24** (F3); the Ola objects live in `eazybusiness.dbo` (F5) and were partially wiped ~2025-11-27 — the direct cause of F2; no failure alerting exists, so the daily failure went unnoticed for ~8 months (F6).
-- **[6-wartung-ist-analyse §3.2](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — measured fragmentation of `eazybusiness` (22.8 GB): **0 indexes >30 %** after 8 months without maintenance (F7) → index defrag is low-ROI; CHECKDB + statistics are the real lever. The old job never updated statistics (F8, no `@UpdateStatistics`).
-- **[adr-reset-step-registry](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md)** — the precedent for a declarative `ops.*` registry table materialised by an idempotent sproc; adopted here as `ops.tMaintenanceJob` + `maint.spEnsureMaintenanceJobs`.
+- **[6-wartung-ist-analyse](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) §2, F1–F9** — live read-only survey of `vm-sql2` (2026-07-21): the only scheduled maintenance job (`IndexOptimize`) **fails every night** (`Fehler 2812: dbo.IndexOptimize not found`, F2); `DatabaseIntegrityCheck`/CHECKDB last ran **2024-06-24** (F3); the Ola objects live in `eazybusiness.dbo` (F5) and were partially wiped ~2025-11-27 — the direct cause of F2; no failure alerting exists, so the daily failure went unnoticed for ~8 months (F6).
+- **[6-wartung-ist-analyse §3.2](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — measured fragmentation of `eazybusiness` (22.8 GB): **0 indexes >30 %** after 8 months without maintenance (F7) → index defrag is low-ROI; CHECKDB + statistics are the real lever. The old job never updated statistics (F8, no `@UpdateStatistics`).
+- **[ADR-0006](0006-reset-step-registry.md)** — the precedent for a declarative `ops.*` registry table materialised by an idempotent sproc; adopted here as `ops.tMaintenanceJob` + `maint.spEnsureMaintenanceJobs`.
 - **Live instance facts (2026-07-21):** Database Mail is enabled (profile `Standard SMTP` via brevo), but **no operator exists** and the **SQL-Agent has no mail profile assigned** — the alerting plumbing is present but the last three wires are missing.
 
 ## Context
@@ -77,7 +77,7 @@ Not one chained job. Each operation is its own job for failure isolation (one br
 
 Two deliberate omissions/limits: **no job output files** (history lives in `CommandLog` + Agent job history; this removes the only filesystem/CmdExec dependency and the output-file cleanup job), and **IndexOptimize runs REORGANIZE-only** (`@FragmentationHigh` without `INDEX_REBUILD_OFFLINE`): Standard Edition cannot rebuild ONLINE, and an offline rebuild at 02:00 would lock tables of a 24/7 ERP. With currently 0 indexes >30 % (F7) this costs nothing; a persistently high-fragmentation index becomes a deliberate manual maintenance-window action instead.
 
-The tm-clone treatment differs by operation, deliberately: **IndexOptimize includes** the `eazybusiness_tm*` clones (`USER_DATABASES`) — they are worked on interactively and benefit from defrag + fresh statistics. **CHECKDB excludes** them (`-eazybusiness_tm%`) — they are throwaway copies recreated by the reset from the integrity-checked source DB, so checking each clone twice a week would be pure cost; the single `ALL_DATABASES`-based job covers user **and** system DBs (incl. `msdb`) in one run, twice weekly (Sun+Wed, each ahead of the 03:00 full). The backup watchdog also excludes the clones (SIMPLE, unbacked-up throwaways). See [adr-backups-cbb-retained](0002-backups-cbb-retained.md).
+The tm-clone treatment differs by operation, deliberately: **IndexOptimize includes** the `eazybusiness_tm*` clones (`USER_DATABASES`) — they are worked on interactively and benefit from defrag + fresh statistics. **CHECKDB excludes** them (`-eazybusiness_tm%`) — they are throwaway copies recreated by the reset from the integrity-checked source DB, so checking each clone twice a week would be pure cost; the single `ALL_DATABASES`-based job covers user **and** system DBs (incl. `msdb`) in one run, twice weekly (Sun+Wed, each ahead of the 03:00 full). The backup watchdog also excludes the clones (SIMPLE, unbacked-up throwaways). See [ADR-0002](0002-backups-cbb-retained.md).
 
 ### D-A5 — Failure alerting is wired end to end
 
@@ -139,9 +139,9 @@ The identical chain deploys to test1 (proves the migration), is validated by one
 
 ## References
 
-- **Related Plan:** [mssql-wartung-ola](../plans/2026-07-21 - mssql-wartung-ola/mssql-wartung-ola.md) — the plan that implements this ADR (bidirectional).
-- **Research:** [6-wartung-ist-analyse](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)
-- **Related ADRs:** [adr-reset-step-registry](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md) (registry pattern reused), [adr-module-signing-reset](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md) (Agent-job creation pattern), [adr-two-chain-migration-paths](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-two-chain-migration-paths.md) (Ebene-B / global chain), [adr-ebene-b-hungarian-naming](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-ebene-b-hungarian-naming.md) (naming convention adopted; the `t` = `time` column prefix in D-A2 is a documented micro-extension of it — at promotion, that ADR gets a reciprocal Decision-History note), [adr-grate-migration-runner](../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-grate-migration-runner.md) (grate stage/folder-order guarantee that the `260` first-deploy convergence in D-A5 relies on), [adr-backups-cbb-retained](0002-backups-cbb-retained.md) (backup ownership + watchdog).
+- **Related Plan:** [mssql-wartung-ola](../plans/2026-07-21%20-%20mssql-wartung-ola/mssql-wartung-ola.md) — the plan that implements this ADR (bidirectional).
+- **Research:** [6-wartung-ist-analyse](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)
+- **Related ADRs:** [ADR-0006](0006-reset-step-registry.md) (registry pattern reused), [ADR-0005](0005-module-signing-reset.md) (Agent-job creation pattern), [ADR-0004](0004-two-chain-migration-paths.md) (Ebene-B / global chain), [ADR-0007](0007-ebene-b-hungarian-naming.md) (naming convention adopted; the `t` = `time` column prefix in D-A2 is a documented micro-extension of it — at promotion, that ADR gets a reciprocal Decision-History note), [ADR-0003](0003-grate-migration-runner.md) (grate stage/folder-order guarantee that the `260` first-deploy convergence in D-A5 relies on), [ADR-0002](0002-backups-cbb-retained.md) (backup ownership + watchdog).
 - **Data model:** `docs/SQL/MSSQL-OPS-DATA-MODEL.md` (must gain the `ops.tMaintenanceJob` rows).
 - **External:** [Ola Hallengren Maintenance Solution](https://ola.hallengren.com/)
 
@@ -226,3 +226,46 @@ The identical chain deploys to test1 (proves the migration), is validated by one
 **After:** Moved to `docs/decisions/0001-maintenance-as-code-roboticoops.md` (first entry in the newly established decisions index), `ADR-NNNN` → `ADR-0001`, `Status: Accepted`. Relative links to the sister ADR (now `0002-backups-cbb-retained.md`), the plan, the older mssql-ops ADRs, and the research file were re-based to the `docs/decisions/` depth. The `adr-ebene-b-hungarian-naming` back-reference (D20 `t`=time micro-extension) was made bidirectional at the same time.
 
 **Reasoning:** The maintenance suite is implemented, deployed to test1, and accepted; the decision is in effect and no longer plan-scoped. Promotion establishes `docs/decisions/` and makes the decision discoverable independent of the plan that produced it.
+
+### 2026-07-29 — Sister-ADR links re-based to their promoted numbers
+
+**Trigger:** The `mssql-ops-infrastruktur` program reached its PROD cutover (2026-07-29) and
+its five plan-scoped ADRs were promoted to `docs/decisions/0003`–`0007`. Every link from
+this ADR into `docs/plans/2026-07-10 - mssql-ops-infrastruktur/adrs/` therefore stopped
+resolving.
+
+**Before:** The "Cooperates with" blockquote, the Research bullet on the registry precedent,
+and the `## References` ADR list pointed at the plan-scoped draft paths
+(`../plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-*.md`).
+
+**After:** All eight link targets now name the promoted siblings —
+[ADR-0003](0003-grate-migration-runner.md) (folder order),
+[ADR-0004](0004-two-chain-migration-paths.md) (Ebene-B chain),
+[ADR-0005](0005-module-signing-reset.md) (sa-owned Agent-job pattern),
+[ADR-0006](0006-reset-step-registry.md) (registry precedent) and
+[ADR-0007](0007-ebene-b-hungarian-naming.md) (naming convention). Addresses only; no
+decision content changed. Earlier Decision-History entries keep their original wording,
+including the bare `adr-…` slug names they were written with.
+
+**Reasoning:** This ADR is Accepted and therefore append-only, but a link that no longer
+resolves is not decision content — leaving five dead references would break exactly the
+navigability the bidirectional plan↔ADR rule exists to guarantee. The change is recorded
+here so the address shift is auditable rather than silent.
+
+### 2026-07-29 — Link-encoding fix (plan paths with spaces)
+
+**Trigger:** Noticed while re-basing the sister-ADR links above: four link destinations pointed
+into `docs/plans/` folders whose names contain spaces (`2026-07-10 - mssql-ops-infrastruktur`,
+`2026-07-21 - mssql-wartung-ola`) with the spaces written literally. A Markdown link
+destination ends at the first unescaped space, so these four rendered as broken links
+everywhere — GitHub, the docs viewer, and every standard parser.
+
+**Before:** `](../plans/2026-07-10 - mssql-ops-infrastruktur/research/…)` — two Research
+bullets, the Related-Plan reference, and the Research reference.
+
+**After:** the same four destinations with `%20` for each space; targets and link text are
+otherwise unchanged and all four now resolve.
+
+**Reasoning:** A correctness fix on the rendered form, not a change to any decision — the
+intended targets were never in doubt. Recorded here because this ADR is Accepted and
+therefore append-only, so even a purely mechanical edit gets an audit line.

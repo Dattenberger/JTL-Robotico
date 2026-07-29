@@ -36,7 +36,7 @@ docs/plans/
 | Plan folder | `YYYY-MM-DD - {name}` (spaces around the dash) | `2026-07-10 - mssql-ops-infrastruktur` |
 | Plan file | `{name}.md` | `mssql-ops-infrastruktur.md` |
 | EN translation | `{name}.en.md` (or split `{name}-N-{block}.en.md`) | `mssql-ops-infrastruktur.en.md` |
-| Plan-scoped ADR | `adrs/adr-{slug}.md` (no number; `# ADR-NNNN:` placeholder) | `adrs/adr-grate-migration-runner.md` |
+| Plan-scoped ADR | `adrs/adr-{slug}.md` (no number; `# ADR-NNNN:` placeholder) | `adrs/adr-grate-migration-runner.md` → promoted to [`docs/decisions/0003-grate-migration-runner.md`](../decisions/0003-grate-migration-runner.md) |
 
 ## Comparison logic (which plan is "current")
 
@@ -60,5 +60,11 @@ authoritative decision forward; the plan-scoped draft in `adrs/` is the historic
 
 | Date | Plan | Status | Summary |
 |---|---|---|---|
-| 2026-07-10 | [`mssql-ops-infrastruktur`](2026-07-10%20-%20mssql-ops-infrastruktur/mssql-ops-infrastruktur.md) | In implementation | grate migration foundation, `RoboticoOps` admin DB, server-side test-mandant reset. First plan of this repo; introduces the first three (plan-scoped) ADRs. |
-| 2026-07-21 | [`mssql-wartung-ola`](2026-07-21%20-%20mssql-wartung-ola/mssql-wartung-ola.md) | Implemented 2026-07-23 | SQL-Server maintenance as code — Ola Hallengren vendored in `RoboticoOps`, declarative `ops.tMaintenanceJob` registry, backup-chain + liveness watchdogs. B1–B5 deployed + E2E-verified on test1; B6 Prod-cutover human-gated. Promotes [ADR-0001](../decisions/0001-maintenance-as-code-roboticoops.md) and [ADR-0002](../decisions/0002-backups-cbb-retained.md). |
+| 2026-07-10 | [`mssql-ops-infrastruktur`](2026-07-10%20-%20mssql-ops-infrastruktur/mssql-ops-infrastruktur.md) | Implemented 2026-07-29 | The founding plan: grate migration foundation (two chains), `RoboticoOps` admin DB, server-side self-service test-mandant reset. Container test campaign found + fixed five migration bugs; PROD cutover on `vm-sql2` 2026-07-29 incl. the first production reset. Promotes [ADR-0003](../decisions/0003-grate-migration-runner.md), [ADR-0004](../decisions/0004-two-chain-migration-paths.md), [ADR-0005](../decisions/0005-module-signing-reset.md), [ADR-0006](../decisions/0006-reset-step-registry.md), [ADR-0007](../decisions/0007-ebene-b-hungarian-naming.md). |
+| 2026-07-21 | [`mssql-wartung-ola`](2026-07-21%20-%20mssql-wartung-ola/mssql-wartung-ola.md) | Implemented 2026-07-23 | SQL-Server maintenance as code — Ola Hallengren vendored in `RoboticoOps`, declarative `ops.tMaintenanceJob` registry, backup-chain + liveness watchdogs. B1–B5 deployed + E2E-verified on test1; the B6 Prod-cutover rode along with the parent plan's cutover on 2026-07-29. Promotes [ADR-0001](../decisions/0001-maintenance-as-code-roboticoops.md) and [ADR-0002](../decisions/0002-backups-cbb-retained.md). |
+
+**Reading order:** `mssql-ops-infrastruktur` is the foundation; `mssql-wartung-ola` is a
+child plan that builds the maintenance suite on top of it and shares the same branch and
+`RoboticoOps` database. Both are implemented and live — for current operating rules read
+[`docs/SQL/MSSQL-OPS-ARCHITECTURE.md`](../SQL/MSSQL-OPS-ARCHITECTURE.md) and the
+[runbooks](../runbooks/), not the plans.

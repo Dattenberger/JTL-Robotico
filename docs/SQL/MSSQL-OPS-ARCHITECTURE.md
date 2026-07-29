@@ -4,7 +4,7 @@ author: Lukas + Claude Code
 status: Accepted
 context: How the MSSQL ops infrastructure fits together — the two migration chains, the RoboticoOps admin DB, the server-side test-mandant reset, the excel_ekl boundary, and the standing operating rules.
 related-plan: ../plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md
-related-adrs: 0001-maintenance-as-code-roboticoops (ADR-A, docs/decisions), 0002-backups-cbb-retained (ADR-B, docs/decisions); adr-grate-migration-runner, adr-two-chain-migration-paths, adr-module-signing-reset, adr-reset-step-registry (plan-scoped — pending promotion)
+related-adrs: 0001-maintenance-as-code-roboticoops (ADR-A), 0002-backups-cbb-retained (ADR-B), 0003-grate-migration-runner, 0004-two-chain-migration-paths, 0005-module-signing-reset, 0006-reset-step-registry, 0007-ebene-b-hungarian-naming (all in docs/decisions, Accepted)
 ---
 
 # MSSQL Ops Architecture
@@ -56,10 +56,10 @@ versioned or self-service*:
 ### 1.3 Discarded alternatives (pointers)
 
 The big "why not X" answers live in the ADRs, one paragraph each:
-DACPAC / Flyway / DbUp / hand-rolled runner → `adr-grate-migration-runner.md`;
-one central journal / image-based promotion → `adr-two-chain-migration-paths.md`;
+DACPAC / Flyway / DbUp / hand-rolled runner → [ADR-0003](../decisions/0003-grate-migration-runner.md);
+one central journal / image-based promotion → [ADR-0004](../decisions/0004-two-chain-migration-paths.md);
 synchronous reset / Service Broker / pure-certificate signing / least-privilege job owner
-/ status view / encrypted licence column → `adr-module-signing-reset.md`.
+/ status view / encrypted licence column → [ADR-0005](../decisions/0005-module-signing-reset.md).
 
 ### 1.4 What this architecture buys us
 
@@ -168,9 +168,9 @@ Why this shape: an Agent job takes no parameters, so the `ops.tResetRequest` que
 parameter-passing **and** audit mechanism; async avoids the client timeout of a
 minutes-long restore; the signed entry SP lets a non-privileged colleague start a
 sysadmin-context job without holding any server rights. Full rationale:
-`adr-module-signing-reset.md` (plan D5–D8).
+[ADR-0005](../decisions/0005-module-signing-reset.md) (plan D5–D8).
 
-The pipeline itself is **data-driven** (`adr-reset-step-registry.md`): the ordered,
+The pipeline itself is **data-driven** ([ADR-0006](../decisions/0006-reset-step-registry.md)): the ordered,
 enabled steps are rows in `ops.tResetStep`, not a hard-coded `EXEC` list, so a new
 preparation step is "deploy a `reset.spInternal_*` proc + `INSERT` one row" without editing
 the orchestrator. The orchestrator whitelists each `cProcName` against the deployed catalog
@@ -365,11 +365,12 @@ interactive Y/N confirmation and lists the exact target DBs first.
 
 - **Plan (history + decisions D1–D13):**
   [`../plans/2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/mssql-ops-infrastruktur.md)
-- **ADRs (plan-scoped — pending promotion):**
-  [`adr-grate-migration-runner`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-grate-migration-runner.md),
-  [`adr-two-chain-migration-paths`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-two-chain-migration-paths.md),
-  [`adr-module-signing-reset`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md),
-  [`adr-reset-step-registry`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md)
+- **ADRs (promoted 2026-07-29 → `docs/decisions/`, all Accepted):**
+  [`0003-grate-migration-runner`](../decisions/0003-grate-migration-runner.md) (grate + own-schema journal),
+  [`0004-two-chain-migration-paths`](../decisions/0004-two-chain-migration-paths.md) (Ebene A / Ebene B, script-only promotion),
+  [`0005-module-signing-reset`](../decisions/0005-module-signing-reset.md) (signing + async agent-job reset),
+  [`0006-reset-step-registry`](../decisions/0006-reset-step-registry.md) (data-driven pipeline),
+  [`0007-ebene-b-hungarian-naming`](../decisions/0007-ebene-b-hungarian-naming.md) (Ebene-B naming convention)
 - **Maintenance suite (plan + ADR-A/ADR-B; ADRs promoted → `docs/decisions/`):**
   [`mssql-wartung-ola.md`](../plans/2026-07-21%20-%20mssql-wartung-ola/mssql-wartung-ola.md),
   [`0001-maintenance-as-code-roboticoops`](../decisions/0001-maintenance-as-code-roboticoops.md) (ADR-A — Ola vendored + declarative registry),

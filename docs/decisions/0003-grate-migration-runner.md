@@ -1,19 +1,19 @@
-# ADR-NNNN: grate as the SQL migration runner for JTL-Robotico
+# ADR-0003: grate as the SQL migration runner for JTL-Robotico
 
-**Status:** Proposed (plan-scoped — pending promotion)
-**Subsystem:** DB / Migrations
+**Status:** Accepted
+**Subsystem:** JTL SQL Migrations
 **Date:** 2026-07-10
 **Supersedes:** —
 **Author:** Lukas + Claude Code
 
-> **Cooperates with** the two-chain ADR (`adr-two-chain-migration-paths.md`). This
+> **Cooperates with [ADR-0004](0004-two-chain-migration-paths.md).** This
 > ADR chooses the *tool* and its *journal schema*; the sister ADR decides *how many
-> chains* the tool runs and *where each journal lives*. Both are promoted together.
+> chains* the tool runs and *where each journal lives*. Both were promoted together.
 
 ## Research
 
 The tool comparison and grate deep-dive in
-[`research/1-migrations-tooling/1-migrations-tooling.md`](../research/1-migrations-tooling/1-migrations-tooling.md)
+[`research/1-migrations-tooling/1-migrations-tooling.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/1-migrations-tooling/1-migrations-tooling.md)
 is the empirical basis:
 
 - **Object inventory is `CREATE-OR-ALTER`-heavy** (§"Punkt-für-Punkt für unser Repo",
@@ -31,7 +31,7 @@ is the empirical basis:
   is the recommended isolation.
 
 Cross-repo lesson from
-[`research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md`](../research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md)
+[`research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md)
 §"Übertragbare Lessons" (L65): the excel_ekl runner's prod incidents were caused by
 hard-coded JTL IDs and silent skips — reinforcing that the runner's discipline
 (resolve-by-name, hard FAIL on missing prerequisites) matters more than the specific
@@ -64,7 +64,7 @@ own schema, selected per chain via grate's `--schema`:
 is used as: `up/` (one-time, hash-tracked, immutable after apply), `functions/` /
 `views/` / `sprocs/` (anytime, re-run on hash change), `runAfterOtherAnyTimeScripts/`
 (anytime, last), `permissions/` (everytime). Full folder/naming/lint contract lives in
-[`db-migrations/README.md`](../../../../db-migrations/README.md).
+[`db-migrations/README.md`](../../db-migrations/README.md).
 
 ## Alternatives Considered
 
@@ -127,13 +127,15 @@ is used as: `up/` (one-time, hash-tracked, immutable after apply), `functions/` 
 ## References
 
 - **Related Plan (motivated + implements this ADR):**
-  [mssql-ops-infrastruktur](../mssql-ops-infrastruktur.md) — decisions **D1** (grate as
+  [mssql-ops-infrastruktur](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/mssql-ops-infrastruktur.md) — decisions **D1** (grate as
   runner) and **D3** (journal schema `Robotico` / `ops`). §1 implements the Ebene-A tree.
 - **Related ADRs:**
-  - `adr-two-chain-migration-paths.md` — decides the two-chain topology this runner serves.
-- Research: [`research/1-migrations-tooling`](../research/1-migrations-tooling/1-migrations-tooling.md),
-  [`research/1.1-ekl-runner-grenze`](../research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md).
-- Contract / implementation: [`db-migrations/README.md`](../../../../db-migrations/README.md),
+  - [ADR-0004](0004-two-chain-migration-paths.md) — decides the two-chain topology this runner serves.
+  - [ADR-0001](0001-maintenance-as-code-roboticoops.md) §D-A5 — the maintenance suite's
+    first-deploy convergence relies on this ADR's `permissions/`-runs-last folder-order guarantee.
+- Research: [`research/1-migrations-tooling`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/1-migrations-tooling/1-migrations-tooling.md),
+  [`research/1.1-ekl-runner-grenze`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md).
+- Contract / implementation: [`db-migrations/README.md`](../../db-migrations/README.md),
   lint `db-migrations/tests/lint-migrations.ps1`.
 - External: grate — https://github.com/grate-devs/grate (RoundhousE successor).
 
@@ -157,3 +159,31 @@ own-schema journal preserves the vendor boundary. DACPAC fails on vendor coexist
 Flyway on the licence/Java situation, DbUp on the host-program + missing change-detection,
 and a hand-rolled runner would rebuild grate badly (the EKL runner is that path, and its
 incidents show the cost).
+
+### 2026-07-29 — Promotion + Acceptance
+
+**Trigger:** The `mssql-ops-infrastruktur` program is implemented, tested end-to-end and
+live: the container test campaign passed ([`reports/migration-testplan/99-gesamttestplan.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/migration-testplan/99-gesamttestplan.md),
+five migration bugs found and fixed, 70/70 regression checks green in
+[`ergebnisse/T6-fix-verifikation.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/migration-testplan/ergebnisse/T6-fix-verifikation.md)),
+and the PROD cutover ran on 2026-07-29 against `vm-sql2`
+([`reports/prod-cutover-2026-07-29.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/prod-cutover-2026-07-29.md)).
+Promotion per `lifecycle-adr.md` §"Plan-scoped ADRs".
+
+**Before:** `Proposed (plan-scoped — pending promotion)`, filename
+`adrs/adr-grate-migration-runner.md` inside the plan folder, header carrying the
+`ADR-NNNN` placeholder, `Subsystem: DB / Migrations`.
+
+**After:** Moved to `docs/decisions/0003-grate-migration-runner.md`, `ADR-NNNN` →
+`ADR-0003`, `Status: Accepted`. `Subsystem:` corrected to the canonical
+**JTL SQL Migrations** (the `CLAUDE.md` "Subsystems" table, which did not yet exist when
+this ADR was drafted, does not know a "DB / Migrations" value). Relative links to the
+plan, its `research/`, `db-migrations/README.md` and the sister ADR were re-based to the
+`docs/decisions/` depth; the sister link now names `ADR-0004`. The References block gained
+the reciprocal link to [ADR-0001](0001-maintenance-as-code-roboticoops.md), which depends
+on this ADR's folder-order guarantee.
+
+**Reasoning:** grate has now driven two chains through a full container test campaign and
+a production cutover on both instances (native runner, `runner=native` confirmed in both
+PROD deploys) — the tool choice and the own-schema journal are in effect, no longer
+plan-scoped, and worth being discoverable independently of the plan that produced them.

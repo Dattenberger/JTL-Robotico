@@ -1,6 +1,6 @@
 # Implementation Plan: SQL Server Maintenance as Code (Ola Hallengren in RoboticoOps)
 
-**Status:** Detailed
+**Status:** Implemented 2026-07-23 — archived (B1–B5 E2E-verified on test1; the B6 Prod cutover rode along with the parent program on 2026-07-29; ADRs promoted → `docs/decisions/0001`/`0002`, Accepted)
 **Created:** 2026-07-21
 **Repo:** JTL-Robotico
 **Branch / Worktree:** feature/mssql-ops-infrastruktur (in worktrees/feature/mssql-ops-infrastruktur)
@@ -12,7 +12,7 @@
 - [0001-maintenance-as-code-roboticoops.md](../../decisions/0001-maintenance-as-code-roboticoops.md) — core: Ola vendored into RoboticoOps, declarative registry `ops.tMaintenanceJob`, `maint.spEnsureMaintenanceJobs` sync, one job per operation, alerting.
 - [0002-backups-cbb-retained.md](../../decisions/0002-backups-cbb-retained.md) — backups stay with CBB; no Ola backup; read-only backup-chain watchdog.
 
-**Basis:** [research/6-wartung-ist-analyse](../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) (live current-state of vm-sql2 maintenance).
+**Basis:** [research/6-wartung-ist-analyse](../2026-07-10%20-%20mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) (live current-state of vm-sql2 maintenance).
 
 This plan implements the two ADRs: it replaces the broken Ola installation scattered across `eazybusiness.dbo` with a versioned, registry-driven maintenance suite in RoboticoOps, deployed through the existing global-grate chain. No new architectural content — that lives in the ADRs; what is here is acceptance criteria, building blocks, file layout and the cutover procedure.
 
@@ -20,7 +20,7 @@ This plan implements the two ADRs: it replaces the broken Ola installation scatt
 
 ### 1.1 Why this plan exists
 
-vm-sql2 effectively has **no** functioning maintenance: the only scheduled job (`IndexOptimize`) has failed nightly since ~2025-11-27, CHECKDB last ran 2024-06-24, and nobody gets alerted (evidence: [6-wartung-ist-analyse §2, F1–F9](../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)). The cause is three structural faults — wrong location (vendor DB), click-ops (unversioned), no alerting. This plan fixes all three via the existing RoboticoOps infrastructure.
+vm-sql2 effectively has **no** functioning maintenance: the only scheduled job (`IndexOptimize`) has failed nightly since ~2025-11-27, CHECKDB last ran 2024-06-24, and nobody gets alerted (evidence: [6-wartung-ist-analyse §2, F1–F9](../2026-07-10%20-%20mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)). The cause is three structural faults — wrong location (vendor DB), click-ops (unversioned), no alerting. This plan fixes all three via the existing RoboticoOps infrastructure.
 
 ### 1.2 What problem this solves
 
@@ -207,7 +207,7 @@ GO
 > **THROW allocation (lint rule (k), D21 + D28 + D36):** `51100` = `spCheckBackupChain` (stale-chain AND invalid watch target, D32), `51105` = `spCheckMaintenanceLiveness` (stale maintenance, D36), `51110` = `spEnsureMaintenanceJobs` (guard/error path, reserved), `51120` = `spRunMaintenanceJob` (unknown `cJobKey`). Enter all in the README §4 (k) table in the same commit ([EDIT] `db-migrations/README.md`) — and while doing so **carry over** the (k) guidance sentence "New steps take the next free `510x0` block" (FT-14): the next free block after the reset allocation (up to `51094`) would otherwise be exactly `51100`; new wording: `51100–51129` are maint-reserved, new reset steps start at `51130`. Likewise in the same commit: register the five `maint.*` procs (type `P`) + `ops.tMaintenanceJob` (type `U`, incl. key columns) in `db-migrations/tests/global/validate_structure.sql` (lint rule (l), [EDIT]) — otherwise the lint fails or the proc escapes the rollout gate.
 
 > [!NOTE]
-> **IndexOptimize on Standard Edition: REORGANIZE-only.** The sync passes `@FragmentationHigh` without an `INDEX_REBUILD_OFFLINE` action: Standard Edition cannot rebuild ONLINE, and an offline rebuild at 02:00 would lock the tables of a 24/7 ERP. At the current 0 indexes >30 % ([6-wartung-ist-analyse F7](../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)) the sacrifice costs nothing; should an index ever stay >30 % permanently, a manual rebuild in the maintenance window is the deliberate exception.
+> **IndexOptimize on Standard Edition: REORGANIZE-only.** The sync passes `@FragmentationHigh` without an `INDEX_REBUILD_OFFLINE` action: Standard Edition cannot rebuild ONLINE, and an offline rebuild at 02:00 would lock the tables of a 24/7 ERP. At the current 0 indexes >30 % ([6-wartung-ist-analyse F7](../2026-07-10%20-%20mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)) the sacrifice costs nothing; should an index ever stay >30 % permanently, a manual rebuild in the maintenance window is the deliberate exception.
 
 Target registry (seed goal for B3, materializes the ADR-A §D-A4 matrix):
 
@@ -435,9 +435,9 @@ The two points still open after the QG round-2 incorporation closed:
 ## 6. References
 
 - **ADRs:** [adr-maintenance-as-code-roboticoops](../../decisions/0001-maintenance-as-code-roboticoops.md), [adr-backups-cbb-retained](../../decisions/0002-backups-cbb-retained.md) (promoted → `docs/decisions/`)
-- **Research:** [6-wartung-ist-analyse](../2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)
-- **Pattern model:** `db-migrations/global/runAfterOtherAnyTimeScripts/reset.spEnsureAgentJob.sql` + `permissions/200_ensure_agent_job.sql` (sa-owned job ensure + everytime self-heal), [adr-reset-step-registry](../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md) (registry pattern), [adr-module-signing-reset](../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-module-signing-reset.md) (sa-owned Agent-job pattern, rationale of D3), [adr-two-chain-migration-paths](../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-two-chain-migration-paths.md) (Ebene-B placement + hand-idempotent `up/` rule), [adr-ebene-b-hungarian-naming](../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-ebene-b-hungarian-naming.md) (naming convention adopted; `t`=time is a documented micro-extension, D20), [adr-grate-migration-runner](../2026-07-10 - mssql-ops-infrastruktur/adrs/adr-grate-migration-runner.md) (stage/folder-order guarantee on which the `260` first-deploy convergence relies, D17)
-- **Promotion tasks (on ADR promotion of this plan) — done 2026-07-23:** (a) back-reference/Decision-History note on `adr-ebene-b-hungarian-naming` about the `t`=time micro-extension (makes the link bidirectional; the ADR's enumeration stays silently incomplete otherwise) — ✅; (b) "Subsystems" table added to `CLAUDE.md` (`RoboticoOps`, `Testmandant Reset`, `JTL SQL Migrations`), so the `Subsystem:` headers of the ADR cohort are canonically anchored — ✅. The two maintenance ADRs are promoted to `docs/decisions/0001`/`0002`; the four older mssql-ops ADRs stay plan-scoped (their plan is still active).
-- **Overarching program:** [mssql-ops-infrastruktur](../2026-07-10 - mssql-ops-infrastruktur/mssql-ops-infrastruktur.md)
+- **Research:** [6-wartung-ist-analyse](../2026-07-10%20-%20mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)
+- **Pattern model:** `db-migrations/global/runAfterOtherAnyTimeScripts/reset.spEnsureAgentJob.sql` + `permissions/200_ensure_agent_job.sql` (sa-owned job ensure + everytime self-heal), [ADR-0006](../../decisions/0006-reset-step-registry.md) (registry pattern), [ADR-0005](../../decisions/0005-module-signing-reset.md) (sa-owned Agent-job pattern, rationale of D3), [ADR-0004](../../decisions/0004-two-chain-migration-paths.md) (Ebene-B placement + hand-idempotent `up/` rule), [ADR-0007](../../decisions/0007-ebene-b-hungarian-naming.md) (naming convention adopted; `t`=time is a documented micro-extension, D20), [ADR-0003](../../decisions/0003-grate-migration-runner.md) (stage/folder-order guarantee on which the `260` first-deploy convergence relies, D17)
+- **Promotion tasks (on ADR promotion of this plan) — done 2026-07-23:** (a) back-reference/Decision-History note on `adr-ebene-b-hungarian-naming` about the `t`=time micro-extension (makes the link bidirectional; the ADR's enumeration stays silently incomplete otherwise) — ✅; (b) "Subsystems" table added to `CLAUDE.md` (`RoboticoOps`, `Testmandant Reset`, `JTL SQL Migrations`), so the `Subsystem:` headers of the ADR cohort are canonically anchored — ✅. The two maintenance ADRs are promoted to `docs/decisions/0001`/`0002`. **Addendum 2026-07-29:** the five ADRs of the parent mssql-ops program were promoted alongside its production cutover (→ `docs/decisions/0003`–`0007`, Status Accepted); the references above point at the new paths.
+- **Overarching program:** [mssql-ops-infrastruktur](../2026-07-10%20-%20mssql-ops-infrastruktur/mssql-ops-infrastruktur.md)
 - **Data-model contract:** `docs/SQL/MSSQL-OPS-DATA-MODEL.md`; CLAUDE.md §"Database Object Documentation"
 - **External:** [Ola Hallengren Maintenance Solution](https://ola.hallengren.com/)

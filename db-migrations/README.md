@@ -459,7 +459,7 @@ pwsh db-migrations/tests/lint-migrations.ps1
 
 ## 9. Adding a reset step (Ebene B pipeline)
 
-The test-mandant reset pipeline is **data-driven** (`adr-reset-step-registry.md`): the ordered
+The test-mandant reset pipeline is **data-driven** ([ADR-0006](../docs/decisions/0006-reset-step-registry.md)): the ordered
 steps are rows in `ops.tResetStep`, and `reset.spProcessNextResetRequest` dispatches them in a
 whitelist-guarded loop. Adding a preparation step therefore does **not** edit the orchestrator.
 
@@ -514,4 +514,4 @@ versioned; only order/enablement is data — the D6 narrowing in the ADR).
 > **Role membership is deliberately NOT data (EXT-4).** The JTL_Reader/JTL_Writer member list in
 > `reset.spInternal_ApplyJtlRoles` stays a code SSoT mirroring `Berechtigungen/JTL-Rollen.sql`
 > (the prod source of truth). Do not move it into a runtime table — that would split the SSoT.
-> Change both mirrors and redeploy. Rationale: `adr-reset-step-registry.md` §Alternatives.
+> Change both mirrors and redeploy. Rationale: [ADR-0006](../docs/decisions/0006-reset-step-registry.md) §Alternatives.

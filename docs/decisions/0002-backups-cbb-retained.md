@@ -10,8 +10,8 @@
 
 ## Research
 
-- **[6-wartung-ist-analyse §2 F1 + §3.2](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — live evidence that backups already run healthily and **externally via CBB**, not via Ola: `eazybusiness` full daily 03:00 (`copy_only=0`, `NT-AUTORITÄT\SYSTEM`), diff, and log every ~15 min (last log 2026-07-21 11:45). The Ola `DatabaseBackup` jobs have no schedule and have **never run**.
-- **[6-wartung-ist-analyse §2 F2/F6](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — the outage pattern that motivates the watchdog: a scheduled job failed silently for ~8 months because nothing checks liveness. Backups deserve the same liveness guard.
+- **[6-wartung-ist-analyse §2 F1 + §3.2](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — live evidence that backups already run healthily and **externally via CBB**, not via Ola: `eazybusiness` full daily 03:00 (`copy_only=0`, `NT-AUTORITÄT\SYSTEM`), diff, and log every ~15 min (last log 2026-07-21 11:45). The Ola `DatabaseBackup` jobs have no schedule and have **never run**.
+- **[6-wartung-ist-analyse §2 F2/F6](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md)** — the outage pattern that motivates the watchdog: a scheduled job failed silently for ~8 months because nothing checks liveness. Backups deserve the same liveness guard.
 - **Backup-time distribution (§3.2)** — the real chain-relevant full is a single daily 03:00 run; the 18:00 run and ad-hoc runs are `copy_only` and do not affect the chain. This is what the maintenance window schedules *around*.
 
 ## Context
@@ -54,8 +54,8 @@ When adding an SQL maintenance suite, the natural temptation is to let Ola own e
 
 ## References
 
-- **Related Plan:** [mssql-wartung-ola](../plans/2026-07-21 - mssql-wartung-ola/mssql-wartung-ola.md) (bidirectional).
-- **Research:** [6-wartung-ist-analyse](../plans/2026-07-10 - mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) §2 (F1), §3.2 (backup-time distribution).
+- **Related Plan:** [mssql-wartung-ola](../plans/2026-07-21%20-%20mssql-wartung-ola/mssql-wartung-ola.md) (bidirectional).
+- **Research:** [6-wartung-ist-analyse](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/6-wartung-ist-analyse/6-wartung-ist-analyse.md) §2 (F1), §3.2 (backup-time distribution).
 - **Related ADRs:** [adr-maintenance-as-code-roboticoops](0001-maintenance-as-code-roboticoops.md) (parent suite; owns the registry and the tm-clone maintenance scope).
 
 ## Decision History
@@ -139,3 +139,19 @@ When adding an SQL maintenance suite, the natural temptation is to let Ola own e
 **After:** Moved to `docs/decisions/0002-backups-cbb-retained.md`, `ADR-NNNN` → `ADR-0002`, `Status: Accepted`. The sister-ADR link (now `0001-maintenance-as-code-roboticoops.md`), the plan link, and the research link were re-based to the `docs/decisions/` depth.
 
 **Reasoning:** The backup-chain watchdog is implemented, deployed to test1, and accepted; the scope boundary (CBB owns backups, maintenance monitors the chain) is in effect and no longer plan-scoped. Promoted together with ADR-0001 so the cooperating pair keeps consistent, navigable addresses.
+
+### 2026-07-29 — Link-encoding fix (plan paths with spaces)
+
+**Trigger:** The same defect found in the sister [ADR-0001](0001-maintenance-as-code-roboticoops.md)
+while promoting the mssql-ops ADR cohort: four link destinations pointed into `docs/plans/`
+folders whose names contain spaces, written literally. A Markdown link destination ends at
+the first unescaped space, so all four rendered as broken links.
+
+**Before:** `](../plans/2026-07-10 - mssql-ops-infrastruktur/research/…)` — two Research
+bullets, the Related-Plan reference, and the Research reference.
+
+**After:** the same four destinations with `%20` for each space; targets and link text are
+otherwise unchanged and all four now resolve.
+
+**Reasoning:** A correctness fix on the rendered form, not a change to any decision. Recorded
+because this ADR is Accepted and therefore append-only.

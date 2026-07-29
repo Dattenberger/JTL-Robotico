@@ -1,6 +1,6 @@
 # Plan: SQL-Server maintenance as code (Ola Hallengren in RoboticoOps)
 
-**Status:** Implemented 2026-07-23 (B1–B5 on test1; B6 Prod-Cutover deferred, human-gated)
+**Status:** Implemented 2026-07-23 — archived (B1–B5 on test1; the B6 Prod cutover followed on 2026-07-29 with the parent program)
 **Plan file:** [mssql-wartung-ola.md](mssql-wartung-ola.md) · **EN:** [mssql-wartung-ola.en.md](mssql-wartung-ola.en.md)
 **Created:** 2026-07-21 · **Branch:** feature/mssql-ops-infrastruktur
 
@@ -35,7 +35,11 @@ Prod cutover (B6) stays human-gated and outside this run.
   guarantee, verified by AC4/AC2.
 - **This run covers B1–B5 against test1 only.** vm-sql2 was strictly read-only throughout.
 - **B6 (Prod cutover)** — removing the legacy Ola objects/jobs on vm-sql2 and activating the
-  new suite — is deferred and **human-gated**; it is not part of this implementation run.
+  new suite — was deferred and **human-gated**; it is not part of this implementation run.
+  It was executed on **2026-07-29** together with the parent program's cutover (11 legacy Ola
+  jobs removed, the old `CommandLog` archived, 6 maintenance jobs enabled + scheduled) — see
+  [`prod-cutover-2026-07-29.md`](../2026-07-10%20-%20mssql-ops-infrastruktur/reports/prod-cutover-2026-07-29.md)
+  phases 4a and 4b.
 - Test-mandant clones (`tm…`) are intentionally excluded from CHECKDB and chain-watching.
 
 ## Reports

@@ -8,7 +8,7 @@
 -- request (UPDLOCK/READPAST so parallel job starts never grab the same row) and run
 -- the reset pipeline. The pipeline is DATA-DRIVEN (EXT-1): the ordered, enabled steps
 -- are rows in ops.tResetStep, dispatched by a whitelist-guarded loop (only deployed
--- reset.spInternal_* procs may run — see adr-reset-step-registry), each with the uniform
+-- reset.spInternal_* procs may run — see docs/decisions/0006-reset-step-registry.md), each with the uniform
 -- contract (@TargetDb,@RequestId,@MandantKey). Each step appends its own progress to
 -- ops.tResetRequest.cStepLog via reset.spInternal_LogStep (keyed by @RequestId), and the
 -- loop logs a "starting step N" line before each step, so reset.spPub_GetResetStatus shows
@@ -130,7 +130,7 @@ BEGIN
                 BEGIN
                     SET @stepNo += 1;
 
-                    -- WHITELIST (D6 narrowing, see adr-reset-step-registry): the step SET is
+                    -- WHITELIST (D6 narrowing, see ADR-0006): the step SET is
                     -- data, but the EXECUTABLE set stays exactly the reset.spInternal_* procs the
                     -- versioned chain deployed. A cProcName that is not a deployed reset.spInternal_
                     -- proc breaks the run rather than executing anything; the name only ever

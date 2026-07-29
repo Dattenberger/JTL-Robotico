@@ -193,7 +193,9 @@ the `Robotico.*` objects in §2–4: `t`-prefixed tables, Hungarian column prefi
 > This **replaces** an earlier decision that gave `ops.*` / `reset.*` a plain PascalCase,
 > un-prefixed "admin-DB" style (un-prefixed tables, PascalCase columns, `sp`-less procedures).
 > Ebene B was renamed onto the Hungarian convention; the examples below are the current,
-> binding names.
+> binding names. The reversal — including why it was safe to edit the applied `up/` scripts
+> in place, and why Ebene A is explicitly exempt — is recorded in
+> [ADR-0007](../decisions/0007-ebene-b-hungarian-naming.md).
 
 | Element | Ebene-B convention | Example |
 |---|---|---|
@@ -227,7 +229,9 @@ already unambiguous):
 > (`ops.tMaintenanceJob`), while a leading `t` on a *column* marks a `time`-typed column
 > (`ops.tMaintenanceJob.tStartTime`) — a documented micro-convention so `tStartTime` is
 > not read as a typo. The context (table name vs. column name) disambiguates.
-> See [ADR-0001 §D-A2](../decisions/0001-maintenance-as-code-roboticoops.md) (ADR-A, maintenance-as-code).
+> See [ADR-0001 §D-A2](../decisions/0001-maintenance-as-code-roboticoops.md) (which introduced the
+> `time` column) and [ADR-0007](../decisions/0007-ebene-b-hungarian-naming.md) (which owns the
+> convention this extends).
 
 > [!NOTE]
 > `IX_tResetRequest_Active` — the filtered "at most one active request per `cTargetDb`" index
@@ -294,3 +298,12 @@ Source documents in the `excel_ekl` repository
   (basis for sections 1–4).
 - `SP-NAMING-CONVENTIONS.md` — RoboticoEKL-specific `spPub_` / orchestration
   layer (explicitly **not** adopted here, see section 5).
+
+ADRs that own the conventions recorded above:
+
+- [ADR-0007 — Ebene-B objects adopt the RoboticoEKL Hungarian convention](../decisions/0007-ebene-b-hungarian-naming.md)
+  — the source of §9's naming rules and of the reversal note there.
+- [ADR-0001 §D-A2](../decisions/0001-maintenance-as-code-roboticoops.md) — the `t` = `time`
+  column micro-extension (D20).
+- [ADR-0004](../decisions/0004-two-chain-migration-paths.md) — the Ebene A / Ebene B split and
+  the journal schemas of §8.

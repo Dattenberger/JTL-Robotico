@@ -79,7 +79,7 @@ State machine and audit trail for every reset run. Defined in `up/0002`.
 Ordered list of `reset.spInternal_*` steps that `reset.spProcessNextResetRequest`
 executes. Adding a preparation step = deploy a new `spInternal_*` proc + one row
 here; the orchestrator is never edited. Defined and seeded in `up/0021`.
-Security model: `adrs/adr-reset-step-registry.md` (plan-scoped).
+Security model: [ADR-0006](../decisions/0006-reset-step-registry.md).
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -146,5 +146,5 @@ foreign knobs NULL.
 - Maintenance-row reconcile: `db-migrations/global/runAfterOtherAnyTimeScripts/maint.spApplyMaintenance.sql`
 - Roles/grants: `db-migrations/global/up/0003_roles.sql`, `db-migrations/global/permissions/100_grants.sql`
 - Architecture: [`MSSQL-OPS-ARCHITECTURE.md`](MSSQL-OPS-ARCHITECTURE.md)
-- Naming convention (Hungarian, EKL): `docs/plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-ebene-b-hungarian-naming.md`
+- Naming convention (Hungarian, EKL): [ADR-0007](../decisions/0007-ebene-b-hungarian-naming.md)
 - Clone-guard audit: `docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/clone-guard-audit.md`

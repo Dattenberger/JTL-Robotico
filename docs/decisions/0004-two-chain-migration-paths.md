@@ -1,31 +1,31 @@
-# ADR-NNNN: Two migration chains (Ebene A / Ebene B), one tool, script-only promotion
+# ADR-0004: Two migration chains (Ebene A / Ebene B), one tool, script-only promotion
 
-**Status:** Proposed (plan-scoped — pending promotion)
-**Subsystem:** DB / Migrations
+**Status:** Accepted
+**Subsystem:** JTL SQL Migrations, RoboticoOps
 **Date:** 2026-07-10
 **Supersedes:** —
 **Author:** Lukas + Claude Code
 
-> **Cooperates with** the grate-runner ADR (`adr-grate-migration-runner.md`). That ADR
+> **Cooperates with [ADR-0003](0003-grate-migration-runner.md).** That ADR
 > chooses grate and the own-schema journal; this ADR decides that grate runs **two**
 > chains with **different journal homes** and how changes flow from test to prod.
 
 ## Research
 
 - **Instance survey**
-  [`research/2-instanz-survey/2-instanz-survey.md`](../research/2-instanz-survey/2-instanz-survey.md):
+  [`research/2-instanz-survey/2-instanz-survey.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/2-instanz-survey/2-instanz-survey.md):
   test1 runs **SQL Server 2025**, prod runs **SQL Server 2022** (§1 "Instanz-Basis",
   L14). A backup taken on 2025 cannot be restored onto 2022 — restore is **old→new only**.
   This is the hard constraint behind script-only promotion (D11). The survey also confirms
   the `RoboticoOps` name is collision-free on both instances (§8 "RoboticoOps-Vorprüfung",
   L89).
 - **grate journal mechanics**
-  [`research/1-migrations-tooling`](../research/1-migrations-tooling/1-migrations-tooling.md)
+  [`research/1-migrations-tooling`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/1-migrations-tooling/1-migrations-tooling.md)
   §"Journal-Tabellen" (L90): the journal lives in the `--schema` schema *inside the target
   DB*. A per-DB journal is therefore automatically part of a backup+restore clone — the
   property Ebene A relies on.
 - **excel_ekl test→prod flow**
-  [`research/1.1-ekl-runner-grenze`](../research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md)
+  [`research/1.1-ekl-runner-grenze`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md)
   §3 "Ziel-DB-Konfiguration" (L32): the established EKL practice already deploys migration
   *025* on test1 and *024* on prod — an existing, proven "test first, then prod, scripts
   only" rhythm that D11 aligns with rather than reinventing.
@@ -124,18 +124,21 @@ but it is the supported way to test a migration on a mandant before prod.
 ## References
 
 - **Related Plan (motivated + implements this ADR):**
-  [mssql-ops-infrastruktur](../mssql-ops-infrastruktur.md) — decisions **D2** (two chains,
+  [mssql-ops-infrastruktur](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/mssql-ops-infrastruktur.md) — decisions **D2** (two chains,
   one procedure) and **D11** (script-only promotion, test1 as Ebene-A target). §1/§2
   implement the two trees; `targets.config.json` encodes the target catalogue.
 - **Related ADRs:**
-  - `adr-grate-migration-runner.md` — the tool and journal-schema choice this topology uses.
-- Research: [`research/2-instanz-survey`](../research/2-instanz-survey/2-instanz-survey.md),
-  [`research/1-migrations-tooling`](../research/1-migrations-tooling/1-migrations-tooling.md),
-  [`research/1.1-ekl-runner-grenze`](../research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md).
-- Contract: [`db-migrations/README.md`](../../../../db-migrations/README.md) §1 (the two
+  - [ADR-0003](0003-grate-migration-runner.md) — the tool and journal-schema choice this topology uses.
+  - [ADR-0005](0005-module-signing-reset.md) — the reset objects are this topology's Ebene-B payload.
+  - [ADR-0001](0001-maintenance-as-code-roboticoops.md) — the maintenance suite is placed in
+    Ebene B and follows this ADR's hand-idempotent `up/` rule.
+- Research: [`research/2-instanz-survey`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/2-instanz-survey/2-instanz-survey.md),
+  [`research/1-migrations-tooling`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/1-migrations-tooling/1-migrations-tooling.md),
+  [`research/1.1-ekl-runner-grenze`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/1.1-ekl-runner-grenze/1.1-ekl-runner-grenze.md).
+- Contract: [`db-migrations/README.md`](../../db-migrations/README.md) §1 (the two
   chains), `db-migrations/targets.config.json`.
-- Operations: [`docs/runbooks/migrations-baseline.md`](../../../runbooks/migrations-baseline.md),
-  [`docs/runbooks/rollout-mssql-ops.md`](../../../runbooks/rollout-mssql-ops.md).
+- Operations: [`docs/runbooks/migrations-baseline.md`](../runbooks/migrations-baseline.md),
+  [`docs/runbooks/rollout-mssql-ops.md`](../runbooks/rollout-mssql-ops.md).
 
 ## Decision History
 
@@ -157,3 +160,31 @@ regular Ebene-A target.
 central journal breaks on cloning. One tool for both chains keeps the mental model small.
 The 2025→2022 restore impossibility makes script-only promotion the only physically
 correct option, and it matches the excel_ekl team's established test-first rhythm.
+
+### 2026-07-29 — Promotion + Acceptance
+
+**Trigger:** The `mssql-ops-infrastruktur` program is implemented, tested and live. The
+container test campaign exercised both chains against a throwaway SQL-Server instance
+([`reports/migration-testplan/99-gesamttestplan.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/migration-testplan/99-gesamttestplan.md),
+T1 = runner/journal baseline) and the 2026-07-29 PROD cutover deployed Ebene B and Ebene A
+separately against `vm-sql2`
+([`reports/prod-cutover-2026-07-29.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/prod-cutover-2026-07-29.md)).
+Promotion per `lifecycle-adr.md` §"Plan-scoped ADRs".
+
+**Before:** `Proposed (plan-scoped — pending promotion)`, filename
+`adrs/adr-two-chain-migration-paths.md` inside the plan folder, header carrying the
+`ADR-NNNN` placeholder, `Subsystem: DB / Migrations`.
+
+**After:** Moved to `docs/decisions/0004-two-chain-migration-paths.md`, `ADR-NNNN` →
+`ADR-0004`, `Status: Accepted`. `Subsystem:` corrected to the canonical
+**JTL SQL Migrations, RoboticoOps** (the `CLAUDE.md` "Subsystems" table postdates this
+draft and knows no "DB / Migrations"; RoboticoOps is added because Ebene B's journal home
+*is* that database). All relative links were re-based to the `docs/decisions/` depth and
+the sister links now name `ADR-0003`/`ADR-0005`; the downstream dependency
+[ADR-0001](0001-maintenance-as-code-roboticoops.md) was added to References.
+
+**Reasoning:** The cutover is the decision's proof: the Ebene-A deploy adopted all four
+`eazybusiness` copies (prod + tm2/tm3/tm4) by ordinary deploy, and each clone carried its
+own `Robotico` journal — exactly the property the split was designed for. No image ever
+moved from the SQL-2025 test instance to the SQL-2022 production instance; promotion was
+script-only throughout, as the ADR requires.

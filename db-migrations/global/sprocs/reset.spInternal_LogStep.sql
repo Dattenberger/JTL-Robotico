@@ -11,7 +11,7 @@
 -- ERROR_MESSAGE() is never truncated.
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
--- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur/adrs/adr-reset-step-registry.md
+-- @see docs/decisions/0006-reset-step-registry.md
 CREATE OR ALTER PROCEDURE reset.spInternal_LogStep
     @RequestId int,
     @Message   nvarchar(max)

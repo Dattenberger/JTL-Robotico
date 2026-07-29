@@ -1,14 +1,23 @@
-# ADR-NNNN: Hybrid module-signing + async agent-job for the test-mandant reset
+# ADR-0005: Hybrid module-signing + async agent-job for the test-mandant reset
 
-**Status:** Proposed (plan-scoped — pending promotion)
+**Status:** Accepted
 **Subsystem:** RoboticoOps, Testmandant Reset
 **Date:** 2026-07-10
 **Supersedes:** —
 **Author:** Lukas + Claude Code
 
-> **Cooperates with** the two-chain ADR (`adr-two-chain-migration-paths.md`): the objects
+> **Cooperates with [ADR-0004](0004-two-chain-migration-paths.md):** the objects
 > this ADR describes (`RoboticoOps`, the signing certificate, the reset SPs, the agent
 > job) are all Ebene-B instance uniques, deployed by the `global/` chain.
+
+> [!NOTE]
+> The object names in this ADR predate [ADR-0007](0007-ebene-b-hungarian-naming.md), which
+> renamed all Ebene-B objects onto the RoboticoEKL Hungarian convention. Read
+> `reset.StartTestmandantReset` as `reset.spPub_StartTestmandantReset`,
+> `ops.Mandant` as `ops.tMandant`, `ops.ResetRequest` as `ops.tResetRequest`,
+> `reset.GetResetStatus` as `reset.spPub_GetResetStatus`, and
+> `reset.ProcessNextResetRequest` as `reset.spProcessNextResetRequest`. The decisions
+> themselves are unaffected by the rename.
 
 This ADR bundles four decisions that only make sense together — they are the security and
 control model of the reset feature: **how the reset runs (D5)**, **which rights the SP and
@@ -18,7 +27,7 @@ incl. licence keys is stored (D8)**.
 ## Research
 
 The security architecture is taken from
-[`research/3-module-signing-agent-job/3-module-signing-agent-job.md`](../research/3-module-signing-agent-job/3-module-signing-agent-job.md)
+[`research/3-module-signing-agent-job/3-module-signing-agent-job.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/3-module-signing-agent-job/3-module-signing-agent-job.md)
 (itself grounded in Erland Sommarskog's module-signing writing):
 
 - **Signed SP → `sp_start_job`, exact rights** (§1, L13): a non-privileged caller can
@@ -36,7 +45,7 @@ The security architecture is taken from
 - **Audit/status pattern** (§6, L85): a request/run table as the durable state and hand-off.
 
 The **as-built** confirmation is in the C2 implementation report
-[`reports/B1/C2-impl.md`](../reports/B1/C2-impl.md): the signed entry point, the queue
+[`reports/B1/C2-impl.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/B1/C2-impl.md): the signed entry point, the queue
 table, the eight internal pipeline steps, and the cross-DB `EXEC QUOTENAME(@TargetDb).
 sys.sp_executesql` pattern with data passed only as parameters.
 
@@ -177,22 +186,28 @@ git-ignored `test-environment.config.json` with one versioned, single-home confi
 ## References
 
 - **Related Plan (motivated + implements this ADR):**
-  [mssql-ops-infrastruktur](../mssql-ops-infrastruktur.md) — decisions **D5** (async
+  [mssql-ops-infrastruktur](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/mssql-ops-infrastruktur.md) — decisions **D5** (async
   SP+job+queue), **D6** (hybrid signing / sysadmin job owner), **D7** (status SP), **D8**
   (`ops.Mandant` config incl. column-protected licence). §2 builds the objects, §3 the
   pipeline.
 - **Related ADRs:**
-  - `adr-two-chain-migration-paths.md` — these objects are the Ebene-B chain's payload.
-  - `adr-grate-migration-runner.md` — the everytime `permissions/` re-signing relies on
+  - [ADR-0004](0004-two-chain-migration-paths.md) — these objects are the Ebene-B chain's payload.
+  - [ADR-0003](0003-grate-migration-runner.md) — the everytime `permissions/` re-signing relies on
     grate's folder-order guarantee.
-- Research: [`research/3-module-signing-agent-job`](../research/3-module-signing-agent-job/3-module-signing-agent-job.md)
+  - [ADR-0006](0006-reset-step-registry.md) — narrows this ADR's D6 "job content only via
+    versioned deployment" clause: step order and enablement become admin-only data.
+  - [ADR-0007](0007-ebene-b-hungarian-naming.md) — renamed every object named in this ADR;
+    its Failure Modes carry the teardown caveat for this ADR's signing chain.
+  - [ADR-0001](0001-maintenance-as-code-roboticoops.md) — `maint.spEnsureMaintenanceJobs`
+    mirrors this ADR's sa-owned Agent-job pattern.
+- Research: [`research/3-module-signing-agent-job`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/3-module-signing-agent-job/3-module-signing-agent-job.md)
   (Sommarskog module-signing recipe).
-- Implementation (as-built): [`reports/B1/C2-impl.md`](../reports/B1/C2-impl.md);
+- Implementation (as-built): [`reports/B1/C2-impl.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/B1/C2-impl.md);
   `db-migrations/global/sprocs/reset.*.sql`,
   `db-migrations/global/up/{0010_jobstartuser_login,0011_signing_certificate,0020_seed_mandant_template}.sql`,
   `db-migrations/global/permissions/900_resign_procedures.sql`,
-  `db-migrations/global/runAfterOtherAnyTimeScripts/reset.EnsureAgentJob.sql`.
-- Validation: [`docs/runbooks/testmandant-reset-validierung.md`](../../../runbooks/testmandant-reset-validierung.md).
+  `db-migrations/global/runAfterOtherAnyTimeScripts/reset.spEnsureAgentJob.sql`.
+- Validation: [`docs/runbooks/testmandant-reset-validierung.md`](../runbooks/testmandant-reset-validierung.md).
 - External: Erland Sommarskog — "Giving Permissions through Stored Procedures"
   (module signing), https://www.sommarskog.se/grantperm.html.
 
@@ -246,3 +261,35 @@ non-expert must be able to unblock a mandant at 9am). Reusing the existing signi
 rather than inventing a new privilege path — keeps the security model single-shaped and the
 D6 defence-in-depth intact (the msdb-activity gate replaces "trust the caller" with "trust
 the engine's job state").
+
+### 2026-07-29 — Promotion + Acceptance
+
+**Trigger:** The `mssql-ops-infrastruktur` program is implemented, tested and live. The
+container test campaign put the whole security and control model through T2
+([`reports/migration-testplan/99-gesamttestplan.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/migration-testplan/99-gesamttestplan.md)) —
+including the cancel/force-reclaim path, the `sysjobactivity` refusal gate (`THROW 51007`)
+and a reset under a real non-special login
+([`ergebnisse/T6-fix-verifikation.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/migration-testplan/ergebnisse/T6-fix-verifikation.md)) —
+and the 2026-07-29 PROD cutover ran the first production reset end-to-end
+([`reports/prod-cutover-2026-07-29.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/prod-cutover-2026-07-29.md),
+Phase 6). Promotion per `lifecycle-adr.md` §"Plan-scoped ADRs".
+
+**Before:** `Proposed (plan-scoped — pending promotion)`, filename
+`adrs/adr-module-signing-reset.md` inside the plan folder, header carrying the `ADR-NNNN`
+placeholder. The body used the pre-rename object names throughout and pointed at
+`runAfterOtherAnyTimeScripts/reset.EnsureAgentJob.sql`.
+
+**After:** Moved to `docs/decisions/0005-module-signing-reset.md`, `ADR-NNNN` → `ADR-0005`,
+`Status: Accepted`. All relative links were re-based to the `docs/decisions/` depth and the
+sister links now name their promoted numbers (`ADR-0003`/`ADR-0004`/`ADR-0006`/`ADR-0007`,
+plus the reciprocal `ADR-0001`). A `[!NOTE]` after the header maps the pre-rename object
+names onto their current `spPub_`/`spInternal_`/`t`-prefixed forms, and the stale
+`reset.EnsureAgentJob.sql` path was corrected to `reset.spEnsureAgentJob.sql`. The body
+otherwise stands as written — the decisions D5–D8 are unchanged by the rename.
+
+**Reasoning:** The model is proven in production: a colleague-callable signed entry point
+started the sa-owned Agent job, the eight-step pipeline ran as the Agent service account
+and reported `succeeded` after 332 s with a full step log, and no caller ever held server
+rights. Rather than rewriting the body onto the new names — which would obscure what was
+decided when — the rename is handled by an explicit mapping note, keeping the ADR readable
+as the record of a 2026-07-10 decision.

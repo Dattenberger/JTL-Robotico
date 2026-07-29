@@ -1,17 +1,26 @@
-# ADR-NNNN: Data-driven reset pipeline (ops.ResetStep registry + whitelisted dispatch)
+# ADR-0006: Data-driven reset pipeline (ops.ResetStep registry + whitelisted dispatch)
 
-**Status:** Proposed (plan-scoped — pending promotion)
+**Status:** Accepted
 **Subsystem:** RoboticoOps, Testmandant Reset
 **Date:** 2026-07-11
 **Supersedes:** —
 **Author:** Lukas + Claude Code
 
-> **Cooperates with** the module-signing ADR (`adr-module-signing-reset.md`). That ADR owns
+> **Cooperates with [ADR-0005](0005-module-signing-reset.md).** That ADR owns
 > the reset security model (D5–D8): signed entry SP, sysadmin-owned agent job, queue table,
 > mandant config. This ADR adds one thing on top — how the job's internal pipeline is
 > *sequenced* — and **narrows** that ADR's D6 "job content only via versioned deployment"
-> guarantee in a bounded, documented way. Read `adr-module-signing-reset.md` first for the
-> authoritative security model.
+> guarantee in a bounded, documented way. Read [ADR-0005](0005-module-signing-reset.md)
+> first for the authoritative security model.
+
+> [!NOTE]
+> The object names in this ADR predate [ADR-0007](0007-ebene-b-hungarian-naming.md), which
+> renamed all Ebene-B objects onto the RoboticoEKL Hungarian convention. Read
+> `ops.ResetStep` as `ops.tResetStep` (columns `nStepOrder`, `cProcName`, `bEnabled`,
+> `bCritical`, `cNotes`), `reset.internal_*` as `reset.spInternal_*`,
+> `reset.ProcessNextResetRequest` as `reset.spProcessNextResetRequest`, and `ops.Mandant`
+> as `ops.tMandant`. The whitelist marker moved from `internal_%` to `spInternal_%`
+> accordingly; the decision itself is unchanged.
 
 ## Research
 
@@ -19,15 +28,15 @@
   Orchestrator-SP, sodass wir künftig einfach neue Schritte zur Datenbankaufbereitung bzw.
   Testmandantenerstellung hinzufügen können."* — adding a preparation step should not mean
   rewriting the orchestrator core.
-- **Extensibility review** `reports/qg2/qg-extensibility.md` (findings EXT-1, EXT-2) and the
-  consolidated package `reports/qg2/consolidated-findings.md` §"Slot 1 — EXTENSIBILITY".
+- **Extensibility review** [`reports/qg2/qg-extensibility.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/qg2/qg-extensibility.md) (findings EXT-1, EXT-2) and the
+  consolidated package [`reports/qg2/consolidated-findings.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/qg2/consolidated-findings.md) §"Slot 1 — EXTENSIBILITY".
 - **Baseline that motivated it:** the orchestrator ran a hard-coded 8-step `EXEC` list inside
   one `TRY` block (`reset.ProcessNextResetRequest.sql`, pre-EXT-1 lines 84–93) and additionally
   *routed per-step parameters* (`SELECT @ShopUrl/@ShopLicense/@LoginName/@DisplayName FROM
   ops.Mandant`, pre-EXT-1 lines 63–68). Adding a step meant editing the core in up to three
   places; per-mandant variation was impossible without an `IF @MandantKey` branch in the core.
 - **Security model this must preserve:** plan Decision Log **D6** and
-  `research/3-module-signing-agent-job/` — "three layers: job content only via versioned
+  [`research/3-module-signing-agent-job/`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/research/3-module-signing-agent-job/3-module-signing-agent-job.md) — "three layers: job content only via versioned
   deployment; start only via the signed SP; the job re-validates the request row."
 
 ## Context
@@ -138,12 +147,13 @@ and sysadmin job owner (D6) are untouched.
 
 ## References
 
-- **Related Plan:** [`mssql-ops-infrastruktur`](../mssql-ops-infrastruktur.md) — §3 Reset pipeline; this ADR is authored during the QG2 fix round (Slot 1).
-- **Cooperating ADR:** [`adr-module-signing-reset`](adr-module-signing-reset.md) — owns D5–D8; this ADR narrows its D6 clause as described above.
-- **Extensibility review:** `../reports/qg2/qg-extensibility.md` (EXT-1/EXT-2/EXT-3/EXT-4/EXT-5); consolidation `../reports/qg2/consolidated-findings.md`.
-- **Implementation:** `db-migrations/global/up/0021_reset_step_registry.sql` (table + seed), `db-migrations/global/sprocs/reset.ProcessNextResetRequest.sql` (whitelist loop), `reset.internal_LogStep.sql` (helper), all `reset.internal_*` (uniform contract).
-- **Architecture doc:** `docs/SQL/MSSQL-OPS-ARCHITECTURE.md` §1a.3 (data-driven pipeline).
-- **Author-facing contract:** `db-migrations/README.md` §"Adding a reset step".
+- **Related Plan:** [`mssql-ops-infrastruktur`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/mssql-ops-infrastruktur.md) — §3 Reset pipeline; this ADR is authored during the QG2 fix round (Slot 1).
+- **Cooperating ADR:** [ADR-0005](0005-module-signing-reset.md) — owns D5–D8; this ADR narrows its D6 clause as described above.
+- **Related ADRs:** [ADR-0007](0007-ebene-b-hungarian-naming.md) — renamed the dispatch marker `internal_` → `spInternal_` and the registry table to `ops.tResetStep`; [ADR-0001](0001-maintenance-as-code-roboticoops.md) — reuses this ADR's "declarative registry table + idempotent ensure-proc" pattern for maintenance jobs (with a documented, repo-owned deviation).
+- **Extensibility review:** [`reports/qg2/qg-extensibility.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/qg2/qg-extensibility.md) (EXT-1/EXT-2/EXT-3/EXT-4/EXT-5); consolidation [`reports/qg2/consolidated-findings.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/qg2/consolidated-findings.md).
+- **Implementation:** `db-migrations/global/up/0021_reset_step_registry.sql` (table + seed), `db-migrations/global/sprocs/reset.spProcessNextResetRequest.sql` (whitelist loop), `reset.spInternal_LogStep.sql` (helper), all `reset.spInternal_*` (uniform contract).
+- **Architecture doc:** [`docs/SQL/MSSQL-OPS-ARCHITECTURE.md`](../SQL/MSSQL-OPS-ARCHITECTURE.md) §1a.3 (data-driven pipeline).
+- **Author-facing contract:** [`db-migrations/README.md`](../../db-migrations/README.md) §"Adding a reset step".
 - **Structure test:** `db-migrations/tests/global/validate_structure.sql` (asserts `ops.ResetStep` + `reset.internal_LogStep`).
 
 ## Decision History
@@ -166,3 +176,32 @@ order/enablement is admin-only data.
 extra cost over the "uniform-contract-only" fallback is small and bounded — the whitelist keeps
 the D6 "job content only via versioned deployment" guarantee intact, narrowing it (order/
 enablement become data) rather than breaking it.
+
+### 2026-07-29 — Promotion + Acceptance
+
+**Trigger:** The `mssql-ops-infrastruktur` program is implemented, tested and live. The
+container test campaign ran the dispatch loop over the seeded eight-step registry and
+verified the whitelist rejection path
+([`reports/migration-testplan/99-gesamttestplan.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/migration-testplan/99-gesamttestplan.md),
+T2; [`ergebnisse/T6-fix-verifikation.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/migration-testplan/ergebnisse/T6-fix-verifikation.md)),
+and the 2026-07-29 PROD cutover executed all eight registry steps in the first production
+reset ([`reports/prod-cutover-2026-07-29.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/prod-cutover-2026-07-29.md),
+Phase 6). Promotion per `lifecycle-adr.md` §"Plan-scoped ADRs".
+
+**Before:** `Proposed (plan-scoped — pending promotion)`, filename
+`adrs/adr-reset-step-registry.md` inside the plan folder, header carrying the `ADR-NNNN`
+placeholder, body written in the pre-rename object names.
+
+**After:** Moved to `docs/decisions/0006-reset-step-registry.md`, `ADR-NNNN` → `ADR-0006`,
+`Status: Accepted`. All relative links were re-based to the `docs/decisions/` depth and the
+sister links now name their promoted numbers (`ADR-0005`, plus `ADR-0007` and the
+downstream `ADR-0001`). A `[!NOTE]` after the header maps the pre-rename object names onto
+their current Hungarian forms, and the implementation file paths were corrected to their
+post-rename names (`reset.spProcessNextResetRequest.sql`, `reset.spInternal_*`).
+
+**Reasoning:** The data-driven pipeline has now run in production: all eight steps
+dispatched from `ops.tResetStep` through the whitelist guard, each logged via
+`reset.spInternal_LogStep`, with the D6 narrowing holding as designed (only deployed
+`spInternal_*` procs were executable). The registry has also proven its extensibility claim
+outside the reset — [ADR-0001](0001-maintenance-as-code-roboticoops.md) adopted the same
+pattern for maintenance jobs.

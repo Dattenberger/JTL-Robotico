@@ -1,6 +1,6 @@
 # Infrastruktur: MSSQL-Ops — Migrationsfundament, RoboticoOps-DB, Testmandanten-Reset
 
-**Status:** Detailed
+**Status:** Implemented 2026-07-29 — archiviert (Prod-Cutover erfolgt; ADRs promotet → `docs/decisions/0003`–`0007`, Accepted)
 **Created:** 2026-07-10
 **Repo:** JTL-Robotico
 **Branch / Worktree:** feature/mssql-ops-infrastruktur (in worktrees/feature/mssql-ops-infrastruktur)
@@ -17,12 +17,12 @@
 - [research/4-jtl-spezifika/4-jtl-spezifika.md](research/4-jtl-spezifika/4-jtl-spezifika.md) — JTL-Wawi-Randbedingungen: Worker-Sichtbarkeit, Updates, Lizenz, Probeliste
 - [research/5-repo-inventar/5-repo-inventar.md](research/5-repo-inventar/5-repo-inventar.md) — Bestandsaufnahme Ist-Reset-Prozess + eigene Objekte in eazybusiness
 
-**Related ADRs:**
-- [adrs/adr-grate-migration-runner.md](adrs/adr-grate-migration-runner.md) — plan-scoped, wird in §5 erstellt
-- [adrs/adr-two-chain-migration-paths.md](adrs/adr-two-chain-migration-paths.md) — plan-scoped, wird in §5 erstellt
-- [adrs/adr-module-signing-reset.md](adrs/adr-module-signing-reset.md) — plan-scoped, wird in §5 erstellt
-- [adrs/adr-reset-step-registry.md](adrs/adr-reset-step-registry.md) — plan-scoped (QG2), data-driven reset pipeline
-- [adrs/adr-ebene-b-hungarian-naming.md](adrs/adr-ebene-b-hungarian-naming.md) — plan-scoped (2026-07-13), Ebene-B RoboticoEKL naming reversal
+**Zugehörige ADRs** (am 2026-07-29 aus `adrs/` nach `docs/decisions/` promotet, Status **Accepted**):
+- [0003-grate-migration-runner.md](../../decisions/0003-grate-migration-runner.md) — D1/D3: grate als Runner, Journal im eigenen Schema
+- [0004-two-chain-migration-paths.md](../../decisions/0004-two-chain-migration-paths.md) — D2/D11: zwei Ketten (Ebene A/B), skriptbasierte Promotion
+- [0005-module-signing-reset.md](../../decisions/0005-module-signing-reset.md) — D5–D8: Hybrid-Signing, sa-owned Agent-Job, Status-SP, `ops.tMandant`
+- [0006-reset-step-registry.md](../../decisions/0006-reset-step-registry.md) — QG2: datengetriebene Reset-Pipeline (`ops.tResetStep` + Whitelist-Dispatch)
+- [0007-ebene-b-hungarian-naming.md](../../decisions/0007-ebene-b-hungarian-naming.md) — 2026-07-13: Ebene-B-Umbenennung auf die RoboticoEKL-Hungarian-Konvention
 
 **Cross-References:**
 - `docs/SQL/NAMING-CONVENTIONS.md` — Schema-Eigentümer-Tabelle (wird in §5 um RoboticoOps + geteilte CW-Zone ergänzt)
@@ -567,3 +567,35 @@ Kein Test-Framework im Repo (reines SQL-Repo) → drei statische/halb-statische 
 - Building Blocks §1–§7 detailliert; D1–D13 festgeschrieben; O1–O5 offen markiert
 - Complexity-Triage: Large; flat (Research-Subspecs als Evidenz)
 - Status → Detailed; Übergabe an implement-long-plan-v3
+
+### 2026-07-29 — Abschluss: Prod-Cutover erfolgt, Programm implementiert
+
+Das Programm ist umgesetzt und live. Der Weg von „Detailed" bis hierher, komprimiert:
+
+- **Implementierung + Qualitätsrunden:** Block B1 (§1–§7) implementiert, danach drei
+  Qualitäts-Runden (QG2 mit dem Extensibility-Slot → `ops.tResetStep`-Registry, QG3
+  Port-/Security-Audit) und die test1-Generalprobe inkl. der Ebene-B-Umbenennung auf
+  die RoboticoEKL-Hungarian-Konvention (`reports/test1-rollout-report.md`).
+- **Migrations-Testkampagne (2026-07-27/28):** beide Ketten, die Reset-Pipeline und die
+  Wartungssuite gegen den Wegwerf-Container `robotico-e2e-mssql` durchgetestet
+  ([`reports/migration-testplan/99-gesamttestplan.md`](reports/migration-testplan/99-gesamttestplan.md)).
+  Die Kampagne fand **fünf echte Migrationsbugs**, die test-first behoben und verifiziert
+  wurden — 70/70 Regressionschecks + 6 Szenarien PASS
+  ([`reports/migration-testplan/ergebnisse/T6-fix-verifikation.md`](reports/migration-testplan/ergebnisse/T6-fix-verifikation.md)).
+  `vm-sql2` blieb während der gesamten Kampagne tabu.
+- **PROD-Cutover 2026-07-29** gegen `vm-sql2` nach Runbook `docs/runbooks/rollout-mssql-ops.md`
+  (Phasen 0/4a/4/4b/5/6): Legacy-Ola-Cleanup, beide Deploys (Ebene B neu, Ebene A als
+  Adoption über alle vier `eazybusiness`-Kopien), Wartungs-Go-live, Mandanten-Registry und
+  **erster Prod-Reset (tm4) `succeeded` nach 332 s**. Vollprotokoll:
+  [`reports/prod-cutover-2026-07-29.md`](reports/prod-cutover-2026-07-29.md).
+- **ADR-Promotion 2026-07-29:** die fünf plan-scoped ADRs sind nach
+  [`docs/decisions/0003`–`0007`](../../decisions/README.md) promotet und auf **Accepted**
+  gesetzt; die Verweise oben zeigen auf die neuen Pfade.
+- **Offen (bewusst, nicht Teil dieses Plans):** die fünf Nachlauf-Punkte im
+  Cutover-Protokoll §„Offen nach dem Cutover" (RoboticoOps in CBB, erste Nacht beobachten,
+  Shop-Lizenz-Keys, restliche Post-Deployment-Checks, Phase 7 = PowerShell-Altpfad
+  stilllegen) sowie die **PayPal-Objekt-Entfernung**, die als eigener Branch
+  `feature/paypal-removal` geparkt bleibt (D12: Alt-Objekte bleiben unangetastet, bis eine
+  eigene Entscheidung sie ablöst).
+
+Status → Implemented / archiviert.

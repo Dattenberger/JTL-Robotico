@@ -1,6 +1,6 @@
-# ADR-NNNN: Ebene-B (RoboticoOps) objects adopt the RoboticoEKL Hungarian naming convention
+# ADR-0007: Ebene-B (RoboticoOps) objects adopt the RoboticoEKL Hungarian naming convention
 
-**Status:** Proposed (plan-scoped — pending promotion)
+**Status:** Accepted
 **Subsystem:** RoboticoOps, JTL SQL Migrations, Testmandant Reset
 **Date:** 2026-07-13
 **Supersedes:** —
@@ -22,13 +22,13 @@
   `spPub_UpdateEbayItemPrice` vs. internal helpers `spCreateLabelSnapshot` /
   `spApplyArticlePhaseEffects`, and `RoboticoEKL.tMigrationHistory` columns
   (`kMigration`/`nVersion`/`cFileName`/`dApplied`/**`bSuccess`** — `b` for `bit`).
-- **Naming inventory** `reports/naming-inventory-hungarian.md` (v2): the full per-object mapping,
+- **Naming inventory** [`reports/naming-inventory-hungarian.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/naming-inventory-hungarian.md) (v2): the full per-object mapping,
   the finding that **Ebene A was already conformant** (`Robotico.fn*`/`sp*`/`tPaypal*` with
   Hungarian columns), and the impact analysis that scoped the change to Ebene B.
 - **The `bActive` vs `nActive` conflict**, surfaced during the research: Lukas' first instruction
   said `nActive` (n-prefix), but the EKL reference itself uses `b` for `bit` (`bSuccess`) — Lukas
   then chose `bActive` to match the chosen standard exactly (§4 Q1 of the inventory).
-- **Dress-rehearsal evidence** that the rename is deployable: `reports/test1-rollout-report.md`
+- **Dress-rehearsal evidence** that the rename is deployable: [`reports/test1-rollout-report.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/test1-rollout-report.md)
   — `RoboticoOps` is disposable (full teardown + redeploy proven green), unlike the Ebene-A
   `eazybusiness` chain whose one-time scripts are hash-journaled on a non-disposable DB.
 
@@ -147,13 +147,13 @@ article-orchestration *apparatus* is not).
 
 ## References
 
-- **Related Plan:** [mssql-ops-infrastruktur](../mssql-ops-infrastruktur.md) — the plan whose
+- **Related Plan:** [mssql-ops-infrastruktur](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/mssql-ops-infrastruktur.md) — the plan whose
   dress rehearsal surfaced this decision.
-- **Naming inventory (research/spec):** [`reports/naming-inventory-hungarian.md`](../reports/naming-inventory-hungarian.md) — full per-object mapping + impact analysis.
-- **Rollout report:** [`reports/test1-rollout-report.md`](../reports/test1-rollout-report.md) — dress rehearsal + rename teardown/redeploy/re-validation.
-- **Convention doc:** [`docs/SQL/NAMING-CONVENTIONS.md`](../../../SQL/NAMING-CONVENTIONS.md) §5, §9 (records the reversal).
+- **Naming inventory (research/spec):** [`reports/naming-inventory-hungarian.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/naming-inventory-hungarian.md) — full per-object mapping + impact analysis.
+- **Rollout report:** [`reports/test1-rollout-report.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/test1-rollout-report.md) — dress rehearsal + rename teardown/redeploy/re-validation.
+- **Convention doc:** [`docs/SQL/NAMING-CONVENTIONS.md`](../SQL/NAMING-CONVENTIONS.md) §5, §9 (records the reversal).
 - **Implementation:** commit `72f8c17`; validators `db-migrations/tests/global/validate_structure.sql` + `validate_rollout.sql`.
-- **Related ADRs:** `adr-reset-step-registry.md` — owns the whitelisted-dispatch mechanic whose `internal_`→`spInternal_` marker this ADR renames; `adr-module-signing-reset.md` — owns the signing chain whose teardown caveat appears in Failure Modes; [`../../../decisions/0001-maintenance-as-code-roboticoops.md`](../../../decisions/0001-maintenance-as-code-roboticoops.md) §D-A2 — extends this convention with the `t` = `time`-column micro-use (`ops.tMaintenanceJob.tStartTime`, D20), the deliberate second booking of the `t` prefix beyond `t<Table>`.
+- **Related ADRs:** [ADR-0006](0006-reset-step-registry.md) — owns the whitelisted-dispatch mechanic whose `internal_`→`spInternal_` marker this ADR renames; [ADR-0005](0005-module-signing-reset.md) — owns the signing chain whose teardown caveat appears in Failure Modes; [ADR-0001](0001-maintenance-as-code-roboticoops.md) §D-A2 — extends this convention with the `t` = `time`-column micro-use (`ops.tMaintenanceJob.tStartTime`, D20), the deliberate second booking of the `t` prefix beyond `t<Table>`.
 
 ## Decision History
 
@@ -183,10 +183,38 @@ require a new `sp_rename` migration and is therefore explicitly out of scope.
 
 ### 2026-07-23 — `t` prefix micro-extension: `time`-typed columns (D20)
 
-**Trigger:** The `mssql-wartung-ola` plan (now [ADR-0001](../../../decisions/0001-maintenance-as-code-roboticoops.md)) introduced `ops.tMaintenanceJob.tStartTime`, a `time`-typed schedule column, and needed a Hungarian prefix for it. This is a reciprocal note added when ADR-0001 was promoted to `docs/decisions/`, making the cross-reference bidirectional per `lifecycle-adr.md`.
+**Trigger:** The `mssql-wartung-ola` plan (now [ADR-0001](0001-maintenance-as-code-roboticoops.md)) introduced `ops.tMaintenanceJob.tStartTime`, a `time`-typed schedule column, and needed a Hungarian prefix for it. This is a reciprocal note added when ADR-0001 was promoted to `docs/decisions/`, making the cross-reference bidirectional per `lifecycle-adr.md`.
 
 **Before:** The Hungarian type-prefix set recorded here was `c`/`k`/`b`/`d`/`n` (string / int key / bit / datetime / non-key int), and a leading `t` marked only a **table** (`t<Singular>`).
 
 **After:** The `t` prefix is deliberately double-booked: on a **table** it stays `t<Singular>`; on a **column** it marks a `time`-typed column (`tStartTime`). Context (table name vs. column name) disambiguates. Recorded as a micro-convention in `docs/SQL/NAMING-CONVENTIONS.md §9` and owned in detail by ADR-0001 §D-A2.
 
 **Reasoning:** A `time`-typed schedule column needed a prefix; reusing `t` (mnemonic for `time`) with table/column context as the disambiguator was preferred over inventing a new letter or leaving the column unprefixed and inconsistent. The extension is additive — it does not change any existing column or table name recorded above.
+
+### 2026-07-29 — Promotion + Acceptance
+
+**Trigger:** The `mssql-ops-infrastruktur` program is implemented, tested and live. The
+renamed object set was validated by the container test campaign
+([`reports/migration-testplan/99-gesamttestplan.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/migration-testplan/99-gesamttestplan.md);
+`validate_structure.sql` + `validate_rollout.sql` green in
+[`ergebnisse/T6-fix-verifikation.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/migration-testplan/ergebnisse/T6-fix-verifikation.md))
+and deployed to production on 2026-07-29
+([`reports/prod-cutover-2026-07-29.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/prod-cutover-2026-07-29.md)).
+Promotion per `lifecycle-adr.md` §"Plan-scoped ADRs".
+
+**Before:** `Proposed (plan-scoped — pending promotion)`, filename
+`adrs/adr-ebene-b-hungarian-naming.md` inside the plan folder, header carrying the
+`ADR-NNNN` placeholder.
+
+**After:** Moved to `docs/decisions/0007-ebene-b-hungarian-naming.md`, `ADR-NNNN` →
+`ADR-0007`, `Status: Accepted`. Relative links to the plan, its `reports/`, and
+`docs/SQL/NAMING-CONVENTIONS.md` were re-based to the `docs/decisions/` depth (including
+the ADR-0001 link inside the 2026-07-23 history entry, whose `../../../decisions/` prefix
+no longer resolves); the sister links now name `ADR-0005`/`ADR-0006`.
+
+**Reasoning:** The renamed Ebene-B object set shipped to production unchanged — `RoboticoOps`
+was created fresh on `vm-sql2` from the renamed scripts (9 `up/`, 20 `sprocs/`), so the
+convention was never migrated there, only deployed. That makes the disposability argument
+behind the in-place rename moot for prod and confirms the decision: one Hungarian
+convention now covers every object we own on both instances. The Ebene-A carve-out held —
+prod's `eazybusiness` chain was adopted with its original names and journal intact.

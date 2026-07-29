@@ -18,7 +18,7 @@
 -- SSoT here rather than a runtime ops.RoleMember table — a runtime table would give
 -- editability but split the single source of truth that JTL-Rollen.sql owns for prod.
 -- Membership changes rarely; when it does, edit both mirrors and redeploy. See
--- adrs/adr-reset-step-registry.md §Alternatives.
+-- docs/decisions/0006-reset-step-registry.md §Alternatives.
 --
 -- @see docs/plans/2026-07-10 - mssql-ops-infrastruktur (§3)
 -- @see Berechtigungen/JTL-Rollen.sql
