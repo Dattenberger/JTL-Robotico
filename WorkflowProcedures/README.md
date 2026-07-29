@@ -24,6 +24,15 @@ source it was ported from (`-- Ported from …`). Do not deploy from this folder
 | `Workflowaktion_Zustandartikel_Lieferant_Setzen.sql` | `sprocs/CustomWorkflows.spZustandartikelLieferantSetzen.sql` |
 | `*_Tests.sql`, `Duplikaterkennung_Bestellungen_Teardown.sql` | `db-migrations/tests/eazybusiness/*.sql` (ported) |
 
+## New actions (created directly in `db-migrations/`, no legacy source)
+
+Custom actions authored after the D12 cut-over live only in the grate chain — they have
+no `WorkflowProcedures/*` provenance and are therefore **not** in the table above.
+
+| Action proc | Display name (Wawi picker) | Workflow object | Manual Wawi linkage |
+|---|---|---|---|
+| `db-migrations/eazybusiness/sprocs/CustomWorkflows.spVpeCheckLieferantenbestellung.sql` | „VPE-Check Warenbestellung" | Lieferantenbestellung (Warenbestellung) | Create a workflow on the **„Warenbestellung geändert"** event and add the action `spVpeCheckLieferantenbestellung`; the Wawi passes `kLieferantenBestellung` automatically. This repo deploys only the proc, not the `dbo.tWorkflow*` config. |
+
 ## Not migrated (intentionally)
 
 Ad-hoc / experimental scripts stay here and are not part of the deploy chain:
