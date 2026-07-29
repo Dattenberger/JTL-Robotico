@@ -25,9 +25,9 @@ Testmandanten sind vollwertige Wawi-Mandanten mit einer **Kopie der Produktionsd
 
 | Mandant | Name in der Wawi | Zugeordnet an | Staging-Shop |
 | --- | --- | --- | --- |
-| `tm2` | Testmandant 2 | **Dana** | `https://tm2.staging.local` |
-| `tm3` | Testmandant 3 | **Sanda** | `https://tm3.staging.local` |
-| `tm4` | Testmandant 4 | **Lukas** | `https://tm4.staging.local` |
+| `tm2` | Testmandant 2 | **Dana** | `https://shop-staging-dana.ison-musical.ts.net` |
+| `tm3` | Testmandant 3 | **Sanda** | `https://shop-staging-sanda.ison-musical.ts.net` |
+| `tm4` | Testmandant 4 | **Lukas** | `https://shop-staging-lukas.ison-musical.ts.net` |
 
 Nutze bevorzugt **deinen** Mandanten. Brauchst du einen fremden, sprich dich kurz mit der Person ab — ein Reset löscht alles, was dort gerade liegt.
 

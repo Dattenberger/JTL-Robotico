@@ -18,9 +18,9 @@ Test mandants are fully functional Wawi mandants holding a **copy of the product
 
 | Mandant | Name in the Wawi | Assigned to | Staging shop |
 | --- | --- | --- | --- |
-| `tm2` | Testmandant 2 | **Dana** | `https://tm2.staging.local` |
-| `tm3` | Testmandant 3 | **Sanda** | `https://tm3.staging.local` |
-| `tm4` | Testmandant 4 | **Lukas** | `https://tm4.staging.local` |
+| `tm2` | Testmandant 2 | **Dana** | `https://shop-staging-dana.ison-musical.ts.net` |
+| `tm3` | Testmandant 3 | **Sanda** | `https://shop-staging-sanda.ison-musical.ts.net` |
+| `tm4` | Testmandant 4 | **Lukas** | `https://shop-staging-lukas.ison-musical.ts.net` |
 
 Prefer **your own** mandant. If you need someone else's, check with them first — a reset wipes everything currently on it.
 
