@@ -19,6 +19,18 @@ test mandants — server-side, audited, and without personal admin rights on pro
 > repeated. The *file-level contract* for migration authors lives in
 > [`db-migrations/README.md`](../../db-migrations/README.md); this doc is the map above it.
 
+> [!NOTE]
+> **Colleague-facing guide (YouTrack):** The operator manual for the test mandants
+> (overview + ownership table, access, reset commands, troubleshooting — in German,
+> for non-developers) lives as knowledge-base article
+> [JTL-A-20 „JTL-Testmandanten"](https://dattenberger.youtrack.cloud/articles/JTL-A-20)
+> and is **updated regularly** (ownership table carries an explicit as-of date).
+> Its markdown source is tracked in this repo:
+> [`docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/youtrack-testmandant-reset-kurzanleitung.md`](../plans/2026-07-10%20-%20mssql-ops-infrastruktur/reports/youtrack-testmandant-reset-kurzanleitung.md)
+> — edit there first, then push the full content via the YouTrack MCP
+> (`update_article`; the API supports only full overwrite or append, no partial edits).
+> When mandants are added/reassigned (`ops.tMandant.cDeveloper`), update BOTH.
+
 ## 1. Vision and Motivation
 
 ### 1.1 Why this infrastructure exists
