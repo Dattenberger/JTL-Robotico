@@ -15,6 +15,8 @@
 
 # JTL-Testmandanten
 
+> 🇬🇧 English version: [JTL Test Mandants](https://dattenberger.youtrack.cloud/articles/JTL-A-21)
+
 Testmandanten sind vollwertige Wawi-Mandanten mit einer **Kopie der Produktionsdaten** — zum gefahrlosen Ausprobieren, Testen und Schulen. Diese Seite erklärt, welche es gibt, wie du sie benutzt, zurücksetzt und neue bekommst.
 
 ## Übersicht: Welche Testmandanten gibt es?
@@ -93,4 +95,4 @@ Hinter den Befehlen steckt eine eigene Verwaltungs-Datenbank (`RoboticoOps`) auf
 
 ---
 
-> 🔧 **Technische Dokumentation (für Entwickler):** Die vollständige technische Beschreibung der Testmandanten-Infrastruktur liegt im Git-Repository: [`docs/SQL/MSSQL-OPS-ARCHITECTURE.md`](https://github.com/Dattenberger/JTL-Robotico/blob/feature/mssql-ops-infrastruktur/docs/SQL/MSSQL-OPS-ARCHITECTURE.md) (JTL-Robotico). Dieser YouTrack-Artikel ist die Bedien-Anleitung und wird bei Änderungen an der Infrastruktur mit aktualisiert — die Quelldatei dazu liegt ebenfalls im Repository (`docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/youtrack-testmandant-reset-kurzanleitung.md`).
+> 🔧 **Technische Dokumentation (für Entwickler):** Die vollständige technische Beschreibung der Testmandanten-Infrastruktur liegt im Git-Repository: [`docs/SQL/MSSQL-OPS-ARCHITECTURE.md`](https://github.com/Dattenberger/JTL-Robotico/blob/master/docs/SQL/MSSQL-OPS-ARCHITECTURE.md) (JTL-Robotico). Dieser YouTrack-Artikel ist die Bedien-Anleitung und wird bei Änderungen an der Infrastruktur mit aktualisiert — die Quelldatei dazu liegt ebenfalls im Repository (`docs/plans/2026-07-10 - mssql-ops-infrastruktur/reports/youtrack-testmandant-reset-kurzanleitung.md`).
