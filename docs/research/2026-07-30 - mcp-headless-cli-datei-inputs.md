@@ -430,28 +430,45 @@ Felder technisch übernehmen — aber Format und **Refresh-Logik gehören Claude
 Code**: wer den Token nebenher benutzt, hängt an einem Vertrag, den niemand
 garantiert.
 
-### 6a.3 Für unseren YouTrack-Fall scheitert der Weg an der Auth-Topologie
+### 6a.3 Für YouTrack: die Credentials liegen lokal — das Problem ist der Refresh
 
-Entscheidender Befund: Die YouTrack-Credentials, mit denen in dieser Session
-`update_article` lief, liegen **überhaupt nicht auf dieser Maschine**.
+> [!IMPORTANT]
+> **Korrektur (2026-07-30, nach Rückfrage des Users).** Eine frühere Fassung
+> dieses Abschnitts behauptete, die YouTrack-Credentials lägen serverseitig im
+> claude.ai-Account. Das war eine Fehlinterpretation: `claude mcp get youtrack`
+> meldete `! Needs authentication` und `~/.claude/.credentials.json` enthielt
+> keinen `mcpOAuth`-Eintrag für den Server — beides erklärt sich schlicht durch
+> einen **abgelaufenen Token**, nicht durch eine andere Auth-Topologie.
+> Live-Beleg für die richtige Deutung:
+>
+> ```console
+> $ (Aufruf von mcp__youtrack__get_current_user)
+> MCP server "youtrack" requires re-authorization (token expired)
+> ```
+>
+> Der Server ist der **lokale** HTTP-Eintrag (`https://dattenberger.youtrack.cloud/mcp`,
+> User-Scope), seine Tokens liegen also im Dateisystem dieser Maschine.
 
-```console
-$ claude mcp get youtrack
-youtrack:
-  Scope: User config (available in all your projects)
-  Status: ! Needs authentication
-  Type: http
-  URL: https://dattenberger.youtrack.cloud/mcp
-```
+Damit gilt für einen Fremd-CLI-Client (Inspector & Co.):
 
-Der lokal konfigurierte HTTP-Server ist **unauthentifiziert**, und
-`~/.claude/.credentials.json` enthält für ihn keinen `mcpOAuth`-Eintrag (dort
-stehen nur die vier Cloudflare-Plugin-Server). Die tatsächlich benutzten
-`mcp__youtrack__*`-Tools kommen also über die **claude.ai-Seite**; ihr Token
-liegt serverseitig im Account, nicht im Dateisystem. Konsequenz: Ein lokaler
-CLI-Client kann diese Autorisierung **nicht** mitbenutzen — auch nicht per
-Kopieren. Er bräuchte eine eigene YouTrack-Autorisierung; und sobald man die
-ohnehin einrichtet, ist der direkte REST-Call (§6.2) der kürzere Weg.
+- **Erreichbarkeit ist kein Hindernis.** Der MCP-Endpunkt ist eine öffentliche
+  HTTPS-URL; jeder Client kommt hin.
+- **Die Tokens sind technisch lesbar.** `~/.claude/.credentials.json` →
+  `mcpOAuth.<server>|<hash>` mit `accessToken`, `refreshToken`, `clientId`,
+  `redirectUri`, `expiresAt`, `scope` (Struktur verifiziert, Werte nicht
+  zitiert). Ein Skript könnte den Access-Token als `Authorization: Bearer …`
+  injizieren — das funktioniert, solange er gilt.
+- **Der Refresh ist das Problem.** Access-Tokens leben ~1 h (§5.2), und wie
+  eben live gesehen laufen sie real ab. Den Refresh besitzt Claude Code;
+  scheitert er, ist ein **interaktiver** Re-Login nötig
+  (`claude mcp login youtrack`), den ein Cron nicht selbst ausführen kann. Ein
+  auf geliehenen Tokens gebautes Skript wäre also stündlich reparaturbedürftig
+  und könnte sich nicht selbst heilen.
+
+Das ist kein prinzipielles „geht nicht", sondern ein Betriebs-Argument: Für
+einen unbeaufsichtigten Sync ist ein **YouTrack-Permanent-Token** (läuft nicht
+ab, gehört dem Skript) die stabile Grundlage — und sobald man den hat, ist der
+direkte REST-Call (§6.2) der kürzere Weg zum selben HTTP-Request.
 
 ### 6a.4 Bewertung: wann MCP-CLI sinnvoll ist — und wann nicht
 
