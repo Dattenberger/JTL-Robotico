@@ -429,6 +429,7 @@ confirmation).
 | `tests/lint-migrations.ps1` | static lint | rules (a)–(l) above + unique `up/` number prefixes per chain; exit ≠ 0 on any violation |
 | `tests/compare-objects.sql` | read-only integration | **DB↔DB** object-hash drift (run against two databases, diff the outputs — baseline pre-check, post-update smoke). Not a file↔DB compare: it hashes `OBJECT_DEFINITION` (engine-normalized text), which never byte-matches a file's raw source. |
 | `tests/eazybusiness/*.sql` | manual integration | ported `*_Tests.sql` — run against a **test mandant**, never prod |
+| `tests/global/*_Tests.sql` | manual regression | Ebene-B regressions against the **E2E container** (each file opens with `:r ../_e2e_guard.sql`, which aborts on anything that looks like a real server). Run from `tests/global/` so the include resolves: `sqlcmd -S localhost,14330 -U sa -C -d RoboticoOps -i <file>` |
 
 Run the lint locally before every commit:
 
